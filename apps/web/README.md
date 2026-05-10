@@ -1,39 +1,73 @@
-# apps/web
+# React + TypeScript + Vite
 
-> **Web 浏览器版 + EXE 桌面版（Tauri 2 套同一份代码）**
-> 副驾的主战场（后台麦克风权限 + 全局快捷键）
+This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
-## 技术栈
+Currently, two official plugins are available:
 
-- React 19 + TypeScript 5.5（strict 模式）
-- Vite 6
-- Tailwind CSS 4 + Radix UI
-- Zustand + TanStack Query
-- framer-motion + Rive（教练 K 动画）
-- Tauri 2.0（EXE 打包）
+- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
+- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
 
-## Sprint 0 待办
+## React Compiler
 
-- [ ] D1: `pnpm create vite@latest` + Tailwind init
-- [ ] D2: 接入 MSW + faker 跑 mock 数据
-- [ ] D3: 设计 Token 翻译到 `tailwind.config.ts`
-- [ ] D4: Tauri 2 init + 第一个 EXE 打包（Win 测）
-- [ ] D4: Mascot K Rive 加载 + 1 表情切换
-- [ ] D5: PWA / 三端打开同 URL
+The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
 
-## 开发命令
+## Expanding the ESLint configuration
 
-```bash
-pnpm dev               # Web 开发
-pnpm build             # Web 生产构建
-pnpm tauri dev         # EXE 开发
-pnpm tauri build       # EXE 打包
-pnpm test              # Vitest
-pnpm lint              # ESLint
-pnpm typecheck         # tsc --noEmit
+If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+
+```js
+export default defineConfig([
+  globalIgnores(['dist']),
+  {
+    files: ['**/*.{ts,tsx}'],
+    extends: [
+      // Other configs...
+
+      // Remove tseslint.configs.recommended and replace with this
+      tseslint.configs.recommendedTypeChecked,
+      // Alternatively, use this for stricter rules
+      tseslint.configs.strictTypeChecked,
+      // Optionally, add this for stylistic rules
+      tseslint.configs.stylisticTypeChecked,
+
+      // Other configs...
+    ],
+    languageOptions: {
+      parserOptions: {
+        project: ['./tsconfig.node.json', './tsconfig.app.json'],
+        tsconfigRootDir: import.meta.dirname,
+      },
+      // other options...
+    },
+  },
+])
 ```
 
-## 关联文档
+You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
 
-- [设计图纸](../../docs/careercoach-design-spec.md)
-- [PRD 用户故事](../../docs/careercoach-prd-v2.md)
+```js
+// eslint.config.js
+import reactX from 'eslint-plugin-react-x'
+import reactDom from 'eslint-plugin-react-dom'
+
+export default defineConfig([
+  globalIgnores(['dist']),
+  {
+    files: ['**/*.{ts,tsx}'],
+    extends: [
+      // Other configs...
+      // Enable lint rules for React
+      reactX.configs['recommended-typescript'],
+      // Enable lint rules for React DOM
+      reactDom.configs.recommended,
+    ],
+    languageOptions: {
+      parserOptions: {
+        project: ['./tsconfig.node.json', './tsconfig.app.json'],
+        tsconfigRootDir: import.meta.dirname,
+      },
+      // other options...
+    },
+  },
+])
+```
