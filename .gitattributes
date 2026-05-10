@@ -1,0 +1,45 @@
+# 默认行尾处理
+* text=auto eol=lf
+
+# Windows 脚本必须 CRLF
+*.{cmd,bat,ps1} text eol=crlf
+
+# Markdown 保留尾随空白（用于换行）
+*.md text eol=lf
+
+# 二进制文件
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.avif binary
+*.svg text
+*.mov binary
+*.mp4 binary
+*.webm binary
+*.mp3 binary
+*.wav binary
+*.opus binary
+*.flv binary
+*.fla binary
+*.swf binary
+*.gz binary
+*.zip binary
+*.7z binary
+*.tar binary
+*.ttf binary
+*.eot binary
+*.woff binary
+*.woff2 binary
+*.pyc binary
+*.pdf binary
+*.psd binary
+*.ai binary
+*.sketch binary
+*.fig binary
+*.riv binary
+
+# Git LFS（如果未来需要）
+# *.psd filter=lfs diff=lfs merge=lfs -text

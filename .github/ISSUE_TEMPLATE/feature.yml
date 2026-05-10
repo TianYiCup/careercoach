@@ -1,0 +1,67 @@
+name: ✨ 功能建议
+description: 提议一个新功能 / 改进
+title: "[Feat] "
+labels: ["type:feat"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提建议前先看看 PRD 是不是已经有了：[`docs/careercoach-prd-v2.md`](../../docs/careercoach-prd-v2.md)
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 解决什么问题
+      description: 用户痛点 / 业务场景
+      placeholder: 小苏在跟父母谈考研被反 PUA 时不知道怎么开口...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议方案
+      placeholder: 加一个"长辈对话"专属 persona，触发时教练 K 给出"先承认情感再陈述事实"型话术
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 考虑过的替代方案
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: 影响范围
+      options:
+        - 沙盘对练
+        - 实战副驾
+        - 复盘师
+        - 弱点画像
+        - Wrapped 卡分享
+        - 用户系统
+        - 三端同步
+        - 其他
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: 优先级
+      options:
+        - "P0 · MVP 必做"
+        - "P1 · Demo 必做"
+        - "P2 · 加分项"
+        - "P3 · 想法收藏"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: redline
+    attributes:
+      label: 红线检查
+      description: 详见 PRD §3.0.5
+      options:
+        - label: 我确认这个功能不会教唆撕逼 / 不替代心理咨询 / 不给法律建议

@@ -1,0 +1,197 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ============================================================
+  # 始终跑：基础闸门（PR 必过）
+  # ============================================================
+  pr-size:
+    name: PR Size Check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check PR size
+        run: |
+          ADDED=$(git diff --shortstat origin/main..HEAD | awk '{added += $4 + $6} END {print added+0}')
+          echo "Lines changed: $ADDED"
+          if [ "$ADDED" -ge 1500 ]; then
+            echo "::error::PR > 1500 lines, please split"
+            exit 1
+          fi
+          if [ "$ADDED" -ge 800 ]; then
+            echo "::warning::PR > 800 lines, consider splitting"
+          fi
+          echo "✅ PR size OK"
+
+  commitlint:
+    name: Commit Messages
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install commitlint
+        run: |
+          npm install --no-save \
+            @commitlint/cli@19 \
+            @commitlint/config-conventional@19
+      - name: Validate commits
+        run: |
+          npx commitlint \
+            --from origin/main \
+            --to HEAD \
+            --verbose
+
+  yaml-lint:
+    name: YAML Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install yamllint
+      - run: yamllint -d "{rules: {line-length: {max: 200}, document-start: disable, truthy: {check-keys: false}}}" .github/
+
+  # ============================================================
+  # 条件跑：apps/api 存在时
+  # ============================================================
+  lint-api:
+    name: Lint API
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check if api exists
+        id: check
+        run: |
+          if [ -f apps/api/pyproject.toml ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+      - uses: astral-sh/setup-uv@v3
+        if: steps.check.outputs.exists == 'true'
+      - name: Install
+        if: steps.check.outputs.exists == 'true'
+        working-directory: apps/api
+        run: uv sync --frozen
+      - name: Ruff lint
+        if: steps.check.outputs.exists == 'true'
+        working-directory: apps/api
+        run: uv run ruff check .
+      - name: Ruff format check
+        if: steps.check.outputs.exists == 'true'
+        working-directory: apps/api
+        run: uv run ruff format --check .
+      - name: Skip notice
+        if: steps.check.outputs.exists == 'false'
+        run: echo "::notice::apps/api 还没初始化，跳过 lint"
+
+  # ============================================================
+  # 条件跑：apps/web 存在时
+  # ============================================================
+  lint-web:
+    name: Lint Web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        run: |
+          if [ -f apps/web/package.json ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+      - uses: pnpm/action-setup@v4
+        if: steps.check.outputs.exists == 'true'
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        if: steps.check.outputs.exists == 'true'
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install
+        if: steps.check.outputs.exists == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: Lint
+        if: steps.check.outputs.exists == 'true'
+        run: pnpm --filter web lint
+      - name: Type check
+        if: steps.check.outputs.exists == 'true'
+        run: pnpm --filter web typecheck
+      - name: Skip notice
+        if: steps.check.outputs.exists == 'false'
+        run: echo "::notice::apps/web 还没初始化，跳过 lint"
+
+  # ============================================================
+  # 条件跑：apps/wxapp 存在时
+  # ============================================================
+  lint-wxapp:
+    name: Lint Wxapp
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        run: |
+          if [ -f apps/wxapp/package.json ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+      - uses: pnpm/action-setup@v4
+        if: steps.check.outputs.exists == 'true'
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        if: steps.check.outputs.exists == 'true'
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install
+        if: steps.check.outputs.exists == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: Lint
+        if: steps.check.outputs.exists == 'true'
+        run: pnpm --filter wxapp lint
+      - name: Skip notice
+        if: steps.check.outputs.exists == 'false'
+        run: echo "::notice::apps/wxapp 还没初始化，跳过 lint"
+
+  # ============================================================
+  # TODO（W1D2 之后启用）
+  # ============================================================
+  # test-api:
+  #   name: Test API
+  #   ...
+  # test-web:
+  #   name: Test Web
+  #   ...
+  # build-web:
+  #   name: Build Web
+  #   ...
+  # build-wxapp:
+  #   name: Build Wxapp (主包 ≤ 1.5MB)
+  #   ...
+  # red-line-test:
+  #   name: Red-line 200 Adversarial Samples
+  #   ...
+  # llm-regression:
+  #   name: LLM 30-scenario Regression
+  #   ...

@@ -1,0 +1,55 @@
+# CODEOWNERS · 自动 PR Review 分配
+# 文档：https://docs.github.com/en/repositories/managing-your-repositories-settings-and-features/customizing-your-repository/about-code-owners
+#
+# 排序：先匹配优先（具体路径写在最后会覆盖通配）
+
+# ============================================================
+# 默认：两人都是 owner（任意 PR 都可以由任一人 review）
+# ============================================================
+*  @patient-Zero-0  @k4392
+
+# ============================================================
+# 后端关键模块（建议 patient-Zero-0 主负责）
+# ============================================================
+/apps/api/                        @patient-Zero-0  @k4392
+/apps/api/app/agents/             @patient-Zero-0
+/apps/api/app/services/           @patient-Zero-0
+/apps/api/app/llm/                @patient-Zero-0
+/apps/api/app/asr/                @patient-Zero-0
+/apps/api/openapi.yaml            @patient-Zero-0  @k4392
+
+# ============================================================
+# 前端关键模块（建议 k4392 主负责）
+# ============================================================
+/apps/web/                        @k4392
+/apps/wxapp/                      @k4392
+/apps/web/src/mascot/             @k4392
+/apps/wxapp/src/mascot/           @k4392
+
+# ============================================================
+# 共享代码（两人都 LGTM）
+# ============================================================
+/packages/shared/                 @patient-Zero-0  @k4392
+
+# ============================================================
+# 红线关键 · 两人都必须 LGTM（永不绕过）
+# ============================================================
+/apps/api/app/services/moderation.py    @patient-Zero-0  @k4392
+/apps/api/app/agents/coach.py           @patient-Zero-0  @k4392
+/apps/api/app/agents/judge.py           @patient-Zero-0  @k4392
+/tests/sensitive_samples.csv            @patient-Zero-0  @k4392
+/tests/blunt_test_protocol.md           @patient-Zero-0  @k4392
+
+# ============================================================
+# 工程配置（两人都 LGTM，避免单方破坏 CI）
+# ============================================================
+/.github/                         @patient-Zero-0  @k4392
+/.pre-commit-config.yaml          @patient-Zero-0  @k4392
+/commitlint.config.js             @patient-Zero-0  @k4392
+/CLAUDE.md                        @patient-Zero-0  @k4392
+/README.md                        @patient-Zero-0  @k4392
+
+# ============================================================
+# 文档（任一人即可，不强制双 LGTM）
+# ============================================================
+/docs/                            @patient-Zero-0  @k4392

@@ -1,0 +1,67 @@
+repos:
+  # ---------- 通用 ----------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: \.md$
+      - id: end-of-file-fixer
+      - id: check-added-large-files
+        args: ["--maxkb=500"]
+      - id: check-merge-conflict
+      - id: check-yaml
+        args: ["--unsafe"]   # 允许自定义 tag (如 GitHub Actions)
+      - id: check-json
+      - id: check-toml
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+
+  # ---------- 密钥泄露 ----------
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ["--baseline", ".secrets.baseline"]
+        exclude: package-lock\.json|pnpm-lock\.yaml
+
+  # ---------- Python (后端) ----------
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+
+  # ---------- Conventional Commits ----------
+  - repo: https://github.com/alessandrojcm/commitlint-pre-commit-hook
+    rev: v9.18.0
+    hooks:
+      - id: commitlint
+        stages: [commit-msg]
+        additional_dependencies:
+          - "@commitlint/config-conventional@19"
+
+  # ---------- 前端（pnpm 项目本地）----------
+  - repo: local
+    hooks:
+      - id: prettier
+        name: prettier
+        entry: pnpm exec prettier --write --ignore-unknown
+        language: system
+        files: \.(ts|tsx|js|jsx|json|md|yaml|yml|css|scss)$
+        pass_filenames: true
+
+      - id: eslint-web
+        name: eslint web
+        entry: pnpm --filter web exec eslint --fix
+        language: system
+        files: ^apps/web/.*\.(ts|tsx)$
+        pass_filenames: true
+
+      - id: eslint-wxapp
+        name: eslint wxapp
+        entry: pnpm --filter wxapp exec eslint --fix
+        language: system
+        files: ^apps/wxapp/.*\.(ts|tsx)$
+        pass_filenames: true

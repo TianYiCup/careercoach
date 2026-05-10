@@ -1,0 +1,22 @@
+# <type>(<scope>): <subject>
+#
+# Body（可选 · 解释 WHY 不是 WHAT）
+#
+# Footer（可选 · BREAKING CHANGE / Closes #123）
+#
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# type:  feat fix refactor docs style test chore perf ci build revert
+# scope: web wxapp api agent llm asr mod mascot card ci docs db deps
+#
+# 规则:
+#   - 主题行 ≤ 72 字
+#   - 用动词开头
+#   - 不要句号结尾
+#   - 中文 / 英文都行，团队保持一致
+#
+# 例子:
+#   feat(api): add /sessions/turns SSE endpoint
+#   fix(wxapp): handle wx.login token expiry
+#   refactor(agent): extract Coach prompt into yaml
+#   chore(ci): pin pnpm to 9.12
+#   docs(prd): add §3.0.7 red-line story matrix

@@ -1,0 +1,78 @@
+name: 🐞 Bug 报告
+description: 报告一个 bug
+title: "[Bug] "
+labels: ["type:bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你报 bug。请尽量描述清楚现象、步骤、期望。
+
+  - type: textarea
+    id: phenomenon
+    attributes:
+      label: 现象
+      description: 你看到了什么不对劲的？
+      placeholder: 例：点击"封神时刻"按钮后，K 表情没切换
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 进入沙盘对练房
+        2. 选择"PUA 老板"人格
+        3. 完成 5 轮对话获得 9 分
+        4. 看 K 头像，没切到 ✨ 表情
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望
+      placeholder: K 应该切到 ✨ 封神表情 + 触发 confetti
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 影响端
+      options:
+        - Web 浏览器
+        - EXE 桌面（Tauri）
+        - 微信小程序
+        - API（后端）
+        - 跨端（多个）
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: 严重性
+      options:
+        - "P0 · 阻塞演示"
+        - "P1 · 严重影响体验"
+        - "P2 · 一般问题"
+        - "P3 · 小毛病"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: redline
+    attributes:
+      label: 红线相关？
+      options:
+        - label: 涉及内容审核 / 未成年 / K 调性 / 沟通伤害
+        - label: 涉及用户隐私 / 敏感数据
+
+  - type: textarea
+    id: env
+    attributes:
+      label: 环境
+      placeholder: |
+        - OS: macOS 14.5 / Win 11
+        - 浏览器: Chrome 130
+        - 后端版本: v0.2.0

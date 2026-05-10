@@ -1,0 +1,109 @@
+# =================== Dependencies ===================
+node_modules/
+.pnpm-store/
+.pnpm-debug.log*
+
+# =================== Python ===================
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+
+# =================== uv / venv ===================
+.venv/
+venv/
+.python-version
+
+# =================== Build outputs ===================
+dist/
+build/
+out/
+.next/
+.turbo/
+
+# =================== Tauri ===================
+src-tauri/target/
+src-tauri/Cargo.lock
+
+# =================== Taro 小程序 ===================
+.taro/
+.swc/
+.cache/
+
+# =================== Environment ===================
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+.env.staging
+*.local
+
+# =================== Secrets ===================
+*.pem
+*.key
+*.crt
+*.p12
+secrets/
+private/
+
+# =================== IDE / Editor ===================
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+.cursor/
+.windsurf/
+.claude/settings.local.json
+
+# =================== OS ===================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# =================== Logs ===================
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# =================== Testing ===================
+test-results/
+playwright-report/
+playwright/.cache/
+
+# =================== Pre-commit ===================
+.secrets.baseline.tmp
+
+# =================== Misc ===================
+*.tsbuildinfo
+.eslintcache
+.stylelintcache
+.parcel-cache/
+.docusaurus/
+.serverless/
+
+# =================== 项目专属 ===================
+# Mascot K 大文件备份（不进 git）
+**/mascot/source/
+# 演示视频（太大，走 OSS）
+**/demo-videos/
+# 真实用户测试数据（隐私）
+tests/uat-recordings/
