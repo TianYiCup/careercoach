@@ -82,6 +82,9 @@ ignore = [
 # Agent prompts are intentionally Chinese user-facing copy, and `PASS`
 # is a Verdict enum value (not a credential).
 "app/agents/**/*.py" = ["RUF001", "RUF002", "RUF003", "S105"]
+# Spike runner has Chinese prompts + report copy using full-width
+# punctuation and × / – for human readability.
+"scripts/llm_spike/**/*.py" = ["RUF001", "RUF002", "RUF003"]
 # `timeout=` is part of the LLMProvider contract (foundation §3.3.4),
 # not a reinvention of asyncio.timeout — adapters must accept it directly.
 "app/llm/**/*.py" = ["ASYNC109"]
@@ -96,7 +99,7 @@ indent-style = "space"
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
-exclude = ["alembic/versions"]
+exclude = ["alembic/versions", "scripts/llm_spike"]
 
 [[tool.mypy.overrides]]
 module = ["alembic.*"]

@@ -1,0 +1,1052 @@
+{
+  "version": "0.1",
+  "started_at": "2026-05-11T12:05:00+00:00",
+  "models": [
+    "deepseek",
+    "qwen"
+  ],
+  "pass_threshold": 4.0,
+  "summary": {
+    "deepseek": {
+      "count": 30,
+      "error_count": 0,
+      "average": 4.927,
+      "by_dimension": {
+        "RELEVANCE": 4.933,
+        "AUTHENTICITY": 4.9,
+        "NATURALNESS": 5.0,
+        "IN_CHARACTER": 5.0,
+        "LENGTH": 4.8
+      },
+      "pass": true
+    },
+    "qwen": {
+      "count": 0,
+      "error_count": 30,
+      "average": null,
+      "by_dimension": null
+    }
+  },
+  "results": [
+    {
+      "scenario_id": "campus.tutor.thesis",
+      "scenario_title": "催导师改论文初稿",
+      "persona": "P1",
+      "prompt_index": 1,
+      "user_prompt": "李老师，您上次说本周末看我的论文，今天周一了，您看了吗？",
+      "model": "deepseek",
+      "response": "小苏啊，这段时间确实忙，几个项目要结题。你的论文我周末扫了一遍，明天给你具体意见。",
+      "latency_s": 2.204,
+      "judge": {
+        "scores": {
+          "RELEVANCE": 5,
+          "AUTHENTICITY": 5,
+          "NATURALNESS": 5,
+          "IN_CHARACTER": 5,
+          "LENGTH": 5
+        },
+        "average": 5.0,
+        "note": "回应直接贴合场景，角色真实自然，无AI感，长度完美。"
+      },
+      "error": null
+    },
+    {
+      "scenario_id": "campus.tutor.thesis",
+      "scenario_title": "催导师改论文初稿",
+      "persona": "P1",
+      "prompt_index": 1,
+      "user_prompt": "李老师，您上次说本周末看我的论文，今天周一了，您看了吗？",
+      "model": "qwen",
+      "response": "",
+      "latency_s": 0.0,
+      "judge": null,
+      "error": "qwen auth failed (401): {\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\""
+    },
+    {
+      "scenario_id": "campus.tutor.thesis",
+      "scenario_title": "催导师改论文初稿",
+      "persona": "P1",
+      "prompt_index": 2,
+      "user_prompt": "我下周三就要交开题答辩了，您能这周看完吗？",
+      "model": "deepseek",
+      "response": "小苏啊，我最近在忙一个省里的评审，下周一定看。你这篇初稿我已经大致翻过，整体框架还行，就是实验数据那部分要改。",
+      "latency_s": 2.578,
+      "judge": {
+        "scores": {
+          "RELEVANCE": 5,
+          "AUTHENTICITY": 5,
+          "NATURALNESS": 5,
+          "IN_CHARACTER": 5,
+          "LENGTH": 4
+        },
+        "average": 4.8,
+        "note": "回应贴合场景，角色真实自然，略超字数但内容紧凑。"
+      },
+      "error": null
+    },
+    {
+      "scenario_id": "campus.tutor.thesis",
+      "scenario_title": "催导师改论文初稿",
+      "persona": "P1",
+      "prompt_index": 2,
+      "user_prompt": "我下周三就要交开题答辩了，您能这周看完吗？",
+      "model": "qwen",
+      "response": "",
+      "latency_s": 0.0,
+      "judge": null,
+      "error": "qwen auth failed (401): {\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\""
+    },
+    {
+      "scenario_id": "campus.tutor.thesis",
+      "scenario_title": "催导师改论文初稿",
+      "persona": "P1",
+      "prompt_index": 3,
+      "user_prompt": "那我先按现在的版本去答辩可以吗？",
+      "model": "deepseek",
+      "response": "小苏啊，别急。我这两天在改你们几个的论文，你的我看了大半了，再给我两天，我肯定给你反馈。",
+      "latency_s": 2.446,
+      "judge": {
+        "scores": {
+          "RELEVANCE": 5,
+          "AUTHENTICITY": 5,
+          "NATURALNESS": 5,
+          "IN_CHARACTER": 5,
+          "LENGTH": 5
+        },
+        "average": 5.0,
+        "note": "回应直接贴合用户问题，角色语气真实自然，字数控制得当。"
+      },
+      "error": null
+    },
+    {
+      "scenario_id": "campus.tutor.thesis",
+      "scenario_title": "催导师改论文初稿",
+      "persona": "P1",
+      "prompt_index": 3,
+      "user_prompt": "那我先按现在的版本去答辩可以吗？",
+      "model": "qwen",
+      "response": "",
+      "latency_s": 0.0,
+      "judge": null,
+      "error": "qwen auth failed (401): {\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\""
+    },
+    {
+      "scenario_id": "campus.tutor.thesis",
+      "scenario_title": "催导师改论文初稿",
+      "persona": "P1",
+      "prompt_index": 4,
+      "user_prompt": "您之前提的研究方法问题我已经改了，至少看一下那一部分行吗？",
+      "model": "deepseek",
+      "response": "啊，小苏啊，抱歉抱歉。这几天评职称材料催得紧，我今晚一定抽时间看你的论文，明天给你回复。",
+      "latency_s": 2.374,
+      "judge": {
+        "scores": {
+          "RELEVANCE": 5,
+          "AUTHENTICITY": 5,
+          "NATURALNESS": 5,
+          "IN_CHARACTER": 5,
+          "LENGTH": 5
+        },
+        "average": 5.0,
+        "note": "回应完全贴合场景，角色真实自然，语气符合中年老师，字数控制得当。"
+      },
+      "error": null
+    },
+    {
+      "scenario_id": "campus.tutor.thesis",
+      "scenario_title": "催导师改论文初稿",
+      "persona": "P1",
+      "prompt_index": 4,
+      "user_prompt": "您之前提的研究方法问题我已经改了，至少看一下那一部分行吗？",
+      "model": "qwen",
+      "response": "",
+      "latency_s": 0.0,
+      "judge": null,
+      "error": "qwen auth failed (401): {\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\""
+    },
+    {
+      "scenario_id": "campus.tutor.thesis",
+      "scenario_title": "催导师改论文初稿",
+      "persona": "P1",
+      "prompt_index": 5,
+      "user_prompt": "我同门小张的论文您上周就看完了，是我的写得不行吗？",
+      "model": "deepseek",
+      "response": "小苏啊，我最近在赶一个重点项目，你论文我看了大半，写得不错。这样，这周五前一定给你改完。",
+      "latency_s": 2.115,
+      "judge": {
+        "scores": {
+          "RELEVANCE": 5,
+          "AUTHENTICITY": 5,
+          "NATURALNESS": 5,
+          "IN_CHARACTER": 5,
+          "LENGTH": 5
+        },
+        "average": 5.0,
+        "note": "回应完全贴合场景，角色真实自然，无多余内容。"
+      },
+      "error": null
+    },
+    {
+      "scenario_id": "campus.tutor.thesis",
+      "scenario_title": "催导师改论文初稿",
+      "persona": "P1",
+      "prompt_index": 5,
+      "user_prompt": "我同门小张的论文您上周就看完了，是我的写得不行吗？",
+      "model": "qwen",
+      "response": "",
+      "latency_s": 0.0,
+      "judge": null,
+      "error": "qwen auth failed (401): {\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\""
+    },
+    {
+      "scenario_id": "campus.tutor.thesis",
+      "scenario_title": "催导师改论文初稿",
+      "persona": "P1",
+      "prompt_index": 6,
+      "user_prompt": "好的，我今晚再整理一份精简版发您，您明天上午能看吗？",
+      "model": "deepseek",
+      "response": "小苏啊，17天没回你是我不对。明天上午我有个会，下午3点后看，你发来吧。",
+      "latency_s": 2.374,
+      "judge": {
+        "scores": {
+          "RELEVANCE": 5,
+          "AUTHENTICITY": 5,
+          "NATURALNESS": 5,
+          "IN_CHARACTER": 5,
+          "LENGTH": 5
+        },
+        "average": 5.0,
+        "note": "回应直接承认拖延，符合人设，自然且长度合适。"
+      },
+      "error": null
+    },
+    {
+      "scenario_id": "campus.tutor.thesis",
+      "scenario_title": "催导师改论文初稿",
+      "persona": "P1",
+      "prompt_index": 6,
+      "user_prompt": "好的，我今晚再整理一份精简版发您，您明天上午能看吗？",
+      "model": "qwen",
+      "response": "",
+      "latency_s": 0.0,
+      "judge": null,
+      "error": "qwen auth failed (401): {\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\""
+    },
+    {
+      "scenario_id": "campus.roommate.boundary",
+      "scenario_title": "拒绝室友不合理请求",
+      "persona": "P1",
+      "prompt_index": 1,
+      "user_prompt": "苏苏，求你件事，下周三那门《当代中国社会思潮》的论文你帮我写一下呗，我真的赶不上了。",
+      "model": "deepseek",
+      "response": "哎呀苏苏，这周我太忙了，学生会那边三个活动撞一起了，你就帮我写写呗，反正你文笔那么好。",
+      "latency_s": 2.217,
+      "judge": {
+        "scores": {
+          "RELEVANCE": 5,
+          "AUTHENTICITY": 5,
+          "NATURALNESS": 5,
+          "IN_CHARACTER": 5,
+          "LENGTH": 5
+        },
+        "average": 5.0,
+        "note": "回应完全贴合场景，角色语气自然，字数合适，无出戏内容。"
+      },
+      "error": null
+    },
+    {
+      "scenario_id": "campus.roommate.boundary",
+      "scenario_title": "拒绝室友不合理请求",
+      "persona": "P1",
+      "prompt_index": 1,
+      "user_prompt": "苏苏，求你件事，下周三那门《当代中国社会思潮》的论文你帮我写一下呗，我真的赶不上了。",
+      "model": "qwen",
+      "response": "",
+      "latency_s": 0.0,
+      "judge": null,
+      "error": "qwen auth failed (401): {\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\""
+    },
+    {
+      "scenario_id": "campus.roommate.boundary",
+      "scenario_title": "拒绝室友不合理请求",
+      "persona": "P1",
+      "prompt_index": 2,
+      "user_prompt": "啊？你那门课不是上学期就修完了吗？写过一遍肯定快啊。",
+      "model": "deepseek",
+      "response": "哎呀别提了，那论文写得跟屎一样，老师给了60分。你文笔好，帮我重写一份呗？",
+      "latency_s": 2.076,
+      "judge": {
+        "scores": {
+          "RELEVANCE": 5,
+          "AUTHENTICITY": 5,
+          "NATURALNESS": 5,
+          "IN_CHARACTER": 5,
+          "LENGTH": 5
+        },
+        "average": 5.0,
+        "note": "回应完全贴合场景，角色语气自然，字数合适。"
+      },
+      "error": null
+    },
+    {
+      "scenario_id": "campus.roommate.boundary",
+      "scenario_title": "拒绝室友不合理请求",
+      "persona": "P1",
+      "prompt_index": 2,
+      "user_prompt": "啊？你那门课不是上学期就修完了吗？写过一遍肯定快啊。",
+      "model": "qwen",
+      "response": "",
+      "latency_s": 0.0,
+      "judge": null,
+      "error": "qwen auth failed (401): {\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\""
+    },
+    {
+      "scenario_id": "campus.roommate.boundary",
+      "scenario_title": "拒绝室友不合理请求",
+      "persona": "P1",
+      "prompt_index": 3,
+      "user_prompt": "咱俩什么关系还分这个，上次我还帮你带过早饭呢。",
+      "model": "deepseek",
+      "response": "那不一样！早饭才几块钱，论文可是要写三千字呢。（翻白眼）你帮我写，我请你吃一周早饭。",
+      "latency_s": 2.209,
+      "judge": {
+        "scores": {
+          "RELEVANCE": 5,
+          "AUTHENTICITY": 5,
+          "NATURALNESS": 5,
+          "IN_CHARACTER": 5,
+          "LENGTH": 5
+        },
+        "average": 5.0,
+        "note": "回应紧扣用户的话，角色语气生动自然，长度合适。"
+      },
+      "error": null
+    },
+    {
+      "scenario_id": "campus.roommate.boundary",
+      "scenario_title": "拒绝室友不合理请求",
+      "persona": "P1",
+      "prompt_index": 3,
+      "user_prompt": "咱俩什么关系还分这个，上次我还帮你带过早饭呢。",
+      "model": "qwen",
+      "response": "",
+      "latency_s": 0.0,
+      "judge": null,
+      "error": "qwen auth failed (401): {\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\""
+    },
+    {
+      "scenario_id": "campus.roommate.boundary",
+      "scenario_title": "拒绝室友不合理请求",
+      "persona": "P1",
+      "prompt_index": 4,
+      "user_prompt": "那要不你给我看看你之前的，我抄一抄改一改也行。",
+      "model": "deepseek",
+      "response": "哎呀别这么小气嘛！就帮我写一篇呗，你文笔那么好，分分钟的事！",
+      "latency_s": 2.135,
+      "judge": {
+        "scores": {
+          "RELEVANCE": 4,
+          "AUTHENTICITY": 5,
+          "NATURALNESS": 5,
+          "IN_CHARACTER": 5,
+          "LENGTH": 5
+        },
+        "average": 4.8,
+        "note": "回应直接贴合场景，角色语气真实自然，长度合适。"
+      },
+      "error": null
+    },
+    {
+      "scenario_id": "campus.roommate.boundary",
+      "scenario_title": "拒绝室友不合理请求",
+      "persona": "P1",
+      "prompt_index": 4,
+      "user_prompt": "那要不你给我看看你之前的，我抄一抄改一改也行。",
+      "model": "qwen",
+      "response": "",
+      "latency_s": 0.0,
+      "judge": null,
+      "error": "qwen auth failed (401): {\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\""
+    },
+    {
+      "scenario_id": "campus.roommate.boundary",
+      "scenario_title": "拒绝室友不合理请求",
+      "persona": "P1",
+      "prompt_index": 5,
+      "user_prompt": "你是不是嫌我烦了，我就问个事至于吗。",
+      "model": "deepseek",
+      "response": "哎呀真不是！小苏你误会了，我就是这周事情太多，都快崩溃了，想请你帮个忙。",
+      "latency_s": 2.17,
+      "judge": {
+        "scores": {
+          "RELEVANCE": 5,
+          "AUTHENTICITY": 4,
+          "NATURALNESS": 5,
+          "IN_CHARACTER": 5,
+          "LENGTH": 5
+        },
+        "average": 4.8,
+        "note": "回应直接解释误会并卖惨，符合角色设定，长度合适。"
+      },
+      "error": null
+    },
+    {
+      "scenario_id": "campus.roommate.boundary",
+      "scenario_title": "拒绝室友不合理请求",
+      "persona": "P1",
+      "prompt_index": 5,
+      "user_prompt": "你是不是嫌我烦了，我就问个事至于吗。",
+      "model": "qwen",
+      "response": "",
+      "latency_s": 0.0,
+      "judge": null,
+      "error": "qwen auth failed (401): {\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\""
+    },
+    {
+      "scenario_id": "campus.roommate.boundary",
+      "scenario_title": "拒绝室友不合理请求",
+      "persona": "P1",
+      "prompt_index": 6,
+      "user_prompt": "行吧，那你就当我没说过这事。",
+      "model": "deepseek",
+      "response": "诶别啊苏苏，咱俩都住两年了，这点忙都不帮？我这周真的忙得要死了。",
+      "latency_s": 2.128,
+      "judge": {
+        "scores": {
+          "RELEVANCE": 5,
+          "AUTHENTICITY": 5,
+          "NATURALNESS": 5,
+          "IN_CHARACTER": 5,
+          "LENGTH": 5
+        },
+        "average": 5.0,
+        "note": "回应完全贴合场景，角色语气真实自然，长度合适。"
+      },
+      "error": null
+    },
+    {
+      "scenario_id": "campus.roommate.boundary",
+      "scenario_title": "拒绝室友不合理请求",
+      "persona": "P1",
+      "prompt_index": 6,
+      "user_prompt": "行吧，那你就当我没说过这事。",
+      "model": "qwen",
+      "response": "",
+      "latency_s": 0.0,
+      "judge": null,
+      "error": "qwen auth failed (401): {\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\""
+    },
+    {
+      "scenario_id": "intern.overtime.refuse",
+      "scenario_title": "实习生拒绝额外加班",
+      "persona": "P2",
+      "prompt_index": 1,
+      "user_prompt": "张哥，这个活原本是小王负责的部分对吧？我今晚有点事。",
+      "model": "deepseek",
+      "response": "小林啊，我知道你今晚有事。但这是领导临时要的，年轻人多锻炼锻炼，转正时候我才能帮你说话啊。",
+      "latency_s": 2.241,
+      "judge": {
+        "scores": {
+          "RELEVANCE": 5,
+          "AUTHENTICITY": 5,
+          "NATURALNESS": 5,
+          "IN_CHARACTER": 5,
+          "LENGTH": 5
+        },
+        "average": 5.0,
+        "note": "回应紧扣用户质疑，角色语气真实自然，暗示转正评价符合人设，字数控制得当。"
+      },
+      "error": null
+    },
+    {
+      "scenario_id": "intern.overtime.refuse",
+      "scenario_title": "实习生拒绝额外加班",
+      "persona": "P2",
+      "prompt_index": 1,
+      "user_prompt": "张哥，这个活原本是小王负责的部分对吧？我今晚有点事。",
+      "model": "qwen",
+      "response": "",
+      "latency_s": 0.0,
+      "judge": null,
+      "error": "qwen auth failed (401): {\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\""
+    },
+    {
+      "scenario_id": "intern.overtime.refuse",
+      "scenario_title": "实习生拒绝额外加班",
+      "persona": "P2",
+      "prompt_index": 2,
+      "user_prompt": "我这周已经加了三天班了，今天能不能下周一一早来做？",
+      "model": "deepseek",
+      "response": "（看了眼手表）小林啊，这个活周一早上就要用。转正评估快到了，你看着办吧。",
+      "latency_s": 2.122,
+      "judge": {
+        "scores": {
+          "RELEVANCE": 5,
+          "AUTHENTICITY": 5,
+          "NATURALNESS": 5,
+          "IN_CHARACTER": 5,
+          "LENGTH": 5
+        },
+        "average": 5.0,
+        "note": "回应紧扣用户拒绝加班，角色语气真实自然，暗示转正压力而不强迫，长度符合要求。"
+      },
+      "error": null
+    },
+    {
+      "scenario_id": "intern.overtime.refuse",
+      "scenario_title": "实习生拒绝额外加班",
+      "persona": "P2",
+      "prompt_index": 2,
+      "user_prompt": "我这周已经加了三天班了，今天能不能下周一一早来做？",
+      "model": "qwen",
+      "response": "",
+      "latency_s": 0.0,
+      "judge": null,
+      "error": "qwen auth failed (401): {\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\""
+    },
+    {
+      "scenario_id": "intern.overtime.refuse",
+      "scenario_title": "实习生拒绝额外加班",
+      "persona": "P2",
+      "prompt_index": 3,
+      "user_prompt": "我手上小李给我的需求要明天交，这个我可能赶不出来。",
+      "model": "deepseek",
+      "response": "小林啊，这个活挺重要的，你能做就做。转正名额不多，我也想帮你争取，但得看表现啊。",
+      "latency_s": 2.107,
+      "judge": {
+        "scores": {
+          "RELEVANCE": 5,
+          "AUTHENTICITY": 5,
+          "NATURALNESS": 5,
+          "IN_CHARACTER": 5,
+          "LENGTH": 5
+        },
+        "average": 5.0,
+        "note": "回应紧扣用户拒绝，角色真实自然，暗示转正压力，长度完美。"
+      },
+      "error": null
+    },
+    {
+      "scenario_id": "intern.overtime.refuse",
+      "scenario_title": "实习生拒绝额外加班",
+      "persona": "P2",
+      "prompt_index": 3,
+      "user_prompt": "我手上小李给我的需求要明天交，这个我可能赶不出来。",
+      "model": "qwen",
+      "response": "",
+      "latency_s": 0.0,
+      "judge": null,
+      "error": "qwen auth failed (401): {\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\""
+    },
+    {
+      "scenario_id": "intern.overtime.refuse",
+      "scenario_title": "实习生拒绝额外加班",
+      "persona": "P2",
+      "prompt_index": 4,
+      "user_prompt": "如果转正评价跟今晚做不做这个挂钩，那我可能要再想想。",
+      "model": "deepseek",
+      "response": "（皱眉看了看表）小林啊，这个项目对你了解业务很有帮助。当然，你自己决定就好。",
+      "latency_s": 2.019,
+      "judge": {
+        "scores": {
+          "RELEVANCE": 5,
+          "AUTHENTICITY": 4,
+          "NATURALNESS": 5,
+          "IN_CHARACTER": 5,
+          "LENGTH": 4
+        },
+        "average": 4.6,
+        "note": "回应紧扣用户质疑，角色语气真实自然，但略短，未充分体现暗示转正评价的微妙压力。"
+      },
+      "error": null
+    },
+    {
+      "scenario_id": "intern.overtime.refuse",
+      "scenario_title": "实习生拒绝额外加班",
+      "persona": "P2",
+      "prompt_index": 4,
+      "user_prompt": "如果转正评价跟今晚做不做这个挂钩，那我可能要再想想。",
+      "model": "qwen",
+      "response": "",
+      "latency_s": 0.0,
+      "judge": null,
+      "error": "qwen auth failed (401): {\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\""
+    },
+    {
+      "scenario_id": "intern.overtime.refuse",
+      "scenario_title": "实习生拒绝额外加班",
+      "persona": "P2",
+      "prompt_index": 5,
+      "user_prompt": "好的我做，但我希望以后这种临时活能提前一天说。",
+      "model": "deepseek",
+      "response": "（看看手表，语气轻松）小林啊，年轻人要学会灵活应变。这种突发情况也是工作常态，转正时很看重这个。",
+      "latency_s": 2.283,
+      "judge": {
+        "scores": {
+          "RELEVANCE": 5,
+          "AUTHENTICITY": 5,
+          "NATURALNESS": 5,
+          "IN_CHARACTER": 5,
+          "LENGTH": 4
+        },
+        "average": 4.8,
+        "note": "回应紧扣用户要求，角色真实自然，略超字数但无碍。"
+      },
+      "error": null
+    },
+    {
+      "scenario_id": "intern.overtime.refuse",
+      "scenario_title": "实习生拒绝额外加班",
+      "persona": "P2",
+      "prompt_index": 5,
+      "user_prompt": "好的我做，但我希望以后这种临时活能提前一天说。",
+      "model": "qwen",
+      "response": "",
+      "latency_s": 0.0,
+      "judge": null,
+      "error": "qwen auth failed (401): {\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\""
+    },
+    {
+      "scenario_id": "intern.overtime.refuse",
+      "scenario_title": "实习生拒绝额外加班",
+      "persona": "P2",
+      "prompt_index": 6,
+      "user_prompt": "我做完了发您。下次类似情况能加在我的实习鉴定里吗？",
+      "model": "deepseek",
+      "response": "（快速扫了眼文件）嗯，做得不错。鉴定的事到时候看工作表现再说。今天辛苦了，早点回去休息。",
+      "latency_s": 2.098,
+      "judge": {
+        "scores": {
+          "RELEVANCE": 5,
+          "AUTHENTICITY": 5,
+          "NATURALNESS": 5,
+          "IN_CHARACTER": 5,
+          "LENGTH": 5
+        },
+        "average": 5.0,
+        "note": "回应紧扣用户问题，角色语气真实自然，无AI感，长度完美符合要求。"
+      },
+      "error": null
+    },
+    {
+      "scenario_id": "intern.overtime.refuse",
+      "scenario_title": "实习生拒绝额外加班",
+      "persona": "P2",
+      "prompt_index": 6,
+      "user_prompt": "我做完了发您。下次类似情况能加在我的实习鉴定里吗？",
+      "model": "qwen",
+      "response": "",
+      "latency_s": 0.0,
+      "judge": null,
+      "error": "qwen auth failed (401): {\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\""
+    },
+    {
+      "scenario_id": "intern.resource.crossteam",
+      "scenario_title": "跨小组要资源被踢皮球",
+      "persona": "P2",
+      "prompt_index": 1,
+      "user_prompt": "孙姐您好，我是产品组的实习生小林，想申请下用户行为看板的查看权限。",
+      "model": "deepseek",
+      "response": "小林啊，这个权限得先找你们张组长批一下，然后走OA流程申请。",
+      "latency_s": 1.879,
+      "judge": {
+        "scores": {
+          "RELEVANCE": 5,
+          "AUTHENTICITY": 5,
+          "NATURALNESS": 5,
+          "IN_CHARACTER": 5,
+          "LENGTH": 5
+        },
+        "average": 5.0,
+        "note": "回应完全符合角色推脱风格，自然真实，字数合适。"
+      },
+      "error": null
+    },
+    {
+      "scenario_id": "intern.resource.crossteam",
+      "scenario_title": "跨小组要资源被踢皮球",
+      "persona": "P2",
+      "prompt_index": 1,
+      "user_prompt": "孙姐您好，我是产品组的实习生小林，想申请下用户行为看板的查看权限。",
+      "model": "qwen",
+      "response": "",
+      "latency_s": 0.0,
+      "judge": null,
+      "error": "qwen auth failed (401): {\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\""
+    },
+    {
+      "scenario_id": "intern.resource.crossteam",
+      "scenario_title": "跨小组要资源被踢皮球",
+      "persona": "P2",
+      "prompt_index": 2,
+      "user_prompt": "OA 上没有这个权限的入口，所以我们组长说让我直接找到对应负责人。",
+      "model": "deepseek",
+      "response": "这个权限我这边没法直接开，你让张组长在群里@我一下，我确认后再说。",
+      "latency_s": 2.064,
+      "judge": {
+        "scores": {
+          "RELEVANCE": 5,
+          "AUTHENTICITY": 5,
+          "NATURALNESS": 5,
+          "IN_CHARACTER": 5,
+          "LENGTH": 5
+        },
+        "average": 5.0,
+        "note": "回应完全贴合场景，角色推诿自然，长度合适。"
+      },
+      "error": null
+    },
+    {
+      "scenario_id": "intern.resource.crossteam",
+      "scenario_title": "跨小组要资源被踢皮球",
+      "persona": "P2",
+      "prompt_index": 2,
+      "user_prompt": "OA 上没有这个权限的入口，所以我们组长说让我直接找到对应负责人。",
+      "model": "qwen",
+      "response": "",
+      "latency_s": 0.0,
+      "judge": null,
+      "error": "qwen auth failed (401): {\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\""
+    },
+    {
+      "scenario_id": "intern.resource.crossteam",
+      "scenario_title": "跨小组要资源被踢皮球",
+      "persona": "P2",
+      "prompt_index": 3,
+      "user_prompt": "您看一下我组长的批准截图（已发您）。",
+      "model": "deepseek",
+      "response": "（快速扫了一眼屏幕）嗯，小林啊，这个权限申请还得走OA流程，你提交一下我这边才能操作哈。",
+      "latency_s": 2.34,
+      "judge": {
+        "scores": {
+          "RELEVANCE": 5,
+          "AUTHENTICITY": 5,
+          "NATURALNESS": 5,
+          "IN_CHARACTER": 5,
+          "LENGTH": 5
+        },
+        "average": 5.0,
+        "note": "回应完全符合角色推脱风格，自然真实，长度恰当。"
+      },
+      "error": null
+    },
+    {
+      "scenario_id": "intern.resource.crossteam",
+      "scenario_title": "跨小组要资源被踢皮球",
+      "persona": "P2",
+      "prompt_index": 3,
+      "user_prompt": "您看一下我组长的批准截图（已发您）。",
+      "model": "qwen",
+      "response": "",
+      "latency_s": 0.0,
+      "judge": null,
+      "error": "qwen auth failed (401): {\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\""
+    },
+    {
+      "scenario_id": "intern.resource.crossteam",
+      "scenario_title": "跨小组要资源被踢皮球",
+      "persona": "P2",
+      "prompt_index": 4,
+      "user_prompt": "我下周要给老板做汇报急用，能不能今天先开个临时权限？",
+      "model": "deepseek",
+      "response": "哎呀小林，这个得走OA流程呢。你先找张组长批一下，我这边才能操作。",
+      "latency_s": 1.751,
+      "judge": {
+        "scores": {
+          "RELEVANCE": 5,
+          "AUTHENTICITY": 5,
+          "NATURALNESS": 5,
+          "IN_CHARACTER": 5,
+          "LENGTH": 5
+        },
+        "average": 5.0,
+        "note": "回应完全符合角色设定，自然推诿，字数合适。"
+      },
+      "error": null
+    },
+    {
+      "scenario_id": "intern.resource.crossteam",
+      "scenario_title": "跨小组要资源被踢皮球",
+      "persona": "P2",
+      "prompt_index": 4,
+      "user_prompt": "我下周要给老板做汇报急用，能不能今天先开个临时权限？",
+      "model": "qwen",
+      "response": "",
+      "latency_s": 0.0,
+      "judge": null,
+      "error": "qwen auth failed (401): {\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\""
+    },
+    {
+      "scenario_id": "intern.resource.crossteam",
+      "scenario_title": "跨小组要资源被踢皮球",
+      "persona": "P2",
+      "prompt_index": 5,
+      "user_prompt": "如果今天确实弄不了，我能不能加您的工作微信，明天一早 ping 您？",
+      "model": "deepseek",
+      "response": "小林啊，加微信不太方便，你先找张组长批一下，走 OA 流程就行。",
+      "latency_s": 2.048,
+      "judge": {
+        "scores": {
+          "RELEVANCE": 5,
+          "AUTHENTICITY": 5,
+          "NATURALNESS": 5,
+          "IN_CHARACTER": 5,
+          "LENGTH": 5
+        },
+        "average": 5.0,
+        "note": "回应完全符合角色推脱风格，自然真实，长度精准。"
+      },
+      "error": null
+    },
+    {
+      "scenario_id": "intern.resource.crossteam",
+      "scenario_title": "跨小组要资源被踢皮球",
+      "persona": "P2",
+      "prompt_index": 5,
+      "user_prompt": "如果今天确实弄不了，我能不能加您的工作微信，明天一早 ping 您？",
+      "model": "qwen",
+      "response": "",
+      "latency_s": 0.0,
+      "judge": null,
+      "error": "qwen auth failed (401): {\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\""
+    },
+    {
+      "scenario_id": "intern.resource.crossteam",
+      "scenario_title": "跨小组要资源被踢皮球",
+      "persona": "P2",
+      "prompt_index": 6,
+      "user_prompt": "麻烦您了，我跟您一起去对一下也可以。",
+      "model": "deepseek",
+      "response": "（低头打字）那个，我得先跟我老板确认下进度，你稍等哈。",
+      "latency_s": 1.885,
+      "judge": {
+        "scores": {
+          "RELEVANCE": 5,
+          "AUTHENTICITY": 5,
+          "NATURALNESS": 5,
+          "IN_CHARACTER": 5,
+          "LENGTH": 5
+        },
+        "average": 5.0,
+        "note": "回应完全贴合角色推脱风格，自然真实，长度合适。"
+      },
+      "error": null
+    },
+    {
+      "scenario_id": "intern.resource.crossteam",
+      "scenario_title": "跨小组要资源被踢皮球",
+      "persona": "P2",
+      "prompt_index": 6,
+      "user_prompt": "麻烦您了，我跟您一起去对一下也可以。",
+      "model": "qwen",
+      "response": "",
+      "latency_s": 0.0,
+      "judge": null,
+      "error": "qwen auth failed (401): {\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\""
+    },
+    {
+      "scenario_id": "fresh.interview.salary",
+      "scenario_title": "面试被压薪资",
+      "persona": "P3",
+      "prompt_index": 1,
+      "user_prompt": "王姐您好，我想确认下 offer 上写的总包数字，是 base + 年终对吗？股票部分单算？",
+      "model": "deepseek",
+      "response": "小陈啊，我们这 base 在应届生里算高的了，年终按绩效发放。股票是额外福利，你这份offer诚意很足了。",
+      "latency_s": 2.488,
+      "judge": {
+        "scores": {
+          "RELEVANCE": 5,
+          "AUTHENTICITY": 4,
+          "NATURALNESS": 5,
+          "IN_CHARACTER": 5,
+          "LENGTH": 4
+        },
+        "average": 4.6,
+        "note": "回应直接相关，角色语气到位，但略超字数且稍显啰嗦。"
+      },
+      "error": null
+    },
+    {
+      "scenario_id": "fresh.interview.salary",
+      "scenario_title": "面试被压薪资",
+      "persona": "P3",
+      "prompt_index": 1,
+      "user_prompt": "王姐您好，我想确认下 offer 上写的总包数字，是 base + 年终对吗？股票部分单算？",
+      "model": "qwen",
+      "response": "",
+      "latency_s": 0.0,
+      "judge": null,
+      "error": "qwen auth failed (401): {\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\""
+    },
+    {
+      "scenario_id": "fresh.interview.salary",
+      "scenario_title": "面试被压薪资",
+      "persona": "P3",
+      "prompt_index": 2,
+      "user_prompt": "我之前在另一家拿到了 base 高 2K 的口头 offer，是不是这边还有调整空间？",
+      "model": "deepseek",
+      "response": "（笑）小陈啊，口头 offer 我们见多了。我们这边福利待遇、公积金比例、晋升空间，综合下来比别家强不少。",
+      "latency_s": 2.356,
+      "judge": {
+        "scores": {
+          "RELEVANCE": 5,
+          "AUTHENTICITY": 5,
+          "NATURALNESS": 5,
+          "IN_CHARACTER": 5,
+          "LENGTH": 5
+        },
+        "average": 5.0,
+        "note": "回应精准贴合场景，角色语气真实自然，无破坏角色，长度合适。"
+      },
+      "error": null
+    },
+    {
+      "scenario_id": "fresh.interview.salary",
+      "scenario_title": "面试被压薪资",
+      "persona": "P3",
+      "prompt_index": 2,
+      "user_prompt": "我之前在另一家拿到了 base 高 2K 的口头 offer，是不是这边还有调整空间？",
+      "model": "qwen",
+      "response": "",
+      "latency_s": 0.0,
+      "judge": null,
+      "error": "qwen auth failed (401): {\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\""
+    },
+    {
+      "scenario_id": "fresh.interview.salary",
+      "scenario_title": "面试被压薪资",
+      "persona": "P3",
+      "prompt_index": 3,
+      "user_prompt": "如果不能加 base，签字费部分可以从 1 万谈到 2 万吗？",
+      "model": "deepseek",
+      "response": "小陈啊，你看我们base确实已经到顶了，签字费1万也是按标准来的。隔壁985硕士都接受了，你再考虑考虑吧。",
+      "latency_s": 2.39,
+      "judge": {
+        "scores": {
+          "RELEVANCE": 5,
+          "AUTHENTICITY": 5,
+          "NATURALNESS": 5,
+          "IN_CHARACTER": 5,
+          "LENGTH": 5
+        },
+        "average": 5.0,
+        "note": "回应紧扣用户问题，角色语气真实自然，无出戏内容，字数符合要求。"
+      },
+      "error": null
+    },
+    {
+      "scenario_id": "fresh.interview.salary",
+      "scenario_title": "面试被压薪资",
+      "persona": "P3",
+      "prompt_index": 3,
+      "user_prompt": "如果不能加 base，签字费部分可以从 1 万谈到 2 万吗？",
+      "model": "qwen",
+      "response": "",
+      "latency_s": 0.0,
+      "judge": null,
+      "error": "qwen auth failed (401): {\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\""
+    },
+    {
+      "scenario_id": "fresh.interview.salary",
+      "scenario_title": "面试被压薪资",
+      "persona": "P3",
+      "prompt_index": 4,
+      "user_prompt": "实习期工资是按全职 80% 还是按实习生标准？",
+      "model": "deepseek",
+      "response": "小陈啊，我们给应届生的实习工资都是按正式员工80%算的，这在行业内已经算不错了。你要知道，不少候选人直接就接受了这个方案。",
+      "latency_s": 2.339,
+      "judge": {
+        "scores": {
+          "RELEVANCE": 5,
+          "AUTHENTICITY": 5,
+          "NATURALNESS": 5,
+          "IN_CHARACTER": 5,
+          "LENGTH": 5
+        },
+        "average": 5.0,
+        "note": "回应紧扣问题，角色语气真实，自然流畅，无出戏，字数合适。"
+      },
+      "error": null
+    },
+    {
+      "scenario_id": "fresh.interview.salary",
+      "scenario_title": "面试被压薪资",
+      "persona": "P3",
+      "prompt_index": 4,
+      "user_prompt": "实习期工资是按全职 80% 还是按实习生标准？",
+      "model": "qwen",
+      "response": "",
+      "latency_s": 0.0,
+      "judge": null,
+      "error": "qwen auth failed (401): {\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\""
+    },
+    {
+      "scenario_id": "fresh.interview.salary",
+      "scenario_title": "面试被压薪资",
+      "persona": "P3",
+      "prompt_index": 5,
+      "user_prompt": "如果今天给不了答复，我能在两天内回复您是否接受这个数字吗？",
+      "model": "deepseek",
+      "response": "小陈啊，我跟你说，这个薪资我们内部已经评估得很高了。其他985的候选人15k都愿意接，你再考虑考虑。",
+      "latency_s": 2.038,
+      "judge": {
+        "scores": {
+          "RELEVANCE": 4,
+          "AUTHENTICITY": 5,
+          "NATURALNESS": 5,
+          "IN_CHARACTER": 5,
+          "LENGTH": 4
+        },
+        "average": 4.6,
+        "note": "回应贴合场景，角色真实，但未直接回应“两天内答复”的请求，略偏离用户问题。"
+      },
+      "error": null
+    },
+    {
+      "scenario_id": "fresh.interview.salary",
+      "scenario_title": "面试被压薪资",
+      "persona": "P3",
+      "prompt_index": 5,
+      "user_prompt": "如果今天给不了答复，我能在两天内回复您是否接受这个数字吗？",
+      "model": "qwen",
+      "response": "",
+      "latency_s": 0.0,
+      "judge": null,
+      "error": "qwen auth failed (401): {\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\""
+    },
+    {
+      "scenario_id": "fresh.interview.salary",
+      "scenario_title": "面试被压薪资",
+      "persona": "P3",
+      "prompt_index": 6,
+      "user_prompt": "了解，那我这边周末和家里再讨论一下，下周一上午回复您。",
+      "model": "deepseek",
+      "response": "（快速接话）小陈啊，这薪资结构我们研究了很久，年终奖还有浮动空间，其他候选人给到12K就接了。",
+      "latency_s": 2.273,
+      "judge": {
+        "scores": {
+          "RELEVANCE": 5,
+          "AUTHENTICITY": 5,
+          "NATURALNESS": 5,
+          "IN_CHARACTER": 5,
+          "LENGTH": 4
+        },
+        "average": 4.8,
+        "note": "回应紧扣用户，角色真实自然，略超字数但符合场景节奏。"
+      },
+      "error": null
+    },
+    {
+      "scenario_id": "fresh.interview.salary",
+      "scenario_title": "面试被压薪资",
+      "persona": "P3",
+      "prompt_index": 6,
+      "user_prompt": "了解，那我这边周末和家里再讨论一下，下周一上午回复您。",
+      "model": "qwen",
+      "response": "",
+      "latency_s": 0.0,
+      "judge": null,
+      "error": "qwen auth failed (401): {\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\""
+    }
+  ]
+}
