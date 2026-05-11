@@ -121,8 +121,6 @@ jobs:
           fi
       - uses: pnpm/action-setup@v4
         if: steps.check.outputs.exists == 'true'
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         if: steps.check.outputs.exists == 'true'
         with:
@@ -158,8 +156,6 @@ jobs:
           fi
       - uses: pnpm/action-setup@v4
         if: steps.check.outputs.exists == 'true'
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         if: steps.check.outputs.exists == 'true'
         with:
