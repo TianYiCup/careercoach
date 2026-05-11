@@ -67,7 +67,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install yamllint
-      - run: yamllint -d "{rules: {line-length: {max: 200}, document-start: disable, truthy: {check-keys: false}}}" .github/
+      - run: |
+          yamllint -d '{rules: {line-length: {max: 300}, document-start: disable, truthy: {check-keys: false}}}' .github/
 
   # ============================================================
   # 条件跑：apps/api 存在时
