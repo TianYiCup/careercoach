@@ -185,12 +185,14 @@ paths:
               $ref: '#/components/schemas/TurnRequest'
       responses:
         '200':
-          description: 'Server-Sent Events stream. Event types: `opponent.delta` (token chunks), `opponent.done`
-            (final turn payload), `coach.hint` (three-tier coach suggestions), `meta` (turns_used / turns_left).
-            Schema is documented in PRD §7.4.'
+          description: Server-Sent Events stream. Each `data:` line is a JSON `SseEventEnvelope.frame`
+            — a discriminated union over the four event types (`opponent.delta` / `opponent.done` / `coach.hint`
+            / `meta`). Frontend should switch on `event` to pick the matching `data` shape. Wire example
+            in PRD §7.4.
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/SseEventEnvelope'
             text/event-stream: {}
         '501':
           description: Endpoint exists in v0.1 schema but the handler is not implemented.
@@ -271,6 +273,38 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
+    CoachHintEvent:
+      properties:
+        safe:
+          type: string
+          title: Safe
+          description: 稳如老狗 🐶 — low-risk reply.
+          examples:
+          - 可以反问 deadline，让对方先暴露底牌
+        aggressive:
+          type: string
+          title: Aggressive
+          description: 正面刚 🔥 — direct push-back.
+          examples:
+          - 直接质疑加班合理性
+        humor:
+          type: string
+          title: Humor
+          description: 整活儿 🤡 — humor / deflection.
+          examples:
+          - 用 '离婚' 当借口
+      type: object
+      required:
+      - safe
+      - aggressive
+      - humor
+      title: CoachHintEvent
+      description: 'Three-tier coach suggestions surfaced after the opponent finishes (design-spec §6).
+
+
+        All three tiers are returned together so the UI can render the HintCardV2
+
+        pill switcher without an extra round-trip.'
     CreateSessionRequest:
       properties:
         mode:
@@ -391,6 +425,26 @@ components:
       - version
       - env
       title: HealthResponse
+    MetaEvent:
+      properties:
+        turns_used:
+          type: integer
+          minimum: 0.0
+          title: Turns Used
+          examples:
+          - 5
+        turns_left:
+          type: integer
+          minimum: 0.0
+          title: Turns Left
+          examples:
+          - 25
+      type: object
+      required:
+      - turns_used
+      - turns_left
+      title: MetaEvent
+      description: Quota / meter update. Fires after each turn so the UI can re-render the counter.
     ModerationCheckRequest:
       properties:
         content:
@@ -470,6 +524,39 @@ components:
       - score
       - trace_id
       title: ModerationCheckResponse
+    OpponentDeltaEvent:
+      properties:
+        text:
+          type: string
+          title: Text
+          description: Next token chunk. Concatenate in order to reconstruct the full reply.
+          examples:
+          - 什么
+      type: object
+      required:
+      - text
+      title: OpponentDeltaEvent
+      description: Streaming token chunk from the opponent persona. Fired many times per turn.
+    OpponentDoneEvent:
+      properties:
+        turn_id:
+          type: string
+          title: Turn Id
+          description: Server-assigned turn id; use it when calling /sessions/{id}/end.
+          examples:
+          - t_018f3a8b1c2d7e3a
+        full_text:
+          type: string
+          title: Full Text
+          description: Complete opponent reply, equivalent to the concatenation of all deltas.
+          examples:
+          - 什么安排比工作还重要？
+      type: object
+      required:
+      - turn_id
+      - full_text
+      title: OpponentDoneEvent
+      description: Terminal event for the opponent reply. Fires exactly once per turn.
     RedirectResource:
       properties:
         title:
@@ -685,6 +772,29 @@ components:
       - token
       - user
       title: SmsVerifyResponse
+    SseEventEnvelope:
+      properties:
+        frame:
+          oneOf:
+          - $ref: '#/components/schemas/_OpponentDeltaFrame'
+          - $ref: '#/components/schemas/_OpponentDoneFrame'
+          - $ref: '#/components/schemas/_CoachHintFrame'
+          - $ref: '#/components/schemas/_MetaFrame'
+          title: Frame
+          description: One frame of the /sessions/{id}/turns SSE stream. The `event` tag selects the matching
+            `data` shape.
+          discriminator:
+            propertyName: event
+            mapping:
+              coach.hint: '#/components/schemas/_CoachHintFrame'
+              meta: '#/components/schemas/_MetaFrame'
+              opponent.delta: '#/components/schemas/_OpponentDeltaFrame'
+              opponent.done: '#/components/schemas/_OpponentDoneFrame'
+      type: object
+      required:
+      - frame
+      title: SseEventEnvelope
+      description: Wrapper that lets FastAPI register `SseEventFrame` in components/schemas.
     TurnRequest:
       properties:
         content:
@@ -775,3 +885,55 @@ components:
       - tag
       - delta
       title: WeaknessUpdate
+    _CoachHintFrame:
+      properties:
+        event:
+          type: string
+          const: coach.hint
+          title: Event
+          default: coach.hint
+        data:
+          $ref: '#/components/schemas/CoachHintEvent'
+      type: object
+      required:
+      - data
+      title: _CoachHintFrame
+    _MetaFrame:
+      properties:
+        event:
+          type: string
+          const: meta
+          title: Event
+          default: meta
+        data:
+          $ref: '#/components/schemas/MetaEvent'
+      type: object
+      required:
+      - data
+      title: _MetaFrame
+    _OpponentDeltaFrame:
+      properties:
+        event:
+          type: string
+          const: opponent.delta
+          title: Event
+          default: opponent.delta
+        data:
+          $ref: '#/components/schemas/OpponentDeltaEvent'
+      type: object
+      required:
+      - data
+      title: _OpponentDeltaFrame
+    _OpponentDoneFrame:
+      properties:
+        event:
+          type: string
+          const: opponent.done
+          title: Event
+          default: opponent.done
+        data:
+          $ref: '#/components/schemas/OpponentDoneEvent'
+      type: object
+      required:
+      - data
+      title: _OpponentDoneFrame

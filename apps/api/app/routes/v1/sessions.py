@@ -9,6 +9,7 @@ from app.schemas.sessions import (
     EndSessionResponse,
     TurnRequest,
 )
+from app.schemas.sse import SseEventEnvelope
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -28,13 +29,13 @@ async def create_session(payload: CreateSessionRequest) -> CreateSessionResponse
     responses={
         200: {
             "description": (
-                "Server-Sent Events stream. Event types: "
-                "`opponent.delta` (token chunks), "
-                "`opponent.done` (final turn payload), "
-                "`coach.hint` (three-tier coach suggestions), "
-                "`meta` (turns_used / turns_left). "
-                "Schema is documented in PRD §7.4."
+                "Server-Sent Events stream. Each `data:` line is a JSON "
+                "`SseEventEnvelope.frame` — a discriminated union over the "
+                "four event types (`opponent.delta` / `opponent.done` / "
+                "`coach.hint` / `meta`). Frontend should switch on `event` "
+                "to pick the matching `data` shape. Wire example in PRD §7.4."
             ),
+            "model": SseEventEnvelope,
             "content": {"text/event-stream": {}},
         },
         **STUB_RESPONSES,

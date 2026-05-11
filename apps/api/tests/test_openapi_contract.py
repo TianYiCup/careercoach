@@ -112,3 +112,26 @@ async def test_health_still_works(client: AsyncClient) -> None:
     resp = await client.get("/health")
     assert resp.status_code == 200
     assert resp.json()["status"] == "ok"
+
+
+def test_sse_event_schemas_registered() -> None:
+    """B generates types from openapi.yaml; the 4 SSE payloads + envelope must be present."""
+    schemas = app.openapi()["components"]["schemas"]
+
+    for name in (
+        "OpponentDeltaEvent",
+        "OpponentDoneEvent",
+        "CoachHintEvent",
+        "MetaEvent",
+        "SseEventEnvelope",
+    ):
+        assert name in schemas, f"missing SSE schema: {name}"
+
+
+def test_turns_response_uses_sse_envelope() -> None:
+    """The /turns 200 response must reference SseEventEnvelope so codegen sees the discriminator."""
+    spec = app.openapi()
+    turn_op = spec["paths"]["/v1/sessions/{session_id}/turns"]["post"]
+    schema_ref = turn_op["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+
+    assert schema_ref.endswith("/SseEventEnvelope")
