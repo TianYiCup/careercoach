@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 AppEnv = Literal["development", "staging", "production"]
@@ -29,6 +29,13 @@ class Settings(BaseSettings):
     sentry_dsn: str = ""
 
     jwt_secret: str = Field(default="dev-only-not-for-prod-32-chars-min!")
+
+    # LLM · DeepSeek (primary, OpenAI-compatible).
+    # Empty key means the adapter will refuse to send requests; only the
+    # router knows how to fall back when this happens.
+    deepseek_api_key: SecretStr = Field(default=SecretStr(""))
+    deepseek_base_url: str = Field(default="https://api.deepseek.com")
+    deepseek_model: str = Field(default="deepseek-chat")
 
     model_config = SettingsConfigDict(
         env_file=("../../.env", ".env"),

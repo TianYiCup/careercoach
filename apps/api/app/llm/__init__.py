@@ -5,6 +5,7 @@ Foundation §3.3.4 — every call to an external model goes through
 and the failover router composes them.
 """
 
+from app.llm.deepseek import DeepSeekProvider
 from app.llm.errors import (
     LLMAuthError,
     LLMError,
@@ -16,6 +17,7 @@ from app.llm.provider import LLMProvider
 from app.llm.types import Message, Role
 
 __all__ = [
+    "DeepSeekProvider",
     "LLMAuthError",
     "LLMError",
     "LLMProvider",
