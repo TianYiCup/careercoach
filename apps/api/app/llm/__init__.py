@@ -15,6 +15,7 @@ from app.llm.errors import (
 )
 from app.llm.provider import LLMProvider
 from app.llm.qwen import QwenProvider
+from app.llm.router import LLMRouter
 from app.llm.types import Message, Role
 
 __all__ = [
@@ -23,6 +24,7 @@ __all__ = [
     "LLMError",
     "LLMProvider",
     "LLMRateLimitError",
+    "LLMRouter",
     "LLMTimeoutError",
     "LLMUpstreamError",
     "Message",
