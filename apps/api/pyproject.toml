@@ -23,6 +23,7 @@ dependencies = [
     "python-jose[cryptography]>=3.3,<4.0",
     "structlog>=24.4,<25.0",
     "sentry-sdk[fastapi]>=2.18,<3.0",
+    "langgraph>=0.2,<0.3",
     "tzdata>=2024.2; platform_system == 'Windows'",
 ]
 
@@ -77,10 +78,14 @@ ignore = [
 # in user-facing examples and copy.
 "app/routes/**/*.py" = ["B008", "RUF001", "RUF002", "RUF003"]
 "app/schemas/**/*.py" = ["RUF001", "RUF002", "RUF003"]
+# Agent prompts are intentionally Chinese user-facing copy, and `PASS`
+# is a Verdict enum value (not a credential).
+"app/agents/**/*.py" = ["RUF001", "RUF002", "RUF003", "S105"]
 # `timeout=` is part of the LLMProvider contract (foundation §3.3.4),
 # not a reinvention of asyncio.timeout — adapters must accept it directly.
 "app/llm/**/*.py" = ["ASYNC109"]
 "tests/test_llm_*.py" = ["ASYNC109"]
+"tests/test_agents_*.py" = ["ASYNC109"]
 
 [tool.ruff.format]
 quote-style = "double"
