@@ -77,6 +77,10 @@ ignore = [
 # in user-facing examples and copy.
 "app/routes/**/*.py" = ["B008", "RUF001", "RUF002", "RUF003"]
 "app/schemas/**/*.py" = ["RUF001", "RUF002", "RUF003"]
+# `timeout=` is part of the LLMProvider contract (foundation §3.3.4),
+# not a reinvention of asyncio.timeout — adapters must accept it directly.
+"app/llm/**/*.py" = ["ASYNC109"]
+"tests/test_llm_*.py" = ["ASYNC109"]
 
 [tool.ruff.format]
 quote-style = "double"
