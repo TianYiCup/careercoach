@@ -1,0 +1,35 @@
+// CareerCoach AI · WeChat Mini Program Design Variables
+// Aligned with web Design Tokens (see apps/web/src/index.css @theme)
+
+// ── Brand Colors ──────────────────────────
+$color-brand-primary: #6c4dff;
+$color-brand-secondary: #a892ff;
+$color-brand-accent: #ff6b35;
+
+// ── Background ────────────────────────────
+$color-bg-primary: #0f0b1a;
+$color-bg-card: #1a1432;
+$color-bg-elevated: #241d3a;
+
+// ── Text ──────────────────────────────────
+$color-text-primary: #ede9fe;
+$color-text-secondary: #a892ff;
+$color-text-muted: #6b5f80;
+
+// ── Functional ────────────────────────────
+$color-success: #22c55e;
+$color-warning: #f59e0b;
+$color-error: #ef4444;
+
+// ── Spacing (rpx-based for Taro) ──────────
+$spacing-xs: 8px;
+$spacing-sm: 16px;
+$spacing-md: 24px;
+$spacing-lg: 32px;
+$spacing-xl: 48px;
+
+// ── Border Radius ────────────────────────
+$radius-sm: 8px;
+$radius-md: 16px;
+$radius-lg: 24px;
+$radius-full: 9999px;

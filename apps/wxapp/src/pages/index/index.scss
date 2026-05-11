@@ -1,0 +1,21 @@
+.index {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 40px 32px;
+  background-color: #0f0b1a;
+}
+
+.title {
+  font-size: 48px;
+  color: #6c4dff;
+  font-weight: bold;
+  margin-bottom: 16px;
+}
+
+.subtitle {
+  font-size: 28px;
+  color: #a892ff;
+}
