@@ -45,6 +45,14 @@ class Settings(BaseSettings):
     qwen_base_url: str = Field(default="https://dashscope.aliyuncs.com/compatible-mode")
     qwen_model: str = Field(default="qwen-max")
 
+    # Langfuse · LLM trace observability (foundation §3.7.1).
+    # Empty keys mean trace is disabled — `get_langfuse_client` returns
+    # None and callers skip instrumentation, so dev runs without a
+    # Langfuse instance still work.
+    langfuse_public_key: SecretStr = Field(default=SecretStr(""))
+    langfuse_secret_key: SecretStr = Field(default=SecretStr(""))
+    langfuse_host: str = Field(default="http://localhost:3001")
+
     model_config = SettingsConfigDict(
         env_file=("../../.env", ".env"),
         env_file_encoding="utf-8",

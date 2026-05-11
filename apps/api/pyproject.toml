@@ -24,6 +24,7 @@ dependencies = [
     "structlog>=24.4,<25.0",
     "sentry-sdk[fastapi]>=2.18,<3.0",
     "langgraph>=0.2,<0.3",
+    "langfuse>=2.50,<3.0",
     "tzdata>=2024.2; platform_system == 'Windows'",
 ]
 
@@ -99,6 +100,10 @@ exclude = ["alembic/versions"]
 
 [[tool.mypy.overrides]]
 module = ["alembic.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["langfuse.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
