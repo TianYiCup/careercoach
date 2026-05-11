@@ -14,6 +14,7 @@ from app.llm.errors import (
     LLMUpstreamError,
 )
 from app.llm.provider import LLMProvider
+from app.llm.qwen import QwenProvider
 from app.llm.types import Message, Role
 
 __all__ = [
@@ -25,5 +26,6 @@ __all__ = [
     "LLMTimeoutError",
     "LLMUpstreamError",
     "Message",
+    "QwenProvider",
     "Role",
 ]

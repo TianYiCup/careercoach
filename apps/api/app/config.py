@@ -37,6 +37,14 @@ class Settings(BaseSettings):
     deepseek_base_url: str = Field(default="https://api.deepseek.com")
     deepseek_model: str = Field(default="deepseek-chat")
 
+    # LLM · Qwen / DashScope (backup, OpenAI-compatible mode).
+    # DashScope hosts the OpenAI-compatible endpoint under
+    # /compatible-mode/v1 — keep the trailing /compatible-mode here
+    # since the adapter appends /v1/chat/completions.
+    qwen_api_key: SecretStr = Field(default=SecretStr(""))
+    qwen_base_url: str = Field(default="https://dashscope.aliyuncs.com/compatible-mode")
+    qwen_model: str = Field(default="qwen-max")
+
     model_config = SettingsConfigDict(
         env_file=("../../.env", ".env"),
         env_file_encoding="utf-8",

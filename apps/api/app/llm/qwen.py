@@ -1,15 +1,13 @@
-"""DeepSeek adapter — primary LLM provider per foundation §3.4.1.
+"""Qwen / DashScope adapter — backup LLM provider per foundation §3.4.1.
 
-DeepSeek's chat completions API is OpenAI-compatible, so the wire
-format is `POST /v1/chat/completions` with `stream=true` returning
-SSE chunks shaped like:
+DashScope exposes an OpenAI-compatible endpoint at
+`https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions`
+that accepts the same streaming wire format as DeepSeek, so the
+shared `_openai_compat` helpers carry the per-line + per-error
+plumbing and this file is mostly just per-provider defaults.
 
-    data: {"choices":[{"delta":{"content":"..."}}]}
-    data: [DONE]
-
-This adapter is intentionally thin: build request → stream lines →
-yield `delta.content` strings → map any failure into
-`app.llm.errors`. No retries, no failover — those live in the router.
+Foundation §3.4.1 picks `qwen-max` as the cross-check model; callers
+can override via `model=`.
 """
 
 from __future__ import annotations
@@ -30,17 +28,16 @@ from app.llm._openai_compat import (
 from app.llm.provider import DEFAULT_TEMPERATURE, DEFAULT_TIMEOUT_SECONDS
 from app.llm.types import Message
 
-PROVIDER_NAME = "deepseek"
-DEFAULT_BASE_URL = "https://api.deepseek.com"
+PROVIDER_NAME = "qwen"
+DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode"
 
 
-class DeepSeekProvider:
-    """OpenAI-compatible streaming chat client for DeepSeek.
+class QwenProvider:
+    """OpenAI-compatible streaming chat client for Alibaba DashScope.
 
-    Structurally implements `app.llm.provider.LLMProvider`. Holds a
-    long-lived `httpx.AsyncClient` so connection pooling survives
-    across calls; the application is expected to keep one instance
-    for the process lifetime and close it on shutdown.
+    Structurally implements `app.llm.provider.LLMProvider`. Mirrors
+    `DeepSeekProvider` deliberately — the only differences are the
+    defaults and `name`, so the router can treat them symmetrically.
     """
 
     name = PROVIDER_NAME
@@ -54,14 +51,10 @@ class DeepSeekProvider:
         client: httpx.AsyncClient | None = None,
     ) -> None:
         if not api_key:
-            # Surface a clear error at construction time rather than
-            # the first request — easier to diagnose in dev.
-            raise ValueError("deepseek api_key is empty")
+            raise ValueError("qwen api_key is empty")
         self._api_key = api_key
         self._model = model
         self._base_url = base_url.rstrip("/")
-        # Caller-supplied client wins so tests can inject MockTransport.
-        # We do NOT close a client we didn't create.
         self._client = client
         self._owns_client = client is None
 
