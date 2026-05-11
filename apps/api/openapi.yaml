@@ -1,0 +1,777 @@
+openapi: 3.1.0
+info:
+  title: CareerCoach AI
+  description: 中文语境对话练习教练 · 后端 API
+  version: 0.1.0
+paths:
+  /health:
+    get:
+      tags:
+      - health
+      summary: Health
+      operationId: health_health_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /v1/auth/sms/send:
+    post:
+      tags:
+      - auth
+      summary: Request an SMS verification code
+      operationId: sms_send_v1_auth_sms_send_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SmsSendRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SmsSendResponse'
+        '501':
+          description: Endpoint exists in v0.1 schema but the handler is not implemented.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/auth/sms/verify:
+    post:
+      tags:
+      - auth
+      summary: Verify SMS code and mint a JWT
+      operationId: sms_verify_v1_auth_sms_verify_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SmsVerifyRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SmsVerifyResponse'
+        '501':
+          description: Endpoint exists in v0.1 schema but the handler is not implemented.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/scenarios:
+    get:
+      tags:
+      - scenarios
+      summary: List scenarios filtered by category and free-text query
+      operationId: list_scenarios_v1_scenarios_get
+      parameters:
+      - name: category
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - enum:
+            - campus
+            - jobhunt
+            - intern
+            - life
+            type: string
+          - type: 'null'
+          description: Optional category filter. Omit to get the homepage default mix.
+          title: Category
+        description: Optional category filter. Omit to get the homepage default mix.
+      - name: q
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            maxLength: 64
+          - type: 'null'
+          description: Free-text search across title, tags, and background.
+          title: Q
+        description: Free-text search across title, tags, and background.
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScenarioListResponse'
+        '501':
+          description: Endpoint exists in v0.1 schema but the handler is not implemented.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/sessions:
+    post:
+      tags:
+      - sessions
+      summary: Create a new sandbox session
+      operationId: create_session_v1_sessions_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSessionRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateSessionResponse'
+        '501':
+          description: Endpoint exists in v0.1 schema but the handler is not implemented.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/sessions/{session_id}/turns:
+    post:
+      tags:
+      - sessions
+      summary: Submit a user turn and stream the opponent reply (SSE)
+      operationId: post_turn_v1_sessions__session_id__turns_post
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          description: Session id from POST /v1/sessions.
+          title: Session Id
+        description: Session id from POST /v1/sessions.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TurnRequest'
+      responses:
+        '200':
+          description: 'Server-Sent Events stream. Event types: `opponent.delta` (token chunks), `opponent.done`
+            (final turn payload), `coach.hint` (three-tier coach suggestions), `meta` (turns_used / turns_left).
+            Schema is documented in PRD §7.4.'
+          content:
+            application/json:
+              schema: {}
+            text/event-stream: {}
+        '501':
+          description: Endpoint exists in v0.1 schema but the handler is not implemented.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/sessions/{session_id}/end:
+    post:
+      tags:
+      - sessions
+      summary: End a session and emit the scorecard + weakness deltas
+      operationId: end_session_v1_sessions__session_id__end_post
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          description: Session id from POST /v1/sessions.
+          title: Session Id
+        description: Session id from POST /v1/sessions.
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EndSessionResponse'
+        '501':
+          description: Endpoint exists in v0.1 schema but the handler is not implemented.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/moderation/check:
+    post:
+      tags:
+      - moderation
+      summary: Synchronous content moderation gate
+      operationId: moderation_check_v1_moderation_check_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModerationCheckRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModerationCheckResponse'
+        '501':
+          description: Endpoint exists in v0.1 schema but the handler is not implemented.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+components:
+  schemas:
+    CreateSessionRequest:
+      properties:
+        mode:
+          type: string
+          enum:
+          - sandbox
+          - copilot
+          - review
+          title: Mode
+          description: v0.1 only ships sandbox.
+          examples:
+          - sandbox
+        scenario_id:
+          type: string
+          title: Scenario Id
+          examples:
+          - sc_001
+        persona_id:
+          type: string
+          title: Persona Id
+          examples:
+          - p_hard
+        user_goal:
+          type: string
+          maxLength: 200
+          title: User Goal
+          description: What the user wants to achieve in this practice round.
+          examples:
+          - 保住周末，不得罪老板
+      type: object
+      required:
+      - mode
+      - scenario_id
+      - persona_id
+      - user_goal
+      title: CreateSessionRequest
+    CreateSessionResponse:
+      properties:
+        session_id:
+          type: string
+          title: Session Id
+          examples:
+          - ses_018f3a8b1c2d7e3a
+        opening_line:
+          type: string
+          title: Opening Line
+          description: Opponent's first line, generated server-side from scenario + persona.
+          examples:
+          - 小林啊，这个周末项目得加个班，应该没问题吧？
+      type: object
+      required:
+      - session_id
+      - opening_line
+      title: CreateSessionResponse
+    EndSessionResponse:
+      properties:
+        score:
+          $ref: '#/components/schemas/Score'
+        weakness_updates:
+          items:
+            $ref: '#/components/schemas/WeaknessUpdate'
+          type: array
+          title: Weakness Updates
+      type: object
+      required:
+      - score
+      title: EndSessionResponse
+    ErrorResponse:
+      properties:
+        code:
+          type: string
+          title: Code
+          description: Stable machine-readable error code (e.g. RATE_LIMIT_EXCEEDED).
+          examples:
+          - NOT_IMPLEMENTED
+        message:
+          type: string
+          title: Message
+          description: Human-readable, user-safe message. Never leaks internal detail.
+          examples:
+          - this endpoint is not implemented in v0.1
+        trace_id:
+          type: string
+          title: Trace Id
+          description: Per-request id; surface in UI so users can quote it in support.
+          examples:
+          - a3f1c2e0-9b4d-4f1e-8c8b-1c0e7e2f6a01
+      type: object
+      required:
+      - code
+      - message
+      - trace_id
+      title: ErrorResponse
+      description: Standard error envelope returned for any non-2xx HTTP status.
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    HealthResponse:
+      properties:
+        status:
+          type: string
+          title: Status
+        version:
+          type: string
+          title: Version
+        env:
+          type: string
+          title: Env
+      type: object
+      required:
+      - status
+      - version
+      - env
+      title: HealthResponse
+    ModerationCheckRequest:
+      properties:
+        content:
+          type: string
+          maxLength: 8000
+          minLength: 1
+          title: Content
+          description: Raw text to score. Caller MUST NOT pre-filter — moderation owns the decision.
+        context:
+          type: string
+          enum:
+          - user_input
+          - ai_output
+          - scenario_custom
+          title: Context
+          description: Where the content came from. Drives different sensitivity tables.
+          examples:
+          - user_input
+        user_id:
+          type: string
+          title: User Id
+          description: UUID of acting user (for ModerationEvent audit log).
+        session_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Session Id
+          description: Optional — present when content is part of a Session/Turn.
+      type: object
+      required:
+      - content
+      - context
+      - user_id
+      title: ModerationCheckRequest
+    ModerationCheckResponse:
+      properties:
+        verdict:
+          type: string
+          enum:
+          - allow
+          - warn
+          - redirect
+          - block
+          title: Verdict
+          description: allow = pass / warn = soft notice / redirect = surface resource / block = stop.
+        categories:
+          items:
+            type: string
+            enum:
+            - self_harm
+            - violence
+            - loan
+            - harassment
+            - political
+            - other
+          type: array
+          title: Categories
+          description: Categories triggered. Empty when verdict == 'allow'.
+        score:
+          type: number
+          maximum: 1.0
+          minimum: 0.0
+          title: Score
+          description: Confidence in [0,1]. Higher = more sure the content is unsafe.
+        redirect_resource:
+          anyOf:
+          - $ref: '#/components/schemas/RedirectResource'
+          - type: 'null'
+          description: Present iff verdict == 'redirect'. Null otherwise.
+        trace_id:
+          type: string
+          title: Trace Id
+          description: Echoes the request trace id for log correlation.
+      type: object
+      required:
+      - verdict
+      - score
+      - trace_id
+      title: ModerationCheckResponse
+    RedirectResource:
+      properties:
+        title:
+          type: string
+          title: Title
+          examples:
+          - 心理援助 24h 热线
+        url:
+          type: string
+          title: Url
+          examples:
+          - tel:010-82951332
+      type: object
+      required:
+      - title
+      - url
+      title: RedirectResource
+      description: Crisis-line / help resource surfaced when verdict == 'redirect' (PRD §3.0.5 A).
+    ScenarioListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/ScenarioSummary'
+          type: array
+          title: Items
+        total:
+          type: integer
+          minimum: 0.0
+          title: Total
+          description: Total count across all pages, not just `items`.
+      type: object
+      required:
+      - items
+      - total
+      title: ScenarioListResponse
+    ScenarioSummary:
+      properties:
+        id:
+          type: string
+          title: Id
+          examples:
+          - sc_001
+        title:
+          type: string
+          title: Title
+          examples:
+          - 周末加班谈判
+        category:
+          type: string
+          enum:
+          - campus
+          - jobhunt
+          - intern
+          - life
+          title: Category
+          examples:
+          - intern
+        difficulty:
+          type: integer
+          maximum: 5.0
+          minimum: 1.0
+          title: Difficulty
+          description: 1 = easy / 5 = hard. Difficulty drives Persona aggression.
+          examples:
+          - 3
+        tags:
+          items:
+            type: string
+          type: array
+          title: Tags
+          examples:
+          - - 拒绝
+            - 上下级
+        background:
+          type: string
+          title: Background
+          description: Short scenario blurb shown in the picker card.
+          examples:
+          - 你刚结束周五的项目，老板在群里 @ 你...
+        real_user_certified:
+          type: boolean
+          title: Real User Certified
+          description: True only if ≥ 5 real students validated this scenario (PRD §3.0.5 D).
+          examples:
+          - true
+      type: object
+      required:
+      - id
+      - title
+      - category
+      - difficulty
+      - background
+      - real_user_certified
+      title: ScenarioSummary
+    Score:
+      properties:
+        aura:
+          type: integer
+          maximum: 10.0
+          minimum: 0.0
+          title: Aura
+          description: 气场 / presence.
+        logic:
+          type: integer
+          maximum: 10.0
+          minimum: 0.0
+          title: Logic
+        emotion:
+          type: integer
+          maximum: 10.0
+          minimum: 0.0
+          title: Emotion
+          description: Emotional regulation.
+        professionalism:
+          type: integer
+          maximum: 10.0
+          minimum: 0.0
+          title: Professionalism
+        goal_achieve:
+          type: integer
+          maximum: 10.0
+          minimum: 0.0
+          title: Goal Achieve
+          description: How close user got to user_goal.
+        highlights:
+          type: string
+          title: Highlights
+          description: K's praise — what the user nailed.
+        failures:
+          type: string
+          title: Failures
+          description: K's call-outs — where the user slipped.
+        result:
+          type: string
+          enum:
+          - shenfeng
+          - guolu
+          - fanche
+          title: Result
+          description: 封神 ≥ 8 / 路过 5–7 / 翻车 < 5. Drives Mascot expression and ShareCard gradient.
+          examples:
+          - guolu
+      type: object
+      required:
+      - aura
+      - logic
+      - emotion
+      - professionalism
+      - goal_achieve
+      - highlights
+      - failures
+      - result
+      title: Score
+      description: Per-session scorecard, returned on POST /v1/sessions/{id}/end.
+    SmsSendRequest:
+      properties:
+        phone:
+          type: string
+          pattern: ^1[3-9]\d{9}$
+          title: Phone
+          description: Mainland China mobile number, 11 digits, no country prefix.
+          examples:
+          - '13800138000'
+      type: object
+      required:
+      - phone
+      title: SmsSendRequest
+    SmsSendResponse:
+      properties:
+        ttl:
+          type: integer
+          minimum: 1.0
+          title: Ttl
+          description: Seconds until the user may request another code. Hardcoded 60s in v0.1.
+          examples:
+          - 60
+      type: object
+      required:
+      - ttl
+      title: SmsSendResponse
+    SmsVerifyRequest:
+      properties:
+        phone:
+          type: string
+          pattern: ^1[3-9]\d{9}$
+          title: Phone
+          examples:
+          - '13800138000'
+        code:
+          type: string
+          pattern: ^\d{6}$
+          title: Code
+          description: 6-digit verification code received by SMS.
+          examples:
+          - '123456'
+      type: object
+      required:
+      - phone
+      - code
+      title: SmsVerifyRequest
+    SmsVerifyResponse:
+      properties:
+        token:
+          type: string
+          title: Token
+          description: 'JWT bearer token. Pass as `Authorization: Bearer <token>`.'
+          examples:
+          - eyJhbGciOiJIUzI1NiJ9...
+        user:
+          $ref: '#/components/schemas/UserPublic'
+      type: object
+      required:
+      - token
+      - user
+      title: SmsVerifyResponse
+    TurnRequest:
+      properties:
+        content:
+          type: string
+          maxLength: 2000
+          minLength: 1
+          title: Content
+          description: User's reply text. Server runs moderation BEFORE forwarding to LLM.
+          examples:
+          - 赵总，我周末有重要安排
+      type: object
+      required:
+      - content
+      title: TurnRequest
+      description: Body for POST /v1/sessions/{id}/turns. Response is SSE — see route description.
+    UserPublic:
+      properties:
+        id:
+          type: string
+          title: Id
+          description: UUID.
+          examples:
+          - u_018f3a8b-1c2d-7e3a-b4f5-6c7d8e9f0a1b
+        nickname:
+          type: string
+          title: Nickname
+          examples:
+          - 小苏
+        persona_type:
+          type: string
+          enum:
+          - in_school
+          - intern
+          - graduate
+          title: Persona Type
+          examples:
+          - in_school
+        is_minor:
+          type: boolean
+          title: Is Minor
+          description: True if user.birthdate puts them under 18 — triggers minor mode (PRD §3.0.5 C).
+          examples:
+          - false
+      type: object
+      required:
+      - id
+      - nickname
+      - persona_type
+      - is_minor
+      title: UserPublic
+      description: Fields safe to surface to the client. Never include `phone` raw — masked.
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+    WeaknessUpdate:
+      properties:
+        tag:
+          type: string
+          title: Tag
+          examples:
+          - 过早让步
+        delta:
+          type: integer
+          title: Delta
+          description: Frequency delta from this session. Negative = improved.
+          examples:
+          - 1
+      type: object
+      required:
+      - tag
+      - delta
+      title: WeaknessUpdate
