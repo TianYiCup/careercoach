@@ -5,7 +5,7 @@ Public surface:
   * `ModerationBackend` Protocol + concrete backends.
   * `ModerationEventSink` Protocol + DB / log sinks.
   * `get_moderation_service()` — FastAPI dependency that builds the
-    default wiring (Noop backend + DB sink with log fallback).
+    default wiring (local dict backend + DB sink).
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from app.services.moderation.event_sink import (
     LogOnlyEventSink,
     ModerationEventSink,
 )
+from app.services.moderation.local_dict import DictBackend
 from app.services.moderation.noop import NoopBackend
 from app.services.moderation.service import ModerationService
 from app.services.moderation.types import Decision
@@ -32,10 +33,12 @@ logger = structlog.get_logger(__name__)
 def get_moderation_service() -> ModerationService:
     """Default service wiring used by the route layer.
 
-    `NoopBackend` is intentional in PR ① — PR ② swaps it for the local
-    keyword dict, PR ③ adds the cloud cascade. The wiring stays here.
+    PR ② swaps the PR ① NoopBackend for `DictBackend` loaded from the
+    bundled v0 dict. PR ③ will wrap this in a CascadingBackend that
+    prefers Alibaba Cloud Content Safety and falls back to this dict
+    on upstream failure.
     """
-    backend: ModerationBackend = NoopBackend()
+    backend: ModerationBackend = DictBackend.from_file()
     sink: ModerationEventSink = DbEventSink(async_session_factory)
     return ModerationService(backend=backend, event_sink=sink)
 
@@ -43,6 +46,7 @@ def get_moderation_service() -> ModerationService:
 __all__ = [
     "DbEventSink",
     "Decision",
+    "DictBackend",
     "LogOnlyEventSink",
     "ModerationBackend",
     "ModerationBackendError",
