@@ -11,6 +11,13 @@ v0.1 surface freezes:
 
 PNG rendering, storage, and share-link signing all land in subsequent
 PRs; the routes ship as 501 stubs in PR ①.
+
+Naming note
+-----------
+We use `card_` as the share-card id prefix to avoid colliding with
+the `sc_` prefix already reserved for scenarios (`sc_001`). PRD §7.9
+example copy uses `sc_xxx` — that's been raised for PRD nit-fix; the
+schema here is the source of truth for v0.1 codegen.
 """
 
 from __future__ import annotations
@@ -37,17 +44,17 @@ class ShareLinks(BaseModel):
     wechat: str = Field(
         ...,
         description="WeChat share deep link (weixin://...). Frontend opens via wx-sdk.",
-        examples=["weixin://dl/share?card=sc_xxx"],
+        examples=["weixin://dl/share?card=card_018f3a8b1c2d7e3a"],
     )
     xiaohongshu: str = Field(
         ...,
         description="Xiaohongshu share intent URL.",
-        examples=["https://www.xiaohongshu.com/share?img=..."],
+        examples=["https://www.xiaohongshu.com/share?img=card_018f3a8b1c2d7e3a"],
     )
     save_local: str = Field(
         ...,
         description="Direct PNG URL for save-to-album. Same origin as `png_url`.",
-        examples=["https://cdn.example.com/sharecards/sc_xxx.png"],
+        examples=["https://cdn.example.com/sharecards/card_018f3a8b1c2d7e3a.png"],
     )
 
 
@@ -79,13 +86,21 @@ class SessionShareCardRequest(BaseModel):
 class WeeklyShareCardRequest(BaseModel):
     """Body of POST /v1/sharecards/weekly. Manual trigger; cron also calls this."""
 
-    include_qrcode: bool = Field(default=False)
+    include_qrcode: bool = Field(
+        default=False,
+        description=(
+            "Weekly is opt-in viral — most users glance and dismiss; "
+            "Wrapped defaults the QR ON because that card is built to share. "
+            "Flip this to true to surface the QR for users who do want to share."
+        ),
+    )
     week_offset: int = Field(
         default=0,
         ge=-12,
         le=0,
         description=(
-            "0 = last completed ISO week, -1 = week before that, etc. "
+            "0 = the immediately preceding ISO calendar week (Mon-Sun in "
+            "`Asia/Shanghai`). -1 = the week before that, and so on, down to -12. "
             "Bounded so users can't backfill the whole year via this endpoint."
         ),
         examples=[0],
@@ -96,6 +111,8 @@ class WrappedShareCardRequest(BaseModel):
     """Body of POST /v1/sharecards/wrapped/year/{year}.
 
     The year lives in the URL — body carries cosmetic toggles only.
+    Empty-by-design today; if the field set grows post-v0.1 we'll keep
+    backward compatibility by adding only optional fields.
     """
 
     include_qrcode: bool = Field(
@@ -106,31 +123,49 @@ class WrappedShareCardRequest(BaseModel):
 class ShareCardResponse(BaseModel):
     """200 response shared by all three POSTs.
 
-    A `wrapped` card carries 6 PNGs (one per page); we still ship a
-    single `png_url` pointing at the cover, with the rest reachable
-    via `pages[]`. The frontend treats `pages` as authoritative when
-    `type == "wrapped"` and `png_url` as the OG cover for share
-    previews.
+    A `wrapped` card carries 6 PNGs (one per page); `png_url` always
+    points at `pages[0]` (the cover, which doubles as the OG share
+    preview). For `session` / `weekly` the card is a single image and
+    `pages` is empty.
     """
 
     card_id: str = Field(
         ...,
-        description="Stable opaque id, also used as the storage object key.",
-        examples=["sc_018f3a8b1c2d7e3a"],
+        description=(
+            "Stable opaque id, also used as the storage object key. "
+            "Prefix `card_` — distinct from `sc_` scenario ids and `ses_` "
+            "session ids so log grep is unambiguous."
+        ),
+        examples=["card_018f3a8b1c2d7e3a"],
     )
     type: ShareCardType
     png_url: str = Field(
         ...,
-        description="1080×1920 PNG URL. CDN-signed; valid for at least 7 days.",
-        examples=["https://cdn.example.com/sharecards/sc_xxx.png"],
+        description=(
+            "1080×1920 PNG URL. Presigned — frontend should re-request the "
+            "card if the URL has expired. For `wrapped` this URL equals `pages[0]` "
+            "and is the cover used by share-preview cards (OG / WeChat)."
+        ),
+        examples=["https://cdn.example.com/sharecards/card_018f3a8b1c2d7e3a.png"],
     )
     pages: list[str] = Field(
         default_factory=list,
         description=(
-            "Wrapped multi-page rendering. Empty for `session` and `weekly`; "
-            "6 URLs in cover order for `wrapped`."
+            "All pages in display order. Empty for `session` and `weekly`; "
+            "for `wrapped` contains 6 URLs where `pages[0]` IS the cover and "
+            "equals `png_url` — frontend should render `pages` only and not "
+            "show the cover twice."
         ),
-        examples=[[]],
+        examples=[
+            [
+                "https://cdn.example.com/sharecards/card_xxx/p0_cover.png",
+                "https://cdn.example.com/sharecards/card_xxx/p1_count.png",
+                "https://cdn.example.com/sharecards/card_xxx/p2_opponent.png",
+                "https://cdn.example.com/sharecards/card_xxx/p3_shenfeng.png",
+                "https://cdn.example.com/sharecards/card_xxx/p4_fanche.png",
+                "https://cdn.example.com/sharecards/card_xxx/p5_letter.png",
+            ]
+        ],
     )
     share_links: ShareLinks
     generated_at: datetime = Field(
