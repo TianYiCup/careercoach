@@ -53,6 +53,24 @@ class Settings(BaseSettings):
     langfuse_secret_key: SecretStr = Field(default=SecretStr(""))
     langfuse_host: str = Field(default="http://localhost:3001")
 
+    # Aliyun Content Moderation 2.0 — primary moderation backend when keys
+    # are configured. Empty AK/secret means we skip the cascade and the
+    # moderation service falls back to the bundled local dict.
+    aliyun_access_key_id: SecretStr = Field(default=SecretStr(""))
+    aliyun_access_key_secret: SecretStr = Field(default=SecretStr(""))
+    aliyun_moderation_endpoint: str = Field(
+        default="green-cip.cn-shanghai.aliyuncs.com",
+        description="Aliyun Green-CIP host. Region prefix follows aliyun pop names.",
+    )
+    aliyun_moderation_service: str = Field(
+        default="chat_detection_pro",
+        description="Aliyun service scene id — `chat_detection_pro` covers IM/UGC.",
+    )
+    aliyun_moderation_timeout_s: float = Field(
+        default=0.8,
+        description="Per-request budget. CascadingBackend falls back to local dict on timeout.",
+    )
+
     model_config = SettingsConfigDict(
         env_file=("../../.env", ".env"),
         env_file_encoding="utf-8",
