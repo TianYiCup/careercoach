@@ -7,12 +7,13 @@ with the standard error envelope.
 
 from fastapi import APIRouter
 
-from app.routes.v1 import auth, moderation, scenarios, sessions
+from app.routes.v1 import auth, moderation, scenarios, sessions, sharecards
 
 router = APIRouter(prefix="/v1")
 router.include_router(auth.router)
 router.include_router(scenarios.router)
 router.include_router(sessions.router)
 router.include_router(moderation.router)
+router.include_router(sharecards.router)
 
 __all__ = ["router"]
