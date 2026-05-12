@@ -26,6 +26,8 @@ dependencies = [
     "langgraph>=0.2,<0.3",
     "langfuse>=2.50,<3.0",
     "tzdata>=2024.2; platform_system == 'Windows'",
+    "pillow>=11.0,<12.0",
+    "qrcode[pil]>=8.0,<9.0",
 ]
 
 [dependency-groups]
@@ -39,6 +41,7 @@ dev = [
     "types-python-jose>=3.3,<4.0",
     "pyyaml>=6.0,<7.0",
     "types-pyyaml>=6.0,<7.0",
+    "types-qrcode>=8.0,<9.0",
 ]
 
 [build-system]
@@ -85,6 +88,7 @@ ignore = [
 # Moderation service holds Chinese red-line resource titles + sample copy.
 "app/services/**/*.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/test_moderation_*.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/test_sharecards_*.py" = ["RUF001", "RUF002", "RUF003"]
 # Spike runner has Chinese prompts + report copy using full-width
 # punctuation and × / – for human readability.
 "scripts/llm_spike/**/*.py" = ["RUF001", "RUF002", "RUF003"]
