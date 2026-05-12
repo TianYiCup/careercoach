@@ -1,0 +1,218 @@
+"""Unit tests for `ModerationService` + the Noop backend.
+
+The service is tested with a recording in-memory sink so we can assert
+that every call produces a complete audit row, even when the route
+layer isn't involved. PR ②/③ tests will swap the backend in this same
+fixture style.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+import pytest
+from app.schemas.moderation import (
+    ModerationCheckRequest,
+    RedirectResource,
+)
+from app.services.moderation import (
+    Decision,
+    ModerationService,
+    NoopBackend,
+)
+from app.services.moderation.backend import ModerationBackendError
+
+
+@dataclass
+class _RecordingSink:
+    """Captures every recorded event so tests can assert on them."""
+
+    events: list[dict[str, object]] = field(default_factory=list)
+
+    async def record(
+        self,
+        *,
+        request: ModerationCheckRequest,
+        decision: Decision,
+        backend_name: str,
+        trace_id: str,
+    ) -> None:
+        self.events.append(
+            {
+                "user_id": request.user_id,
+                "session_id": request.session_id,
+                "context": request.context,
+                "content_length": len(request.content),
+                "verdict": decision.verdict,
+                "categories": list(decision.categories),
+                "score": decision.score,
+                "backend": backend_name,
+                "trace_id": trace_id,
+            }
+        )
+
+
+@dataclass
+class _StaticBackend:
+    """Backend that always returns the given Decision."""
+
+    decision: Decision
+    name: str = "static"
+
+    async def evaluate(
+        self,
+        content: str,
+        context: str,
+    ) -> Decision:
+        _ = (content, context)
+        return self.decision
+
+
+@dataclass
+class _FailingBackend:
+    """Backend that always raises `ModerationBackendError`."""
+
+    name: str = "failing"
+
+    async def evaluate(
+        self,
+        content: str,
+        context: str,
+    ) -> Decision:
+        _ = (content, context)
+        raise ModerationBackendError("simulated upstream 502", backend=self.name)
+
+
+async def test_noop_backend_allows_everything() -> None:
+    backend = NoopBackend()
+    sink = _RecordingSink()
+    service = ModerationService(backend=backend, event_sink=sink)
+
+    response = await service.check(
+        ModerationCheckRequest(
+            content="今天天气真好，去吃个面",
+            context="user_input",
+            user_id="u_test",
+        ),
+        trace_id="trace_001",
+    )
+
+    assert response.verdict == "allow"
+    assert response.categories == []
+    assert response.score == 0.0
+    assert response.redirect_resource is None
+    assert response.trace_id == "trace_001"
+
+
+async def test_service_records_audit_event_for_every_call() -> None:
+    sink = _RecordingSink()
+    service = ModerationService(backend=NoopBackend(), event_sink=sink)
+
+    await service.check(
+        ModerationCheckRequest(
+            content="hello",
+            context="user_input",
+            user_id="u_42",
+            session_id="ses_99",
+        ),
+        trace_id="trace_xyz",
+    )
+
+    assert len(sink.events) == 1
+    event = sink.events[0]
+    assert event["user_id"] == "u_42"
+    assert event["session_id"] == "ses_99"
+    assert event["context"] == "user_input"
+    assert event["content_length"] == len("hello")
+    assert event["verdict"] == "allow"
+    assert event["backend"] == "noop"
+    assert event["trace_id"] == "trace_xyz"
+
+
+async def test_service_passes_redirect_resource_through() -> None:
+    """Self-harm content should be redirected to a help resource."""
+    resource = RedirectResource(
+        title="心理援助 24h 热线",
+        url="tel:010-82951332",
+    )
+    decision = Decision(
+        verdict="redirect",
+        score=0.97,
+        categories=("self_harm",),
+        redirect_resource=resource,
+    )
+    sink = _RecordingSink()
+    service = ModerationService(
+        backend=_StaticBackend(decision=decision),
+        event_sink=sink,
+    )
+
+    response = await service.check(
+        ModerationCheckRequest(
+            content="想从楼上跳下去",
+            context="user_input",
+            user_id="u_minor",
+        ),
+        trace_id="trace_self_harm",
+    )
+
+    assert response.verdict == "redirect"
+    assert response.categories == ["self_harm"]
+    assert response.redirect_resource == resource
+    assert sink.events[0]["verdict"] == "redirect"
+    assert sink.events[0]["categories"] == ["self_harm"]
+
+
+async def test_service_propagates_backend_errors() -> None:
+    """`ModerationBackendError` bubbles out so the route layer maps it to 502."""
+    service = ModerationService(
+        backend=_FailingBackend(),
+        event_sink=_RecordingSink(),
+    )
+
+    with pytest.raises(ModerationBackendError):
+        await service.check(
+            ModerationCheckRequest(
+                content="hello",
+                context="user_input",
+                user_id="u_test",
+            ),
+            trace_id="trace_fail",
+        )
+
+
+async def test_audit_failure_does_not_block_response() -> None:
+    """If the sink crashes, the user still gets a verdict."""
+
+    class _BrokenSink:
+        async def record(self, **_: object) -> None:
+            raise RuntimeError("db unreachable")
+
+    service = ModerationService(backend=NoopBackend(), event_sink=_BrokenSink())
+
+    response = await service.check(
+        ModerationCheckRequest(
+            content="hello",
+            context="user_input",
+            user_id="u_test",
+        ),
+        trace_id="trace_db_down",
+    )
+
+    assert response.verdict == "allow"
+    assert response.trace_id == "trace_db_down"
+
+
+def test_decision_rejects_out_of_range_score() -> None:
+    with pytest.raises(ValueError, match=r"score must be in \[0, 1\]"):
+        Decision(verdict="allow", score=1.5)
+
+
+def test_decision_redirect_requires_resource() -> None:
+    with pytest.raises(ValueError, match="redirect_resource"):
+        Decision(verdict="redirect", score=0.9)
+
+
+def test_decision_allow_must_not_carry_categories() -> None:
+    with pytest.raises(ValueError, match="must not list categories"):
+        Decision(verdict="allow", score=0.0, categories=("self_harm",))

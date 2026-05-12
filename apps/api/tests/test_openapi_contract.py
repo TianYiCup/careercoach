@@ -72,15 +72,8 @@ async def client() -> AsyncIterator[AsyncClient]:
         ),
         ("post", "/v1/sessions/ses_x/turns", {"content": "test"}),
         ("post", "/v1/sessions/ses_x/end", None),
-        (
-            "post",
-            "/v1/moderation/check",
-            {
-                "content": "测试",
-                "context": "user_input",
-                "user_id": "u_test",
-            },
-        ),
+        # NOTE: /v1/moderation/check landed in PR ① — see test_moderation_route.py
+        # for the 200 contract. Keep it out of this list so we don't regress.
     ],
 )
 async def test_stubs_return_501_with_envelope(
