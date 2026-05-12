@@ -8,7 +8,11 @@ import type {
   ModerationCheckResponse,
 } from '../../api/v1/types'
 
-const BASE = '/v1'
+// Wildcard origin so handlers match both relative dev fetches (`/v1/...`)
+// and fully-qualified URLs (e.g. `http://localhost/v1/...` from tests
+// or `https://api.careercoach.app/v1/...` from a built EXE). MSW v2's
+// path-only patterns don't match fully-qualified URLs.
+const BASE = '*/v1'
 
 // --- Mock Data ---
 const mockScenarios: ScenarioListResponse = {

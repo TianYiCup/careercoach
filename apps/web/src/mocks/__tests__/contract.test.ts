@@ -1,0 +1,279 @@
+/**
+ * Cross-team contract smoke tests.
+ *
+ * Verifies that B's MSW mock handlers match A's OpenAPI v0.1 schema
+ * for each of the five endpoints in the sandbox flow:
+ *
+ *   GET    /v1/scenarios
+ *   POST   /v1/sessions
+ *   POST   /v1/sessions/:id/turns          (SSE)
+ *   POST   /v1/sessions/:id/end
+ *   POST   /v1/moderation/check
+ *
+ * The handlers come from B; the field-shape assertions encode A's
+ * Pydantic schemas (apps/api/app/schemas/*.py). If either side drifts
+ * from the agreed contract, one of these tests fails — that's the
+ * whole point of this file.
+ */
+
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { setupServer } from 'msw/node'
+import { handlers } from '../handlers/api'
+import type {
+  CreateSessionResponse,
+  EndSessionResponse,
+  ModerationCheckResponse,
+  ScenarioListResponse,
+} from '../../api/v1/types'
+
+const server = setupServer(...handlers)
+
+beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }))
+afterEach(() => server.resetHandlers())
+afterAll(() => server.close())
+
+// Handlers in ../handlers/api.ts register relative paths (`/v1/...`),
+// so we point the test fetches at localhost — MSW v2 matches by path
+// + any origin when the pattern is relative, but it still needs the
+// request URL to be a fully-qualified URL.
+const BASE = 'http://localhost/v1'
+
+describe('GET /v1/scenarios', () => {
+  it('returns ScenarioListResponse shape', async () => {
+    const res = await fetch(`${BASE}/scenarios`)
+    expect(res.status).toBe(200)
+
+    const body = (await res.json()) as ScenarioListResponse
+    expect(body.total).toBeTypeOf('number')
+    expect(Array.isArray(body.items)).toBe(true)
+    expect(body.items.length).toBeGreaterThan(0)
+
+    for (const s of body.items) {
+      expect(s.id).toBeTypeOf('string')
+      expect(s.title).toBeTypeOf('string')
+      expect(['campus', 'jobhunt', 'intern', 'life']).toContain(s.category)
+      // A's schema constrains difficulty to 1..5.
+      expect(s.difficulty).toBeGreaterThanOrEqual(1)
+      expect(s.difficulty).toBeLessThanOrEqual(5)
+      expect(Array.isArray(s.tags)).toBe(true)
+      expect(s.background).toBeTypeOf('string')
+      expect(s.real_user_certified).toBeTypeOf('boolean')
+    }
+  })
+
+  it('filters by category', async () => {
+    const res = await fetch(`${BASE}/scenarios?category=campus`)
+    const body = (await res.json()) as ScenarioListResponse
+    expect(body.items.every((s) => s.category === 'campus')).toBe(true)
+  })
+})
+
+describe('POST /v1/sessions', () => {
+  it('returns CreateSessionResponse shape', async () => {
+    const res = await fetch(`${BASE}/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mode: 'sandbox',
+        scenario_id: 'sc_001',
+        persona_id: 'p_hard',
+        user_goal: '保住周末，不得罪老板',
+      }),
+    })
+    expect(res.status).toBe(200)
+
+    const body = (await res.json()) as CreateSessionResponse
+    expect(body.session_id).toMatch(/^ses_/)
+    expect(body.opening_line).toBeTypeOf('string')
+    expect(body.opening_line.length).toBeGreaterThan(0)
+  })
+})
+
+describe('POST /v1/sessions/:id/turns (SSE)', () => {
+  /**
+   * Manually parse the SSE wire format (`event: <name>\ndata: <json>\n\n`)
+   * because the default `EventSource` API is browser-only.
+   */
+  async function collectSse(
+    res: Response,
+  ): Promise<{ event: string; data: unknown }[]> {
+    const reader = res.body!.getReader()
+    const decoder = new TextDecoder()
+    let buf = ''
+    const frames: { event: string; data: unknown }[] = []
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+
+      let sep: number
+      while ((sep = buf.indexOf('\n\n')) !== -1) {
+        const block = buf.slice(0, sep)
+        buf = buf.slice(sep + 2)
+        const lines = block.split('\n')
+        let event = ''
+        let dataLine = ''
+        for (const line of lines) {
+          if (line.startsWith('event: ')) event = line.slice(7)
+          else if (line.startsWith('data: ')) dataLine = line.slice(6)
+        }
+        if (event) frames.push({ event, data: JSON.parse(dataLine) })
+      }
+    }
+    return frames
+  }
+
+  it('emits the four event types in the expected order', async () => {
+    const res = await fetch(`${BASE}/sessions/ses_abc12345/turns`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: '老板我周末有事' }),
+    })
+    expect(res.headers.get('content-type')).toContain('text/event-stream')
+
+    const frames = await collectSse(res)
+    const events = frames.map((f) => f.event)
+
+    // Foundation §7.4: at least one opponent.delta, exactly one
+    // opponent.done, exactly one coach.hint, exactly one meta.
+    expect(events.filter((e) => e === 'opponent.delta').length).toBeGreaterThanOrEqual(1)
+    expect(events.filter((e) => e === 'opponent.done').length).toBe(1)
+    expect(events.filter((e) => e === 'coach.hint').length).toBe(1)
+    expect(events.filter((e) => e === 'meta').length).toBe(1)
+
+    // opponent.done must come after all opponent.delta frames.
+    const doneIdx = events.indexOf('opponent.done')
+    expect(events.lastIndexOf('opponent.delta')).toBeLessThan(doneIdx)
+    // coach.hint after opponent.done.
+    expect(events.indexOf('coach.hint')).toBeGreaterThan(doneIdx)
+    // meta last.
+    expect(events.indexOf('meta')).toBe(events.length - 1)
+  })
+
+  it('opponent.delta carries `text`, opponent.done carries `turn_id` + `full_text`', async () => {
+    const res = await fetch(`${BASE}/sessions/ses_abc12345/turns`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: 'hi' }),
+    })
+    const frames = await collectSse(res)
+
+    const delta = frames.find((f) => f.event === 'opponent.delta')!
+    expect(delta.data).toMatchObject({ text: expect.any(String) })
+
+    const done = frames.find((f) => f.event === 'opponent.done')!
+    expect(done.data).toMatchObject({
+      turn_id: expect.stringMatching(/^t_/),
+      full_text: expect.any(String),
+    })
+
+    const hint = frames.find((f) => f.event === 'coach.hint')!
+    expect(hint.data).toMatchObject({
+      safe: expect.any(String),
+      aggressive: expect.any(String),
+      humor: expect.any(String),
+    })
+
+    const meta = frames.find((f) => f.event === 'meta')!
+    expect(meta.data).toMatchObject({
+      turns_used: expect.any(Number),
+      turns_left: expect.any(Number),
+    })
+  })
+
+  it('concatenated opponent.delta text equals opponent.done full_text', async () => {
+    const res = await fetch(`${BASE}/sessions/ses_abc12345/turns`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: 'hi' }),
+    })
+    const frames = await collectSse(res)
+
+    const deltaText = frames
+      .filter((f) => f.event === 'opponent.delta')
+      .map((f) => (f.data as { text: string }).text)
+      .join('')
+    const fullText = (
+      frames.find((f) => f.event === 'opponent.done')!.data as {
+        full_text: string
+      }
+    ).full_text
+
+    expect(deltaText).toBe(fullText)
+  })
+})
+
+describe('POST /v1/sessions/:id/end', () => {
+  it('returns EndSessionResponse with a fully-populated Score', async () => {
+    const res = await fetch(`${BASE}/sessions/ses_abc12345/end`, {
+      method: 'POST',
+    })
+    expect(res.status).toBe(200)
+
+    const body = (await res.json()) as EndSessionResponse
+    expect(body.score).toBeDefined()
+    expect(body.score.aura).toBeGreaterThanOrEqual(0)
+    expect(body.score.aura).toBeLessThanOrEqual(10)
+    expect(body.score.logic).toBeGreaterThanOrEqual(0)
+    expect(body.score.logic).toBeLessThanOrEqual(10)
+    expect(body.score.emotion).toBeGreaterThanOrEqual(0)
+    expect(body.score.professionalism).toBeGreaterThanOrEqual(0)
+    expect(body.score.goal_achieve).toBeGreaterThanOrEqual(0)
+    expect(['shenfeng', 'guolu', 'fanche']).toContain(body.score.result)
+    expect(body.score.highlights).toBeTypeOf('string')
+    expect(body.score.failures).toBeTypeOf('string')
+    expect(Array.isArray(body.weakness_updates)).toBe(true)
+  })
+})
+
+describe('POST /v1/moderation/check', () => {
+  it('passes benign content', async () => {
+    const res = await fetch(`${BASE}/moderation/check`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        content: '老板我这个周末有事不能加班',
+        context: 'user_input',
+        user_id: 'u_test',
+      }),
+    })
+
+    const body = (await res.json()) as ModerationCheckResponse
+    expect(body.verdict).toBe('allow')
+    expect(body.categories).toEqual([])
+    expect(body.score).toBeLessThan(0.5)
+    expect(body.trace_id).toMatch(/^trc_/)
+  })
+
+  it('blocks red-line content', async () => {
+    // PRD §3.0.5 — self-harm phrases should never pass.
+    const res = await fetch(`${BASE}/moderation/check`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        content: '我想自杀',
+        context: 'user_input',
+        user_id: 'u_test',
+      }),
+    })
+    const body = (await res.json()) as ModerationCheckResponse
+    expect(body.verdict).toBe('block')
+    expect(body.categories.length).toBeGreaterThan(0)
+    expect(body.score).toBeGreaterThan(0.5)
+  })
+
+  it('verdict is always one of the four enum values', async () => {
+    const res = await fetch(`${BASE}/moderation/check`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        content: 'hello',
+        context: 'user_input',
+        user_id: 'u_test',
+      }),
+    })
+    const body = (await res.json()) as ModerationCheckResponse
+    expect(['allow', 'warn', 'redirect', 'block']).toContain(body.verdict)
+  })
+})
