@@ -88,6 +88,8 @@ ignore = [
 # Spike runner has Chinese prompts + report copy using full-width
 # punctuation and × / – for human readability.
 "scripts/llm_spike/**/*.py" = ["RUF001", "RUF002", "RUF003"]
+# Moderation eval CLI emits a Chinese markdown report.
+"scripts/moderation_eval/**/*.py" = ["RUF001", "RUF002", "RUF003"]
 # `timeout=` is part of the LLMProvider contract (foundation §3.3.4),
 # not a reinvention of asyncio.timeout — adapters must accept it directly.
 "app/llm/**/*.py" = ["ASYNC109"]
@@ -102,7 +104,7 @@ indent-style = "space"
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
-exclude = ["alembic/versions", "scripts/llm_spike"]
+exclude = ["alembic/versions", "scripts/llm_spike", "scripts/moderation_eval"]
 
 [[tool.mypy.overrides]]
 module = ["alembic.*"]
