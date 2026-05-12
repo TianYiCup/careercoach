@@ -49,14 +49,14 @@ def test_wrapped_request_defaults_qrcode_on_for_virality() -> None:
 
 def test_response_envelope_round_trips() -> None:
     payload = {
-        "card_id": "sc_demo",
+        "card_id": "card_demo",
         "type": "session",
-        "png_url": "https://cdn.example.com/sc_demo.png",
+        "png_url": "https://cdn.example.com/card_demo.png",
         "pages": [],
         "share_links": {
-            "wechat": "weixin://dl/share?card=sc_demo",
-            "xiaohongshu": "https://xhs.example.com/share?img=sc_demo",
-            "save_local": "https://cdn.example.com/sc_demo.png",
+            "wechat": "weixin://dl/share?card=card_demo",
+            "xiaohongshu": "https://www.xiaohongshu.com/share?img=card_demo",
+            "save_local": "https://cdn.example.com/card_demo.png",
         },
         "generated_at": "2026-05-12T13:45:00Z",
     }
@@ -69,12 +69,12 @@ def test_response_envelope_round_trips() -> None:
 def test_response_rejects_unknown_card_type() -> None:
     with pytest.raises(ValidationError):
         ShareCardResponse(
-            card_id="sc_x",
+            card_id="card_x",
             type="legacy_2019",
             png_url="https://cdn.example.com/x.png",
             share_links=ShareLinks(
                 wechat="weixin://x",
-                xiaohongshu="https://xhs.example.com/x",
+                xiaohongshu="https://www.xiaohongshu.com/x",
                 save_local="https://cdn.example.com/x.png",
             ),
             generated_at=datetime.now(UTC),
