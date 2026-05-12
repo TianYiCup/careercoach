@@ -265,6 +265,123 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /v1/sharecards/session/{session_id}:
+    post:
+      tags:
+      - sharecards
+      summary: Render a 9:16 share card for a finished sandbox session
+      operationId: create_session_card_v1_sharecards_session__session_id__post
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          description: Session id from POST /v1/sessions; must be in `ended` state.
+          examples:
+          - ses_018f3a8b1c2d7e3a
+          title: Session Id
+        description: Session id from POST /v1/sessions; must be in `ended` state.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionShareCardRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShareCardResponse'
+        '501':
+          description: Endpoint exists in v0.1 schema but the handler is not implemented.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/sharecards/weekly:
+    post:
+      tags:
+      - sharecards
+      summary: Render the weekly digest card (cron and on-demand both call this)
+      operationId: create_weekly_card_v1_sharecards_weekly_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WeeklyShareCardRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShareCardResponse'
+        '501':
+          description: Endpoint exists in v0.1 schema but the handler is not implemented.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/sharecards/wrapped/year/{year}:
+    post:
+      tags:
+      - sharecards
+      summary: Render the 6-page annual Wrapped recap
+      operationId: create_wrapped_card_v1_sharecards_wrapped_year__year__post
+      parameters:
+      - name: year
+        in: path
+        required: true
+        schema:
+          type: integer
+          maximum: 2099
+          minimum: 2024
+          description: Calendar year. Bounded to keep generated PNGs cacheable.
+          examples:
+          - 2026
+          title: Year
+        description: Calendar year. Bounded to keep generated PNGs cacheable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WrappedShareCardRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShareCardResponse'
+        '501':
+          description: Endpoint exists in v0.1 schema but the handler is not implemented.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
     CoachHintEvent:
@@ -705,6 +822,129 @@ components:
       - result
       title: Score
       description: Per-session scorecard, returned on POST /v1/sessions/{id}/end.
+    SessionShareCardRequest:
+      properties:
+        include_qrcode:
+          type: boolean
+          title: Include Qrcode
+          description: Render the bottom-right QR code that deep-links back to the app. Defaults to false
+            — many users prefer screenshot-clean cards.
+          default: false
+        user_caption_override:
+          anyOf:
+          - type: string
+            maxLength: 80
+          - type: 'null'
+          title: User Caption Override
+          description: Optional user-edited one-liner replacing K's default verdict copy. Server still
+            re-runs moderation (§7.8) before baking it into the PNG.
+          examples:
+          - 今天嘴硬了一把
+      type: object
+      title: SessionShareCardRequest
+      description: 'Body of POST /v1/sharecards/session/{session_id}.
+
+
+        `session_id` itself rides in the URL path so frontend can use
+
+        `useShareCardForSession(id)` patterns without juggling bodies.'
+    ShareCardResponse:
+      properties:
+        card_id:
+          type: string
+          title: Card Id
+          description: Stable opaque id, also used as the storage object key.
+          examples:
+          - sc_018f3a8b1c2d7e3a
+        type:
+          type: string
+          enum:
+          - session
+          - weekly
+          - wrapped
+          title: Type
+        png_url:
+          type: string
+          title: Png Url
+          description: 1080×1920 PNG URL. CDN-signed; valid for at least 7 days.
+          examples:
+          - https://cdn.example.com/sharecards/sc_xxx.png
+        pages:
+          items:
+            type: string
+          type: array
+          title: Pages
+          description: Wrapped multi-page rendering. Empty for `session` and `weekly`; 6 URLs in cover
+            order for `wrapped`.
+          examples:
+          - []
+        share_links:
+          $ref: '#/components/schemas/ShareLinks'
+        generated_at:
+          type: string
+          format: date-time
+          title: Generated At
+          description: UTC timestamp at which the PNG was rendered.
+          examples:
+          - '2026-05-12T13:45:00Z'
+      type: object
+      required:
+      - card_id
+      - type
+      - png_url
+      - share_links
+      - generated_at
+      title: ShareCardResponse
+      description: '200 response shared by all three POSTs.
+
+
+        A `wrapped` card carries 6 PNGs (one per page); we still ship a
+
+        single `png_url` pointing at the cover, with the rest reachable
+
+        via `pages[]`. The frontend treats `pages` as authoritative when
+
+        `type == "wrapped"` and `png_url` as the OG cover for share
+
+        previews.'
+    ShareLinks:
+      properties:
+        wechat:
+          type: string
+          title: Wechat
+          description: WeChat share deep link (weixin://...). Frontend opens via wx-sdk.
+          examples:
+          - weixin://dl/share?card=sc_xxx
+        xiaohongshu:
+          type: string
+          title: Xiaohongshu
+          description: Xiaohongshu share intent URL.
+          examples:
+          - https://www.xiaohongshu.com/share?img=...
+        save_local:
+          type: string
+          title: Save Local
+          description: Direct PNG URL for save-to-album. Same origin as `png_url`.
+          examples:
+          - https://cdn.example.com/sharecards/sc_xxx.png
+      type: object
+      required:
+      - wechat
+      - xiaohongshu
+      - save_local
+      title: ShareLinks
+      description: 'One-tap targets we render under the saved card.
+
+
+        `save_local` is the raw PNG URL the client uses to drop the image
+
+        into the user''s photo roll. `wechat` / `xiaohongshu` are deep-link
+
+        URIs that pre-fill platform share sheets — they may carry a short
+
+        UTM tag so analytics can attribute virality, but they MUST NOT
+
+        leak PII (user_id, phone, etc.).'
     SmsSendRequest:
       properties:
         phone:
@@ -879,6 +1119,38 @@ components:
       - tag
       - delta
       title: WeaknessUpdate
+    WeeklyShareCardRequest:
+      properties:
+        include_qrcode:
+          type: boolean
+          title: Include Qrcode
+          default: false
+        week_offset:
+          type: integer
+          maximum: 0.0
+          minimum: -12.0
+          title: Week Offset
+          description: 0 = last completed ISO week, -1 = week before that, etc. Bounded so users can't
+            backfill the whole year via this endpoint.
+          default: 0
+          examples:
+          - 0
+      type: object
+      title: WeeklyShareCardRequest
+      description: Body of POST /v1/sharecards/weekly. Manual trigger; cron also calls this.
+    WrappedShareCardRequest:
+      properties:
+        include_qrcode:
+          type: boolean
+          title: Include Qrcode
+          description: Wrapped defaults to on — virality matters.
+          default: true
+      type: object
+      title: WrappedShareCardRequest
+      description: 'Body of POST /v1/sharecards/wrapped/year/{year}.
+
+
+        The year lives in the URL — body carries cosmetic toggles only.'
     _CoachHintFrame:
       properties:
         event:
