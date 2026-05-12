@@ -107,3 +107,5 @@ playwright/.cache/
 **/demo-videos/
 # 真实用户测试数据（隐私）
 tests/uat-recordings/
+# Share card local-fs storage (LocalFilesystemStorage default root)
+apps/api/var/

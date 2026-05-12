@@ -295,12 +295,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ShareCardResponse'
-        '501':
-          description: Endpoint exists in v0.1 schema but the handler is not implemented.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
+        '400':
+          description: user_caption_override blocked by content moderation
+        '404':
+          description: session not found / no scorecard yet
         '422':
           description: Validation Error
           content:

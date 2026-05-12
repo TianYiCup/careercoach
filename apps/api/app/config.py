@@ -71,6 +71,23 @@ class Settings(BaseSettings):
         description="Per-request budget. CascadingBackend falls back to local dict on timeout.",
     )
 
+    # Share-card storage. `dir` is where the LocalFilesystemStorage drops
+    # PNGs; `public_base_url` is the prefix the frontend hits to fetch
+    # them. v0 dev runs both on the same FastAPI process; prod swaps
+    # the storage backend for S3/OSS without changing the URL contract.
+    sharecards_storage_dir: str = Field(
+        default="./var/sharecards",
+        description="Local dir for share-card PNGs. Created on startup.",
+    )
+    sharecards_public_base_url: str = Field(
+        default="http://localhost:8000/static/sharecards",
+        description="URL prefix returned in ShareCardResponse.png_url + share_links.save_local.",
+    )
+    sharecards_app_origin: str = Field(
+        default="https://careercoach.app",
+        description="Origin used inside QR codes + share-link deep paths (e.g. /share/{card_id}).",
+    )
+
     model_config = SettingsConfigDict(
         env_file=("../../.env", ".env"),
         env_file_encoding="utf-8",

@@ -77,7 +77,9 @@ async def client() -> AsyncIterator[AsyncClient]:
         ("post", "/v1/sessions/ses_x/end", None),
         # NOTE: /v1/moderation/check landed in PR ① — see test_moderation_route.py
         # for the 200 contract. Keep it out of this list so we don't regress.
-        ("post", "/v1/sharecards/session/ses_x", {"include_qrcode": False}),
+        # NOTE: /v1/sharecards/session/{id} flipped from 501 to 200/404
+        # in PR ③ — see test_sharecards_route.py. Keep it out of this
+        # list so we don't regress to a stub.
         ("post", "/v1/sharecards/weekly", {"include_qrcode": False, "week_offset": 0}),
         ("post", "/v1/sharecards/wrapped/year/2026", {"include_qrcode": True}),
     ],
