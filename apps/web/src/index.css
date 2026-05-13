@@ -1,6 +1,7 @@
 @import 'tailwindcss';
 
 @theme {
+  /* ── Vivid Brand Palette (8 colors) ────────────── */
   --color-vivid-purple: #6C4DFF;
   --color-vivid-purple-deep: #3D2B99;
   --color-vivid-purple-soft: #A892FF;
@@ -10,38 +11,68 @@
   --color-vivid-cyan: #3CFFE8;
   --color-vivid-yellow: #FFE94D;
 
+  /* ── Ink Neutral Palette (dark-first) ──────────── */
+  --color-ink-bg: #0F0E1A;
+  --color-ink-card: #1A1830;
+  --color-ink-card-2: #252246;
+  --color-ink-line: #34324E;
+  --color-ink-text: #F5F0FF;
+  --color-ink-text-2: #A8A3C2;
+  --color-ink-text-3: #5E5B7A;
+
+  /* ── Tone Semantic Colors (三档话术) ───────────── */
   --color-tone-safe: #3CFFE8;
   --color-tone-aggro: #FF6B35;
   --color-tone-fun: #FFE94D;
 
+  /* ── Score Semantic Colors (评分) ──────────────── */
   --color-score-god: #B0FF3C;
-  --color-score-mid: #A892FF;
+  --color-score-mid: #A8A3C2;
   --color-score-fail: #FF6B35;
 
-  --color-bg-primary: #0F0B1A;
-  --color-bg-secondary: #1A1428;
-  --color-bg-card: rgba(26, 20, 40, 0.6);
-  --color-text-primary: #F5F3FF;
-  --color-text-secondary: #A892FF;
-  --color-text-muted: #6B5B8D;
-  --color-border: rgba(108, 77, 255, 0.2);
+  /* ── Gradients ─────────────────────────────────── */
+  --gradient-vivid: linear-gradient(135deg, #6C4DFF 0%, #FF7AB6 100%);
+  --gradient-glory: linear-gradient(135deg, #B0FF3C 0%, #3CFFE8 100%);
+  --gradient-crash: linear-gradient(135deg, #FF6B35 0%, #FF7AB6 100%);
+  --gradient-space: radial-gradient(ellipse at top, #3D2B99 0%, #0F0E1A 70%);
 
+  /* ── Radius (v2 — 更圆 · Z世代审美) ───────────── */
+  --radius-sm: 12px;
+  --radius-md: 20px;
+  --radius-lg: 28px;
+  --radius-xl: 40px;
+  --radius-blob: 64px;
+  --radius-pill: 9999px;
+
+  /* ── Shadows & Glows ───────────────────────────── */
+  --shadow-elev-1: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-elev-2: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --shadow-glow-purple: 0 0 32px rgba(108, 77, 255, 0.5);
+  --shadow-glow-green: 0 0 24px rgba(176, 255, 60, 0.4);
+  --shadow-glow-pink: 0 0 20px rgba(255, 122, 182, 0.4);
+
+  /* ── Glass ─────────────────────────────────────── */
+  --glass-purple: rgba(108, 77, 255, 0.12);
+  --glass-blur: 24px;
+  --glass-border: 1px solid rgba(255, 255, 255, 0.1);
+
+  /* ── Motion / Easing ───────────────────────────── */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* ── Typography ────────────────────────────────── */
   --font-display: 'ZhanKu QingKe HuangYou', 'HarmonyOS Sans SC', system-ui, sans-serif;
   --font-body: 'HarmonyOS Sans SC', system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, Consolas, monospace;
 
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
-  --radius-xl: 24px;
-  --radius-full: 9999px;
-
-  --shadow-glow-purple: 0 0 20px rgba(108, 77, 255, 0.4);
-  --shadow-glow-green: 0 0 20px rgba(176, 255, 60, 0.4);
-  --shadow-glow-orange: 0 0 20px rgba(255, 107, 53, 0.4);
-
-  --spring-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  /* ── Back-compat aliases (used in existing components) ── */
+  --color-bg-primary: #0F0E1A;
+  --color-bg-secondary: #1A1830;
+  --color-bg-card: rgba(26, 24, 48, 0.6);
+  --color-text-primary: #F5F0FF;
+  --color-text-secondary: #A8A3C2;
+  --color-text-muted: #5E5B7A;
+  --color-border: rgba(108, 77, 255, 0.2);
 }
 
 @layer base {
@@ -60,9 +91,10 @@
   body {
     margin: 0;
     font-family: var(--font-body);
-    background-color: var(--color-bg-primary);
-    color: var(--color-text-primary);
+    background: var(--gradient-space);
+    color: var(--color-ink-text);
     line-height: 1.6;
+    min-height: 100svh;
   }
 
   #root {
@@ -73,10 +105,10 @@
 }
 
 @utility glass {
-  background: rgba(26, 20, 40, 0.6);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(108, 77, 255, 0.15);
+  background: var(--glass-purple);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: var(--glass-border);
 }
 
 @utility glow-purple {
@@ -87,6 +119,35 @@
   box-shadow: var(--shadow-glow-green);
 }
 
-@utility glow-orange {
-  box-shadow: var(--shadow-glow-orange);
+@utility glow-pink {
+  box-shadow: var(--shadow-glow-pink);
+}
+
+@utility gradient-vivid {
+  background: var(--gradient-vivid);
+}
+
+@utility gradient-glory {
+  background: var(--gradient-glory);
+}
+
+@utility gradient-crash {
+  background: var(--gradient-crash);
+}
+
+@utility text-gradient-vivid {
+  background: var(--gradient-vivid);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* ── Blob float animation ──────────────────────────── */
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-24px);
+  }
 }
