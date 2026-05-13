@@ -1,16 +1,14 @@
 /**
  * API 客户端封装 — wx.request 的 Promise 化
  *
- * 注意：所有后端域名必须在微信小程序后台「服务器域名」中添加白名单。
- * 当前仅配置 dev 环境，staging/prod 域名待 ICP 备案后添加。
+ * 注意：所有后端域名必须在微信小程序后台「服务器域名」中添加白名单
+ * （CLAUDE.md #14）。本地开发时在微信开发者工具 → 详情 → 本地设置 →
+ * 勾选「不校验合法域名」。
  *
- * 本地开发时需在微信开发者工具 → 详情 → 本地设置 → 勾选「不校验合法域名」
+ * 实际域名 + 环境切换在 ./config.ts。
  */
 
-/** API 基础地址 — 根据环境切换 */
-const API_BASE = process.env.NODE_ENV === 'production'
-  ? 'https://api.careercoach.ai'
-  : 'https://dev-api.careercoach.ai'
+import { API_BASE } from './config'
 
 interface ApiResponse<T> {
   data: T
@@ -64,3 +62,4 @@ export function createSession(body: { scenario_id: string }) {
 }
 
 export { API_BASE }
+

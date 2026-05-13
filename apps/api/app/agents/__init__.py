@@ -7,6 +7,6 @@ network code.
 """
 
 from app.agents.orchestrator import build_graph
-from app.agents.state import SessionState, Verdict, make_initial_state
+from app.agents.state import SessionState, TurnScore, Verdict, make_initial_state
 
-__all__ = ["SessionState", "Verdict", "build_graph", "make_initial_state"]
+__all__ = ["SessionState", "TurnScore", "Verdict", "build_graph", "make_initial_state"]

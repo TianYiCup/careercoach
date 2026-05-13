@@ -13,7 +13,7 @@ from app.agents.judge import (
     JUDGE_SYSTEM_PROMPT,
     parse_judge_output,
 )
-from app.agents.state import Score, Verdict
+from app.agents.state import TurnScore, Verdict
 from app.llm import LLMProvider, Message
 
 
@@ -55,7 +55,7 @@ def _scripted_provider(
     *,
     opponent: str = "对手的回应",
     hint: str = "K 的提示",
-    judge: str = "VERDICT: pass\nRATING: 70",
+    judge: str = "VERDICT: guolu\nRATING: 70",
 ) -> LLMProvider:
     return _ScriptedProvider(
         {
@@ -85,7 +85,7 @@ async def test_graph_runs_end_to_end_and_populates_every_field(
 
     assert final["opponent_reply"] == "对手的回应"
     assert final["coach_hint"] == "K 的提示"
-    assert final["score"] == Score(verdict=Verdict.PASS, rating=70)
+    assert final["turn_score"] == TurnScore(verdict=Verdict.GUOLU, rating=70)
 
 
 async def test_input_state_is_preserved_through_graph(
@@ -105,7 +105,7 @@ async def test_nodes_fire_in_order(initial_state: SessionState) -> None:
         {
             "你扮演用户练习对话中的对手": "x",
             "你是教练 K": "y",
-            "你是评委": "VERDICT: godlike\nRATING: 95",
+            "你是评委": "VERDICT: shenfeng\nRATING: 95",
         }
     )
     graph = build_graph(provider)
@@ -127,52 +127,52 @@ async def test_judge_failure_to_parse_degrades_to_neutral(
 
     final: SessionState = await graph.ainvoke(initial_state)
 
-    # Fallback per judge.py: pass / 50, so the graph still completes.
-    assert final["score"] == Score(verdict=Verdict.PASS, rating=50)
+    # Fallback per judge.py: guolu / 50, so the graph still completes.
+    assert final["turn_score"] == TurnScore(verdict=Verdict.GUOLU, rating=50)
 
 
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
         (
-            "VERDICT: godlike\nRATING: 98",
-            Score(verdict=Verdict.GODLIKE, rating=98),
+            "VERDICT: shenfeng\nRATING: 98",
+            TurnScore(verdict=Verdict.SHENFENG, rating=98),
         ),
         (
-            "VERDICT: pass\nRATING: 50",
-            Score(verdict=Verdict.PASS, rating=50),
+            "VERDICT: guolu\nRATING: 50",
+            TurnScore(verdict=Verdict.GUOLU, rating=50),
         ),
         (
-            "VERDICT: fail\nRATING: 12",
-            Score(verdict=Verdict.FAIL, rating=12),
+            "VERDICT: fanche\nRATING: 12",
+            TurnScore(verdict=Verdict.FANCHE, rating=12),
         ),
         # Tolerant to whitespace, case, and surrounding noise.
         (
-            "  verdict:  PASS  \n  rating:    77  \n",
-            Score(verdict=Verdict.PASS, rating=77),
+            "  verdict:  GUOLU  \n  rating:    77  \n",
+            TurnScore(verdict=Verdict.GUOLU, rating=77),
         ),
         (
-            "preamble\nVERDICT: fail\nrating: 1\ntrailer",
-            Score(verdict=Verdict.FAIL, rating=1),
+            "preamble\nVERDICT: fanche\nrating: 1\ntrailer",
+            TurnScore(verdict=Verdict.FANCHE, rating=1),
         ),
     ],
 )
-def test_parse_judge_output_happy_paths(raw: str, expected: Score) -> None:
+def test_parse_judge_output_happy_paths(raw: str, expected: TurnScore) -> None:
     assert parse_judge_output(raw) == expected
 
 
 def test_parse_judge_output_clamps_rating_in_range() -> None:
-    assert parse_judge_output("VERDICT: pass\nRATING: 999").rating == 100
+    assert parse_judge_output("VERDICT: guolu\nRATING: 999").rating == 100
     # Negative scores can't reach the regex (\d only), so this asserts
     # the natural max clamp; lower-bound clamping is exercised by the
-    # ge=0 validation built into the Score model.
+    # ge=0 validation built into the TurnScore model.
 
 
 def test_parse_judge_output_falls_back_on_unknown_verdict() -> None:
     out = parse_judge_output("VERDICT: 飘逸\nRATING: 80")
-    assert out == Score(verdict=Verdict.PASS, rating=50)
+    assert out == TurnScore(verdict=Verdict.GUOLU, rating=50)
 
 
 def test_parse_judge_output_falls_back_when_fields_missing() -> None:
     out = parse_judge_output("RATING: 80")  # no verdict line
-    assert out == Score(verdict=Verdict.PASS, rating=50)
+    assert out == TurnScore(verdict=Verdict.GUOLU, rating=50)
