@@ -100,6 +100,8 @@ ignore = [
 "app/llm/**/*.py" = ["ASYNC109"]
 "tests/test_llm_*.py" = ["ASYNC109"]
 "tests/test_agents_*.py" = ["ASYNC109"]
+"tests/test_sessions_turn_service.py" = ["ASYNC109"]
+"tests/test_sessions_turns_route.py" = ["ASYNC109"]
 
 [tool.ruff.format]
 quote-style = "double"

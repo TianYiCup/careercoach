@@ -162,14 +162,5 @@ async def test_end_session_route_returns_409_when_ended_twice(client: AsyncClien
     assert second.json()["code"] == "ALREADY_ENDED"
 
 
-async def test_turns_route_still_returns_501_in_pr_4a(client: AsyncClient) -> None:
-    """Contract canary: PR 4b implements SSE. Until then, the contract
-    that /turns is 501 must hold so the frontend MSW fallback knows
-    when to switch over."""
-    resp = await client.post(
-        "/v1/sessions/ses_any/turns",
-        json={"content": "hello"},
-    )
-    assert resp.status_code == 501
-    body = resp.json()
-    assert body["code"] == "NOT_IMPLEMENTED"
+# PR 4b removed the /turns 501 canary — SSE-driven /turns coverage
+# lives in test_sessions_turns_route.py.

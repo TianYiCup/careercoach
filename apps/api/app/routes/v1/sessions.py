@@ -1,8 +1,10 @@
 """Sandbox session endpoints — PRD §7.4.
 
-PR 4a wires `POST /v1/sessions` and `POST /v1/sessions/{id}/end` to a
-real `SessionService`. `/turns` stays 501 until PR 4b lands the SSE
-pipe and LangGraph judge integration.
+PR 4a wired create + end to a real `SessionService`. PR 4b adds the
+SSE-driven `/turns` endpoint backed by `TurnService` (streaming LLM
+output, gating user input through moderation, persisting per-turn
+records). PR 4c will replace `/end`'s stub Score with a TurnRepository-
+backed aggregator.
 
 The auth boundary is still anonymous — Sprint-2 swaps `_ANONYMOUS_USER_ID`
 for `Depends(get_current_user)` once SMS verify is real.
@@ -10,9 +12,12 @@ for `Depends(get_current_user)` once SMS verify is real.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+import uuid
+from collections.abc import AsyncIterator
 
-from app.routes.v1._stub import STUB_RESPONSES, not_implemented
+from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
+from fastapi.responses import StreamingResponse
+
 from app.schemas.sessions import (
     CreateSessionRequest,
     CreateSessionResponse,
@@ -22,10 +27,16 @@ from app.schemas.sessions import (
 from app.schemas.sse import SseEventEnvelope
 from app.services.sessions import (
     SessionAlreadyEndedError,
+    SessionEndedForTurnError,
     SessionNotFoundError,
+    SessionNotFoundForTurnError,
     SessionService,
+    TurnService,
+    UserInputBlockedError,
     get_session_service,
+    get_turn_service,
 )
+from app.services.sessions.sse import SseFrame, encode_frame
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -58,15 +69,62 @@ async def create_session(
             "model": SseEventEnvelope,
             "content": {"text/event-stream": {}},
         },
-        **STUB_RESPONSES,
+        400: {"description": "user content blocked by content moderation"},
+        404: {"description": "session not found"},
+        409: {"description": "session already ended"},
     },
     summary="Submit a user turn and stream the opponent reply (SSE)",
 )
 async def post_turn(
     payload: TurnRequest,
+    request: Request,
     session_id: str = Path(..., description="Session id from POST /v1/sessions."),
-) -> None:
-    raise not_implemented("POST /v1/sessions/{id}/turns")
+    service: TurnService = Depends(get_turn_service),
+) -> StreamingResponse:
+    """Validate-then-stream: typed 4xx errors come back as normal HTTP
+    responses (so the client's fetch().catch() handler sees them); only
+    once validation passes do we open the SSE stream."""
+    trace_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+    try:
+        validated = await service.validate_turn_request(
+            session_id=session_id,
+            content=payload.content,
+            user_id=_ANONYMOUS_USER_ID,
+            trace_id=trace_id,
+        )
+    except SessionNotFoundForTurnError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "NOT_FOUND", "message": f"session {session_id} not found"},
+        ) from exc
+    except SessionEndedForTurnError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "ALREADY_ENDED",
+                "message": f"session {session_id} has already been ended",
+            },
+        ) from exc
+    except UserInputBlockedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "USER_INPUT_BLOCKED",
+                "message": (
+                    "user input blocked by content moderation "
+                    f"({', '.join(exc.categories) or 'unknown'})"
+                ),
+            },
+        ) from exc
+
+    return StreamingResponse(
+        _wrap_sse_stream(service.stream_turn(validated)),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # disable nginx buffering for SSE
+        },
+    )
 
 
 @router.post(
@@ -100,3 +158,9 @@ async def end_session(
                 "message": f"session {session_id} has already been ended",
             },
         ) from exc
+
+
+async def _wrap_sse_stream(frames: AsyncIterator[SseFrame]) -> AsyncIterator[bytes]:
+    """Render `SseFrame` objects as the on-wire byte payload SSE expects."""
+    async for frame in frames:
+        yield encode_frame(frame)
