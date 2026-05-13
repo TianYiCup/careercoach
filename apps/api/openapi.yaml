@@ -161,6 +161,11 @@ paths:
       tags:
       - sessions
       summary: Submit a user turn and stream the opponent reply (SSE)
+      description: 'Validate-then-stream: typed 4xx errors come back as normal HTTP
+
+        responses (so the client''s fetch().catch() handler sees them); only
+
+        once validation passes do we open the SSE stream.'
       operationId: post_turn_v1_sessions__session_id__turns_post
       parameters:
       - name: session_id
@@ -186,16 +191,14 @@ paths:
           content:
             application/json:
               schema:
-                type: 'null'
-                title: Response Post Turn V1 Sessions  Session Id  Turns Post
                 $ref: '#/components/schemas/SseEventEnvelope'
             text/event-stream: {}
-        '501':
-          description: Endpoint exists in v0.1 schema but the handler is not implemented.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
+        '400':
+          description: user content blocked by content moderation
+        '404':
+          description: session not found
+        '409':
+          description: session already ended
         '422':
           description: Validation Error
           content:

@@ -63,11 +63,9 @@ async def client() -> AsyncIterator[AsyncClient]:
         ("post", "/v1/auth/sms/send", {"phone": "13800138000"}),
         ("post", "/v1/auth/sms/verify", {"phone": "13800138000", "code": "123456"}),
         ("get", "/v1/scenarios", None),
-        # NOTE: POST /v1/sessions + POST /v1/sessions/{id}/end flipped
-        # from 501 to real handlers in PR 4a — see test_sessions_route.py
-        # for the 200 / 404 / 409 contract. Keep them out so we don't
-        # regress them to stubs.
-        ("post", "/v1/sessions/ses_x/turns", {"content": "test"}),
+        # NOTE: POST /v1/sessions, /v1/sessions/{id}/turns, and /end all
+        # flipped from 501 to real handlers across PR 4a + 4b. The SSE
+        # contract for /turns is covered in test_sessions_turns_route.py.
         # NOTE: /v1/moderation/check landed in PR ① — see test_moderation_route.py
         # for the 200 contract. Keep it out of this list so we don't regress.
         # NOTE: /v1/sharecards/session/{id} flipped from 501 to 200/404
