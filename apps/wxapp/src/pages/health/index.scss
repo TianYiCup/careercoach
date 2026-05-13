@@ -1,0 +1,75 @@
+.health-page {
+  min-height: 100vh;
+  padding: 60px 32px;
+  background-color: #0f0e1a;
+  color: #f5f0ff;
+  text-align: center;
+}
+
+.health-title {
+  display: block;
+  font-size: 36px;
+  font-weight: 700;
+  color: #6c4dff;
+  margin-bottom: 16px;
+}
+
+.health-desc {
+  display: block;
+  font-size: 24px;
+  color: #a8a3c2;
+  margin-bottom: 40px;
+}
+
+.health-status {
+  margin-bottom: 24px;
+}
+
+.health-badge {
+  display: inline-block;
+  padding: 20px 48px;
+  border-radius: 999px;
+  font-size: 28px;
+  font-weight: 600;
+}
+
+.health-idle {
+  background: rgba(108, 77, 255, 0.2);
+  border: 1px solid rgba(108, 77, 255, 0.4);
+  color: #6c4dff;
+}
+
+.health-loading {
+  background: rgba(255, 233, 77, 0.15);
+  border: 1px solid rgba(255, 233, 77, 0.4);
+  color: #ffe94d;
+}
+
+.health-ok {
+  background: rgba(176, 255, 60, 0.15);
+  border: 1px solid rgba(176, 255, 60, 0.4);
+  color: #b0ff3c;
+}
+
+.health-err {
+  background: rgba(255, 107, 53, 0.15);
+  border: 1px solid rgba(255, 107, 53, 0.4);
+  color: #ff6b35;
+}
+
+.health-detail {
+  display: block;
+  padding: 20px;
+  background: rgba(26, 24, 46, 0.6);
+  border-radius: 12px;
+  font-size: 22px;
+  color: #a8a3c2;
+  margin-bottom: 24px;
+  word-break: break-all;
+}
+
+.health-tip {
+  display: block;
+  font-size: 20px;
+  color: #5e5b7a;
+}
