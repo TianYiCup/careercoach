@@ -24,6 +24,7 @@ import type {
   EndSessionResponse,
   ModerationCheckResponse,
   ScenarioListResponse,
+  ShareCardResponse,
 } from '../../api/v1/types'
 
 const server = setupServer(...handlers)
@@ -224,6 +225,119 @@ describe('POST /v1/sessions/:id/end', () => {
     expect(body.score.highlights).toBeTypeOf('string')
     expect(body.score.failures).toBeTypeOf('string')
     expect(Array.isArray(body.weakness_updates)).toBe(true)
+  })
+})
+
+/**
+ * Local helper for sharecards assertions. The three endpoints share the
+ * same response envelope (PRD §7.9 / schemas/sharecards.py:ShareCardResponse);
+ * keeping the shape check in one place means a future field add only has
+ * to land here once.
+ */
+function expectShareCardShape(body: ShareCardResponse, expectedType: ShareCardResponse['type']): void {
+  expect(body.card_id).toMatch(/^card_[0-9a-f]{16}$/)
+  expect(body.type).toBe(expectedType)
+  expect(body.png_url).toMatch(/^https?:\/\//)
+  expect(Array.isArray(body.pages)).toBe(true)
+  expect(body.share_links).toMatchObject({
+    wechat: expect.stringMatching(/^weixin:\/\//),
+    xiaohongshu: expect.stringMatching(/^https:\/\//),
+    save_local: expect.stringMatching(/^https?:\/\//),
+  })
+  // ISO-8601 with Z suffix (toISOString output).
+  expect(body.generated_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/)
+}
+
+describe('POST /v1/sharecards/session/:id', () => {
+  it('returns a session card on the happy path', async () => {
+    const res = await fetch(`${BASE}/sharecards/session/ses_abc12345`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ include_qrcode: true }),
+    })
+    expect(res.status).toBe(200)
+
+    const body = (await res.json()) as ShareCardResponse
+    expectShareCardShape(body, 'session')
+    // Session/weekly cards never carry the `pages` array — empty by contract.
+    expect(body.pages).toEqual([])
+    // save_local matches png_url for single-image cards.
+    expect(body.share_links.save_local).toBe(body.png_url)
+  })
+
+  it('returns 404 NOT_FOUND when the session has no scorecard yet', async () => {
+    const res = await fetch(`${BASE}/sharecards/session/ses_notfound_xyz`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    expect(res.status).toBe(404)
+    const body = (await res.json()) as { code: string; message: string }
+    expect(body.code).toBe('NOT_FOUND')
+    expect(body.message).toContain('ses_notfound_xyz')
+  })
+
+  it('returns 400 CAPTION_BLOCKED when user_caption_override hits the denylist', async () => {
+    const res = await fetch(`${BASE}/sharecards/session/ses_abc12345`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_caption_override: '我想自杀' }),
+    })
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { code: string; message: string }
+    expect(body.code).toBe('CAPTION_BLOCKED')
+  })
+
+  it('passes a benign user_caption_override through', async () => {
+    const res = await fetch(`${BASE}/sharecards/session/ses_abc12345`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_caption_override: '今天嘴硬了一把' }),
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as ShareCardResponse
+    expectShareCardShape(body, 'session')
+  })
+})
+
+describe('POST /v1/sharecards/weekly', () => {
+  it('returns a weekly card with the default offset', async () => {
+    const res = await fetch(`${BASE}/sharecards/weekly`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as ShareCardResponse
+    expectShareCardShape(body, 'weekly')
+    expect(body.pages).toEqual([])
+  })
+
+  it('accepts an arbitrary week_offset in [-12, 0]', async () => {
+    const res = await fetch(`${BASE}/sharecards/weekly`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ week_offset: -3, include_qrcode: true }),
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as ShareCardResponse
+    expectShareCardShape(body, 'weekly')
+  })
+})
+
+describe('POST /v1/sharecards/wrapped/year/:year', () => {
+  it('returns a wrapped card with 6 page URLs where pages[0] === png_url', async () => {
+    const res = await fetch(`${BASE}/sharecards/wrapped/year/2026`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ include_qrcode: true }),
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as ShareCardResponse
+    expectShareCardShape(body, 'wrapped')
+    // Foundation §7.9: pages[0] IS the cover and equals png_url.
+    expect(body.pages).toHaveLength(6)
+    expect(body.pages[0]).toBe(body.png_url)
   })
 })
 

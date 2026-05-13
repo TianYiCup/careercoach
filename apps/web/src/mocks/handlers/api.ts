@@ -6,6 +6,10 @@ import type {
   EndSessionResponse,
   ModerationCheckRequest,
   ModerationCheckResponse,
+  ShareCardResponse,
+  ShareCardType,
+  SessionShareCardRequest,
+  WeeklyShareCardRequest,
 } from '../../api/v1/types'
 
 // Wildcard origin so handlers match both relative dev fetches (`/v1/...`)
@@ -49,6 +53,49 @@ const mockScenarios: ScenarioListResponse = {
 }
 
 let turnCounter = 0
+
+/** 16-char hex card id matching the backend schema example. */
+function newCardId(): string {
+  return `card_${crypto.randomUUID().replaceAll('-', '').slice(0, 16)}`
+}
+
+interface ShareCardExtras {
+  weekOffset?: number
+  year?: number
+}
+
+/** Build a ShareCardResponse — shape mirrors schemas/sharecards.py. */
+function buildShareCard(type: ShareCardType, extras: ShareCardExtras = {}): ShareCardResponse {
+  const cardId = newCardId()
+  const origin = 'https://cdn.example.com/sharecards'
+  const cover = `${origin}/${cardId}.png`
+  const pages =
+    type === 'wrapped'
+      ? [
+          cover,
+          `${origin}/${cardId}/p1_count.png`,
+          `${origin}/${cardId}/p2_opponent.png`,
+          `${origin}/${cardId}/p3_shenfeng.png`,
+          `${origin}/${cardId}/p4_fanche.png`,
+          `${origin}/${cardId}/p5_letter.png`,
+        ]
+      : []
+
+  void extras // reserved for future variations (week_offset / year overlays)
+
+  return {
+    card_id: cardId,
+    type,
+    png_url: cover,
+    pages,
+    share_links: {
+      wechat: `weixin://dl/share?card=${cardId}`,
+      xiaohongshu: `https://www.xiaohongshu.com/share?img=${cardId}`,
+      save_local: cover,
+    },
+    generated_at: new Date().toISOString(),
+  }
+}
 
 // --- Handlers ---
 export const handlers = [
@@ -152,6 +199,60 @@ export const handlers = [
       weakness_updates: [{ tag: '过早让步', delta: 1 }],
     }
     return HttpResponse.json(response)
+  }),
+
+  // POST /v1/sharecards/session/:sessionId — PRD §7.9
+  // Mocks the happy path; mirrors backend's CAPTION_BLOCKED + NOT_FOUND
+  // shapes so the UI's error branches are exercisable without spinning
+  // up the real service. Real backend route is wired in PR ③ of D6;
+  // /weekly and /wrapped are still 501 server-side, mocked here so
+  // B-track UI work isn't blocked on F5 (sessions epic).
+  http.post(`${BASE}/sharecards/session/:sessionId`, async ({ request, params }) => {
+    await delay(400)
+    const sessionId = params.sessionId as string
+    const body = (await request.json()) as SessionShareCardRequest
+
+    // Predictable 404 hook: any session id containing "notfound" lets
+    // the UI test its "no scorecard yet" path. Real backend issues this
+    // when the session was never ended (no row in session_scores).
+    if (sessionId.includes('notfound')) {
+      return HttpResponse.json(
+        { code: 'NOT_FOUND', message: `session ${sessionId} has no scorecard yet` },
+        { status: 404 },
+      )
+    }
+
+    // Caption moderation mirrors POST /v1/moderation/check's denylist.
+    const caption = body.user_caption_override ?? ''
+    const dangerWords = ['自杀', '死', '杀', '网贷', '贷款']
+    const hit = dangerWords.find((w) => caption.includes(w))
+    if (hit) {
+      return HttpResponse.json(
+        {
+          code: 'CAPTION_BLOCKED',
+          message: `user_caption_override blocked by content moderation (other)`,
+        },
+        { status: 400 },
+      )
+    }
+
+    return HttpResponse.json(buildShareCard('session'))
+  }),
+
+  // POST /v1/sharecards/weekly — PRD §7.9
+  http.post(`${BASE}/sharecards/weekly`, async ({ request }) => {
+    await delay(400)
+    const body = (await request.json()) as WeeklyShareCardRequest
+    // Surface the week_offset back into the caption so UI dev can
+    // distinguish "this week" vs backfilled previous weeks visually.
+    return HttpResponse.json(buildShareCard('weekly', { weekOffset: body.week_offset ?? 0 }))
+  }),
+
+  // POST /v1/sharecards/wrapped/year/:year — PRD §7.9
+  http.post(`${BASE}/sharecards/wrapped/year/:year`, async ({ params }) => {
+    await delay(500)
+    const year = Number(params.year)
+    return HttpResponse.json(buildShareCard('wrapped', { year }))
   }),
 
   // POST /v1/moderation/check
