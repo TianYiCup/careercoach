@@ -88,7 +88,9 @@ ignore = [
 # Moderation service holds Chinese red-line resource titles + sample copy.
 "app/services/**/*.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/test_moderation_*.py" = ["RUF001", "RUF002", "RUF003"]
-"tests/test_sessions_*.py" = ["RUF001", "RUF002", "RUF003"]
+# Sessions tests carry Chinese fixtures and implement `LLMProvider` stubs that
+# require the `timeout=` parameter to match the protocol signature.
+"tests/test_sessions_*.py" = ["RUF001", "RUF002", "RUF003", "ASYNC109"]
 "tests/test_sharecards_*.py" = ["RUF001", "RUF002", "RUF003"]
 # Spike runner has Chinese prompts + report copy using full-width
 # punctuation and × / – for human readability.
@@ -100,8 +102,6 @@ ignore = [
 "app/llm/**/*.py" = ["ASYNC109"]
 "tests/test_llm_*.py" = ["ASYNC109"]
 "tests/test_agents_*.py" = ["ASYNC109"]
-"tests/test_sessions_turn_service.py" = ["ASYNC109"]
-"tests/test_sessions_turns_route.py" = ["ASYNC109"]
 
 [tool.ruff.format]
 quote-style = "double"

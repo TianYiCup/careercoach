@@ -46,17 +46,27 @@ logger = structlog.get_logger(__name__)
 def get_session_service() -> SessionService:
     """Default wiring for `POST /v1/sessions` + `POST /v1/sessions/{id}/end`.
 
-    Repository is the same singleton TurnService writes into, so a
-    session created here is also visible to `/turns` rebuilding history.
+    The session repository, turn repository, and LLM router are all
+    shared singletons with `get_turn_service` so a single in-process
+    instance sees consistent state across create → turns → end.
     """
     repository = _get_session_repository()
     score_repo = get_session_score_repository()
+    turn_repo = _get_turn_repository()
+    llm = get_llm_router()
     logger.info(
         "session_service_wired",
         repository=repository.__class__.__name__,
         score_repo=score_repo.__class__.__name__,
+        turn_repo=turn_repo.__class__.__name__,
+        llm=llm.__class__.__name__,
     )
-    return SessionService(repository=repository, score_repo=score_repo)
+    return SessionService(
+        repository=repository,
+        score_repo=score_repo,
+        turn_repo=turn_repo,
+        llm=llm,
+    )
 
 
 @lru_cache(maxsize=1)

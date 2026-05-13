@@ -40,7 +40,20 @@ def _build_services(
     session_repo = InMemorySessionRepository()
     turn_repo = InMemoryTurnRepository()
     score_repo = InMemorySessionScoreRepository()
-    session_svc = SessionService(repository=session_repo, score_repo=score_repo)
+    # The same scripted LLM serves both /turns and the /end summarizer
+    # in these route tests — keyword routing in `_ScriptedProvider`
+    # picks the right canned reply by system-prompt content.
+    llm = _ScriptedProvider(
+        roleplay="什么安排比工作还重要？",
+        coach="SAFE: 反问 deadline\nAGGRESSIVE: 引用劳动法\nHUMOR: 跟床约了不能放鸽子",
+        judge="VERDICT: guolu\nRATING: 70",
+    )
+    session_svc = SessionService(
+        repository=session_repo,
+        score_repo=score_repo,
+        turn_repo=turn_repo,
+        llm=llm,
+    )
 
     moderation: ModerationService
     if block_moderation:
@@ -57,11 +70,7 @@ def _build_services(
         moderation = ModerationService(backend=NoopBackend(), event_sink=LogOnlyEventSink())
 
     turn_svc = TurnService(
-        llm=_ScriptedProvider(
-            roleplay="什么安排比工作还重要？",
-            coach="SAFE: 反问 deadline\nAGGRESSIVE: 引用劳动法\nHUMOR: 跟床约了不能放鸽子",
-            judge="VERDICT: guolu\nRATING: 70",
-        ),
+        llm=llm,
         moderation=moderation,
         session_repo=session_repo,
         turn_repo=turn_repo,
