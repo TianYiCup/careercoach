@@ -63,10 +63,7 @@ async def test_create_session_unknown_scenario_falls_back_to_generic_opening() -
 
 async def test_create_session_emits_unique_ids() -> None:
     svc, _ = _service()
-    ids = {
-        (await svc.create_session(_request(), user_id="u")).session_id
-        for _ in range(8)
-    }
+    ids = {(await svc.create_session(_request(), user_id="u")).session_id for _ in range(8)}
     assert len(ids) == 8
 
 
