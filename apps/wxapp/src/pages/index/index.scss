@@ -182,17 +182,18 @@
   color: #6c4dff;
 }
 
-/* ── 副驾 CTA ──────────── */
-.home-copilot-cta {
+/* ── 跨端引导 ──────────── */
+.home-cross-platform-hint {
   margin-top: 20px;
-  padding: 32px;
-  background: linear-gradient(135deg, #6c4dff, #ff7ab6);
+  padding: 24px 32px;
+  background: rgba(108, 77, 255, 0.12);
+  border: 1px solid rgba(108, 77, 255, 0.3);
   border-radius: 20px;
   text-align: center;
 }
 
-.home-copilot-cta-text {
-  font-size: 28px;
-  color: #ffffff;
-  font-weight: 600;
+.home-cross-platform-hint-text {
+  font-size: 26px;
+  color: #b8a7ff;
+  font-weight: 500;
 }

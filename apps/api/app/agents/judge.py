@@ -2,14 +2,18 @@
 
 The judge LLM is asked to emit a small structured payload:
 
-    VERDICT: <godlike|pass|fail>
+    VERDICT: <shenfeng|guolu|fanche>
     RATING: <0-100>
 
 JSON would be more robust, but parsing two lines keeps the prompt
 short for Sprint 0 and the parser is exhaustively unit-tested.
-Anything we can't parse degrades to a neutral `pass` / 50 so the
+Anything we can't parse degrades to a neutral `guolu` / 50 so the
 graph still completes (callers can detect the degradation via
-`Score.rating == 50` + the `judge_unparseable` log line they'll see).
+`TurnScore.rating == 50` + the `judge_unparseable` log line they'll
+see).
+
+Verdict literals align with `app.schemas.sessions.ScoreResult` —
+design-spec §3.0 评分语义: 封神 / 路过 / 翻车.
 """
 
 from __future__ import annotations
@@ -20,7 +24,7 @@ from collections.abc import Awaitable, Callable
 import structlog
 
 from app.agents._stream import stream_to_text
-from app.agents.state import Score, SessionState, Verdict
+from app.agents.state import SessionState, TurnScore, Verdict
 from app.llm import LLMProvider, Message
 
 logger = structlog.get_logger(__name__)
@@ -28,7 +32,7 @@ logger = structlog.get_logger(__name__)
 JUDGE_SYSTEM_PROMPT = (
     "你是评委。看完用户与对手的对话，对【用户的话】给一个评分。\n"
     "只输出两行：\n"
-    "VERDICT: godlike | pass | fail\n"
+    "VERDICT: shenfeng | guolu | fanche\n"
     "RATING: 0-100 的整数\n"
     "不要解释，不要任何额外文字。"
 )
@@ -38,10 +42,10 @@ _RATING_RE = re.compile(r"RATING\s*:\s*(\d{1,3})", re.IGNORECASE)
 
 # Fallback when the model misbehaves — neutral verdict so the user
 # still sees a result, but caller can tell something was off.
-_FALLBACK = Score(verdict=Verdict.PASS, rating=50)
+_FALLBACK = TurnScore(verdict=Verdict.GUOLU, rating=50)
 
 
-def parse_judge_output(text: str) -> Score:
+def parse_judge_output(text: str) -> TurnScore:
     """Best-effort parse of the two-line judge contract.
 
     Public so tests can drive parsing directly without spinning up
@@ -60,7 +64,7 @@ def parse_judge_output(text: str) -> Score:
         return _FALLBACK
 
     rating = max(0, min(100, int(rating_match.group(1))))
-    return Score(verdict=verdict, rating=rating)
+    return TurnScore(verdict=verdict, rating=rating)
 
 
 def make_judge_node(
@@ -74,6 +78,6 @@ def make_judge_node(
             Message.user(prompt),
         ]
         raw = await stream_to_text(provider.stream_chat(messages))
-        return SessionState(score=parse_judge_output(raw))
+        return SessionState(turn_score=parse_judge_output(raw))
 
     return node

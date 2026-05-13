@@ -85,9 +85,14 @@ export default function Index() {
         <Text className="home-report-link">查看完整 Wrapped →</Text>
       </View>
 
-      {/* ── 副驾 CTA ───────────────── */}
-      <View className="home-copilot-cta">
-        <Text className="home-copilot-cta-text">🎧 实战副驾 · 关键时刻在线</Text>
+      {/* ── 跨端引导 ────────────────
+       *  CLAUDE.md #12: 副驾仅 Web/EXE,小程序版不做副驾(录音 API 限制)。
+       *  小程序首页不推副驾,改提示用户去 App/电脑端体验。
+       */}
+      <View className="home-cross-platform-hint">
+        <Text className="home-cross-platform-hint-text">
+          想体验实战副驾？App / 电脑端见 →
+        </Text>
       </View>
     </View>
   )

@@ -15,10 +15,16 @@ Field meanings (Sprint 0 minimum surface):
   * `opponent_reply`  — RolePlay node output (the AI opponent's reply
                         to the user's turn).
   * `coach_hint`      — Coach K node output (next-line guidance).
-  * `score`           — Judge node output: verdict + 0-100 rating.
+  * `turn_score`      — Judge node output: verdict + 0-100 rating.
 
-`score` is a small, validated payload (`Score` model) rather than a
-free-form dict so the API layer doesn't have to re-validate it.
+`turn_score` is a small, validated payload (`TurnScore` model) rather
+than a free-form dict so the API layer doesn't have to re-validate it.
+
+Naming note: this is `TurnScore` (per-turn, internal graph state),
+distinct from `app.schemas.sessions.Score` (per-session, HTTP envelope,
+5-dim breakdown). The canonical verdict taxonomy across the codebase
+is `shenfeng / guolu / fanche` (design-spec §3.0 评分语义); judge prompt
+asks the LLM to emit these literals directly, no translation layer.
 """
 
 from enum import StrEnum
@@ -30,15 +36,21 @@ from app.llm import Message
 
 
 class Verdict(StrEnum):
-    """Three-tier verdict (design-spec §3.0 评分语义)."""
+    """Three-tier verdict (design-spec §3.0 评分语义).
 
-    GODLIKE = "godlike"  # 封神 ✨
-    PASS = "pass"  # 路过 🌀
-    FAIL = "fail"  # 翻车 💥
+    Aligns with `app.schemas.sessions.ScoreResult` so the Judge node
+    output and the HTTP `EndSessionResponse.score.result` share the
+    same string literals — no translation layer needed at the API
+    boundary.
+    """
+
+    SHENFENG = "shenfeng"  # 封神 ✨
+    GUOLU = "guolu"  # 路过 🌀
+    FANCHE = "fanche"  # 翻车 💥
 
 
-class Score(BaseModel):
-    """Judge node output."""
+class TurnScore(BaseModel):
+    """Judge node output for a single turn."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -56,7 +68,7 @@ class SessionState(TypedDict, total=False):
 
     opponent_reply: str
     coach_hint: str
-    score: Score
+    turn_score: TurnScore
 
 
 def make_initial_state(
