@@ -13,9 +13,11 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Iterator
 
 import pytest
+from app.llm import Message
 from app.main import app
 from app.services.sessions import (
     InMemorySessionRepository,
+    InMemoryTurnRepository,
     SessionService,
     get_session_service,
 )
@@ -24,6 +26,31 @@ from app.services.sharecards.session_score import (
     get_session_score_repository,
 )
 from httpx import ASGITransport, AsyncClient
+
+
+class _RouteStubLLM:
+    """Same shape as the aggregator's `LLMProvider` Protocol — emits a
+    canned summary so /end has a deterministic Score on the route."""
+
+    name = "route_stub"
+
+    async def stream_chat(
+        self,
+        messages: list[Message],
+        *,
+        temperature: float = 0.7,
+        timeout: float = 30.0,
+    ) -> AsyncIterator[str]:
+        del messages, temperature, timeout
+        yield (
+            "AURA: 7\n"
+            "LOGIC: 6\n"
+            "EMOTION: 6\n"
+            "PROFESSIONALISM: 7\n"
+            "GOAL_ACHIEVE: 5\n"
+            "HIGHLIGHTS: 整体表达稳\n"
+            "FAILURES: 末段略软"
+        )
 
 
 @pytest.fixture
@@ -38,6 +65,8 @@ def service_override() -> Iterator[InMemorySessionScoreRepository]:
     service = SessionService(
         repository=InMemorySessionRepository(),
         score_repo=score_repo,
+        turn_repo=InMemoryTurnRepository(),
+        llm=_RouteStubLLM(),
     )
     app.dependency_overrides[get_session_service] = lambda: service
     app.dependency_overrides[get_session_score_repository] = lambda: score_repo

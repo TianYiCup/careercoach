@@ -1,6 +1,6 @@
 """`SessionService` — orchestrates sandbox session lifecycle.
 
-PR 4a flows:
+Endpoints owned here:
 
     POST /v1/sessions       → create_session(...)
                             → SessionRepository.save                (audit row)
@@ -8,22 +8,20 @@ PR 4a flows:
 
     POST /v1/sessions/{id}/end → end_session(...)
                             → SessionRepository.get / mark_ended
-                            → derive a 5-dim Score (stub, until PR 4b)
+                            → aggregator.aggregate_session_score
+                              (reads TurnRepository for history, calls
+                               LLM once for the 5-dim summary, falls back
+                               to mechanical aggregation on failure)
                             → SessionScoreRepository.add            (powers sharecards)
                             → return EndSessionResponse
 
-PR 4b adds the LangGraph-driven Score in place of the stub, plus the
-`/turns` SSE pipe (still 501 here).
+The `/turns` SSE pipeline lives in `TurnService`; it writes per-turn
+records into the same `TurnRepository` this service reads on `/end`.
 
-Score derivation today
-----------------------
-`/turns` is still a stub, so there's no turn history to grade. To
-unblock the sharecards path (F5 unlocks 卡 live), this service emits a
-deterministic placeholder Score on `/end`. Values mirror the MSW mock
-(`apps/web/src/mocks/handlers/api.ts`) so the frontend can iterate
-against either backend without contract drift. The accompanying log
-line `session_ended_with_stub_score` is the canary — once PR 4b lands,
-that line should disappear.
+PR history:
+  * PR 4a — skeleton with hardcoded stub score
+  * PR 4b — `TurnService` + SSE turns pipeline
+  * PR 4c — wire the aggregator, drop the stub
 """
 
 from __future__ import annotations
@@ -33,6 +31,7 @@ from datetime import UTC, datetime
 
 import structlog
 
+from app.llm import LLMProvider
 from app.schemas.sessions import (
     CreateSessionRequest,
     CreateSessionResponse,
@@ -40,12 +39,14 @@ from app.schemas.sessions import (
     Score,
     WeaknessUpdate,
 )
+from app.services.sessions.aggregator import aggregate_session_score
 from app.services.sessions.repository import (
     SessionRecord,
     SessionRepository,
     utcnow,
 )
 from app.services.sessions.scenario_seed import ScenarioSeed, get_scenario_seed
+from app.services.sessions.turn_repository import TurnRepository
 from app.services.sharecards.session_score import SessionScoreRepository
 from app.services.sharecards.types import SessionCardData
 
@@ -68,9 +69,13 @@ class SessionService:
         *,
         repository: SessionRepository,
         score_repo: SessionScoreRepository,
+        turn_repo: TurnRepository,
+        llm: LLMProvider,
     ) -> None:
         self._repository = repository
         self._score_repo = score_repo
+        self._turn_repo = turn_repo
+        self._llm = llm
 
     async def create_session(
         self,
@@ -116,15 +121,17 @@ class SessionService:
         if existing.status == "ended":
             raise SessionAlreadyEndedError(session_id)
 
-        # Stub score — replaced by Judge-node output in PR 4b. Values
-        # mirror apps/web/src/mocks/handlers/api.ts so the contract test
-        # stays green when the real backend takes over from MSW.
-        score = _stub_score()
-        weakness_updates = [WeaknessUpdate(tag="过早让步", delta=1)]
+        seed = get_scenario_seed(existing.scenario_id)
+        turns = await self._turn_repo.list_for_session(session_id)
+        score = await aggregate_session_score(
+            turns=turns,
+            llm=self._llm,
+            user_goal=existing.user_goal,
+            scenario_title=seed.scenario_title,
+        )
 
         await self._repository.mark_ended(session_id, ended_at=datetime.now(UTC))
 
-        seed = get_scenario_seed(existing.scenario_id)
         card_data = _score_to_card_data(score, seed=seed)
         # SessionScoreRepository is the read side for `/v1/sharecards/session/{id}`.
         # Writing here is what makes a freshly-ended session render a real card
@@ -132,26 +139,28 @@ class SessionService:
         self._score_repo.add(session_id, card_data)
 
         logger.info(
-            "session_ended_with_stub_score",
+            "session_ended",
             session_id=session_id,
-            result=score.result,
             user_id=user_id,
-            replace_in="PR 4b (LangGraph judge integration)",
+            result=score.result,
+            turns=len(turns),
         )
-        return EndSessionResponse(score=score, weakness_updates=weakness_updates)
+        return EndSessionResponse(
+            score=score,
+            weakness_updates=_derive_weakness_updates(turns_count=len(turns)),
+        )
 
 
-def _stub_score() -> Score:
-    return Score(
-        aura=7,
-        logic=6,
-        emotion=5,
-        professionalism=8,
-        goal_achieve=4,
-        highlights="在压力下保持了专业态度",
-        failures="过早让步，没有坚持底线",
-        result="guolu",
-    )
+def _derive_weakness_updates(*, turns_count: int) -> list[WeaknessUpdate]:
+    """Per-tag delta list returned alongside `Score`.
+
+    The full taxonomy-driven weakness tracker is a later epic; for now
+    we just emit a single placeholder when there are turns to score, and
+    nothing for an empty session so the response isn't lying.
+    """
+    if turns_count == 0:
+        return []
+    return [WeaknessUpdate(tag="过早让步", delta=1)]
 
 
 def _score_to_card_data(score: Score, *, seed: ScenarioSeed) -> SessionCardData:
