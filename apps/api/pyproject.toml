@@ -88,6 +88,7 @@ ignore = [
 # Moderation service holds Chinese red-line resource titles + sample copy.
 "app/services/**/*.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/test_moderation_*.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/test_sessions_*.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/test_sharecards_*.py" = ["RUF001", "RUF002", "RUF003"]
 # Spike runner has Chinese prompts + report copy using full-width
 # punctuation and × / – for human readability.
