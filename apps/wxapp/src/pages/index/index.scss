@@ -1,21 +1,198 @@
-.index {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
+.home {
   min-height: 100vh;
   padding: 40px 32px;
-  background-color: #0f0b1a;
+  background-color: #0f0e1a;
+  color: #f5f0ff;
 }
 
-.title {
-  font-size: 48px;
+/* ── 顶栏 ──────────────── */
+.home-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 32px;
+}
+
+.home-greeting-text {
+  font-size: 36px;
+  font-weight: 700;
+  color: #f5f0ff;
+}
+
+.home-vibe-pill {
+  display: inline-block;
+  padding: 8px 20px;
+  border-radius: 999px;
+  background: rgba(108, 77, 255, 0.2);
+  border: 1px solid rgba(108, 77, 255, 0.4);
+  font-size: 24px;
   color: #6c4dff;
-  font-weight: bold;
+}
+
+/* ── StreakFire ────────── */
+.home-streak {
+  margin-bottom: 40px;
+}
+
+.home-streak-text {
+  font-size: 28px;
+  color: #ff6b35;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.home-streak-bar {
+  height: 8px;
+  background: #252246;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.home-streak-fill {
+  width: 80%;
+  height: 100%;
+  background: linear-gradient(90deg, #ff6b35, #ff7ab6);
+  border-radius: 999px;
+}
+
+/* ── Section ───────────── */
+.home-section {
+  margin-bottom: 40px;
+}
+
+.home-section-title {
+  font-size: 28px;
+  font-weight: 600;
+  color: #f5f0ff;
+  margin-bottom: 20px;
+}
+
+/* ── 推荐场景横滑 ──────── */
+.home-scenarios {
+  display: flex;
+  gap: 20px;
+  overflow-x: auto;
+  white-space: nowrap;
+  -webkit-overflow-scrolling: touch;
+}
+
+.home-scenario-card {
+  flex-shrink: 0;
+  width: 240px;
+  padding: 24px;
+  background: rgba(26, 24, 46, 0.6);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(108, 77, 255, 0.15);
+  border-radius: 20px;
+  text-align: center;
+}
+
+.home-scenario-icon {
+  font-size: 48px;
+  display: block;
+  margin-bottom: 12px;
+}
+
+.home-scenario-title {
+  font-size: 28px;
+  font-weight: 600;
+  color: #6c4dff;
+  display: block;
+  margin-bottom: 8px;
+}
+
+.home-scenario-desc {
+  font-size: 22px;
+  color: #a8a3c2;
+  display: block;
+  margin-bottom: 8px;
+}
+
+.home-scenario-stars {
+  font-size: 20px;
+  display: block;
+}
+
+/* ── 继续练习 ──────────── */
+.home-continue {
+  margin-bottom: 40px;
+}
+
+.home-continue-label {
+  font-size: 24px;
+  color: #a8a3c2;
+  margin-bottom: 12px;
+}
+
+.home-continue-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 24px;
+  background: rgba(108, 77, 255, 0.12);
+  backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+}
+
+.home-continue-title {
+  font-size: 26px;
+  color: #f5f0ff;
+}
+
+/* ── 本周战报 ──────────── */
+.home-report-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
   margin-bottom: 16px;
 }
 
-.subtitle {
+.home-report-label {
+  font-size: 24px;
+  color: #a8a3c2;
+  width: 100px;
+  flex-shrink: 0;
+}
+
+.home-report-bar {
+  flex: 1;
+  height: 8px;
+  background: #252246;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.home-report-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #6c4dff, #b0ff3c);
+  border-radius: 999px;
+}
+
+.home-report-value {
+  font-size: 24px;
+  color: #b0ff3c;
+  font-weight: 600;
+  width: 60px;
+  text-align: right;
+}
+
+.home-report-link {
+  font-size: 24px;
+  color: #6c4dff;
+}
+
+/* ── 副驾 CTA ──────────── */
+.home-copilot-cta {
+  margin-top: 20px;
+  padding: 32px;
+  background: linear-gradient(135deg, #6c4dff, #ff7ab6);
+  border-radius: 20px;
+  text-align: center;
+}
+
+.home-copilot-cta-text {
   font-size: 28px;
-  color: #a892ff;
+  color: #ffffff;
+  font-weight: 600;
 }

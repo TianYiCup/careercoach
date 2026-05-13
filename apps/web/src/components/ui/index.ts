@@ -1,3 +1,7 @@
 export { GlassCard } from './GlassCard'
 export { StickerBadge } from './StickerBadge'
 export { BlobBackground } from './BlobBackground'
+export { HintCardV2, type ToneLevel } from './HintCardV2'
+export { CoachBubble } from './CoachBubble'
+export { VibePill, type VibeType } from './VibePill'
+export { StreakFire } from './StreakFire'
