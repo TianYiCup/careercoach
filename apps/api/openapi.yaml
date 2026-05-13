@@ -150,12 +150,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CreateSessionResponse'
-        '501':
-          description: Endpoint exists in v0.1 schema but the handler is not implemented.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
         '422':
           description: Validation Error
           content:
@@ -192,6 +186,8 @@ paths:
           content:
             application/json:
               schema:
+                type: 'null'
+                title: Response Post Turn V1 Sessions  Session Id  Turns Post
                 $ref: '#/components/schemas/SseEventEnvelope'
             text/event-stream: {}
         '501':
@@ -228,12 +224,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/EndSessionResponse'
-        '501':
-          description: Endpoint exists in v0.1 schema but the handler is not implemented.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: session not found
+        '409':
+          description: session already ended
         '422':
           description: Validation Error
           content:

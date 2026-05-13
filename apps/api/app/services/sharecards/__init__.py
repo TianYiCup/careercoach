@@ -30,6 +30,7 @@ from app.services.sharecards.service import (
 from app.services.sharecards.session_score import (
     InMemorySessionScoreRepository,
     SessionScoreRepository,
+    get_session_score_repository,
 )
 from app.services.sharecards.storage import LocalFilesystemStorage, ShareCardStorage
 from app.services.sharecards.types import SessionCardData
@@ -45,9 +46,10 @@ def get_sharecard_service() -> ShareCardService:
       * Renderer is always `PillowShareCardRenderer` for v0.
       * Storage is `LocalFilesystemStorage` writing to `sharecards_storage_dir`
         and serving under `sharecards_public_base_url`.
-      * Score repository is the empty `InMemorySessionScoreRepository`
-        until Sprint-2 drops a DB-backed implementation; until then,
-        the route returns 404 for every session_id.
+      * Score repository is the process-wide singleton from
+        `get_session_score_repository()`. PR 4a wires the session
+        service to write into the same store on `/end`, so a freshly
+        ended session renders a real card instead of 404.
       * Moderation is the same singleton used by `/v1/moderation/check`.
     """
     settings = get_settings()
@@ -58,7 +60,7 @@ def get_sharecard_service() -> ShareCardService:
         root=storage_root,
         public_base_url=settings.sharecards_public_base_url,
     )
-    score_repo = InMemorySessionScoreRepository()
+    score_repo = get_session_score_repository()
     moderation = get_moderation_service()
 
     logger.info(
@@ -93,5 +95,6 @@ __all__ = [
     "ShareCardRendererError",
     "ShareCardService",
     "ShareCardStorage",
+    "get_session_score_repository",
     "get_sharecard_service",
 ]
