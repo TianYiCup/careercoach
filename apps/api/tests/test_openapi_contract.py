@@ -62,7 +62,8 @@ async def client() -> AsyncIterator[AsyncClient]:
     [
         ("post", "/v1/auth/sms/send", {"phone": "13800138000"}),
         ("post", "/v1/auth/sms/verify", {"phone": "13800138000", "code": "123456"}),
-        ("get", "/v1/scenarios", None),
+        # NOTE: GET /v1/scenarios landed as a real handler in this PR —
+        # the 200/filter contract lives in test_scenarios_route.py.
         # NOTE: POST /v1/sessions, /v1/sessions/{id}/turns, and /end all
         # flipped from 501 to real handlers across PR 4a + 4b. The SSE
         # contract for /turns is covered in test_sessions_turns_route.py.
