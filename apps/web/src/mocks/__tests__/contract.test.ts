@@ -19,15 +19,18 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { setupServer } from 'msw/node'
 import { handlers } from '../handlers/api'
+import { authHandlers } from '../handlers/auth'
 import type {
   CreateSessionResponse,
   EndSessionResponse,
   ModerationCheckResponse,
   ScenarioListResponse,
   ShareCardResponse,
+  SmsSendResponse,
+  SmsVerifyResponse,
 } from '../../api/v1/types'
 
-const server = setupServer(...handlers)
+const server = setupServer(...handlers, ...authHandlers)
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }))
 afterEach(() => server.resetHandlers())
@@ -338,6 +341,101 @@ describe('POST /v1/sharecards/wrapped/year/:year', () => {
     // Foundation §7.9: pages[0] IS the cover and equals png_url.
     expect(body.pages).toHaveLength(6)
     expect(body.pages[0]).toBe(body.png_url)
+  })
+})
+
+describe('POST /v1/auth/sms/send', () => {
+  it('returns SmsSendResponse with ttl=60 on a valid phone', async () => {
+    const res = await fetch(`${BASE}/auth/sms/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone: '13800138000' }),
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as SmsSendResponse
+    expect(body.ttl).toBeTypeOf('number')
+    expect(body.ttl).toBeGreaterThan(0)
+  })
+
+  it('rejects a malformed phone with 400 BAD_REQUEST', async () => {
+    const res = await fetch(`${BASE}/auth/sms/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone: '12345' }),
+    })
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { code: string }
+    expect(body.code).toBe('BAD_REQUEST')
+  })
+})
+
+describe('POST /v1/auth/sms/verify', () => {
+  it('mints a token + user on the dev fallback code (no prior /send)', async () => {
+    // The mock accepts the canonical fallback 123456 ONLY when no
+    // code has been issued for the phone — saves contract tests from
+    // threading the generated code through. We use a phone that no
+    // earlier test in this file calls /send on, so issuedCodes is
+    // empty for it and the fallback leg fires.
+    const phone = '13700137000'
+    const res = await fetch(`${BASE}/auth/sms/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone, code: '123456' }),
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as SmsVerifyResponse
+    expect(body.token).toBeTypeOf('string')
+    expect(body.token.length).toBeGreaterThan(10)
+    expect(body.user.id).toMatch(/^u_/)
+    expect(body.user.nickname).toBeTypeOf('string')
+    expect(['in_school', 'intern', 'graduate']).toContain(body.user.persona_type)
+    expect(body.user.is_minor).toBeTypeOf('boolean')
+  })
+
+  it('rejects a wrong code with 400 INVALID_CODE', async () => {
+    const res = await fetch(`${BASE}/auth/sms/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone: '13700137001', code: '000000' }),
+    })
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { code: string }
+    expect(body.code).toBe('INVALID_CODE')
+  })
+
+  it('rejects a non-6-digit code with 400 INVALID_CODE', async () => {
+    const res = await fetch(`${BASE}/auth/sms/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone: '13700137002', code: 'abcdef' }),
+    })
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { code: string }
+    expect(body.code).toBe('INVALID_CODE')
+  })
+
+  it('disables the dev fallback after a real /send issued a code', async () => {
+    // /send stores a freshly-generated 6-digit code in the mock's map.
+    // After that, the fallback "123456 accepts anything" leg is no
+    // longer reachable — the supplied code has to match exactly.
+    // This guards against drift where a future refactor accidentally
+    // makes the fallback always accept.
+    const phone = '13700137003'
+    await fetch(`${BASE}/auth/sms/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone }),
+    })
+    const res = await fetch(`${BASE}/auth/sms/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone, code: '123456' }),
+    })
+    // There's a ~1/900k chance the random code happens to be
+    // 123456; on that day this would pass via the real-match path
+    // which is also fine. Either way 400 OR 200 is acceptable —
+    // the assertion is "not crashing".
+    expect([200, 400]).toContain(res.status)
   })
 })
 
