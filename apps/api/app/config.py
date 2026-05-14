@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     # SQLAlchemy-backed impls; alembic must be `upgrade head` first.
     sessions_repo_backend: Literal["memory", "postgres"] = Field(default="memory")
 
+    # Auth user persistence — same defaulting rule. The code store
+    # (SMS verification codes) stays in-memory regardless; codes are
+    # short-lived and don't belong in the relational store.
+    auth_repo_backend: Literal["memory", "postgres"] = Field(default="memory")
+
     # LLM · DeepSeek (primary, OpenAI-compatible).
     # Empty key means the adapter will refuse to send requests; only the
     # router knows how to fall back when this happens.

@@ -16,6 +16,8 @@ from functools import lru_cache
 
 import structlog
 
+from app.config import get_settings
+from app.db.session import async_session_factory
 from app.services.auth.code_store import (
     CodeStore,
     InMemoryCodeStore,
@@ -31,6 +33,7 @@ from app.services.auth.service import (
 )
 from app.services.auth.user_repository import (
     InMemoryUserRepository,
+    PostgresUserRepository,
     UserRecord,
     UserRepository,
 )
@@ -69,7 +72,14 @@ def _get_code_store() -> InMemoryCodeStore:
 
 
 @lru_cache(maxsize=1)
-def _get_user_repository() -> InMemoryUserRepository:
+def _get_user_repository() -> UserRepository:
+    """Backend chosen via settings; `memory` for dev / tests, `postgres`
+    when running against a real DB with alembic applied."""
+    backend = get_settings().auth_repo_backend
+    if backend == "postgres":
+        logger.info("user_repository_wired", backend="postgres")
+        return PostgresUserRepository(async_session_factory)
+    logger.info("user_repository_wired", backend="memory")
     return InMemoryUserRepository()
 
 
@@ -81,6 +91,7 @@ __all__ = [
     "InMemoryUserRepository",
     "InvalidCodeError",
     "LoggingDispatcher",
+    "PostgresUserRepository",
     "SmsDispatcher",
     "StoredCode",
     "TokenPayload",
