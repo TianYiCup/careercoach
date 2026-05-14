@@ -15,12 +15,14 @@ the middleware lands.
 from functools import lru_cache
 
 import structlog
+from redis.asyncio import Redis
 
 from app.config import get_settings
 from app.db.session import async_session_factory
 from app.services.auth.code_store import (
     CodeStore,
     InMemoryCodeStore,
+    RedisCodeStore,
     StoredCode,
 )
 from app.services.auth.dependency import ANONYMOUS_USER_ID, get_current_user_id
@@ -67,7 +69,18 @@ def get_auth_service() -> AuthService:
 
 
 @lru_cache(maxsize=1)
-def _get_code_store() -> InMemoryCodeStore:
+def _get_code_store() -> CodeStore:
+    """Backend chosen via settings; `memory` for dev / tests, `redis`
+    in production so codes survive a restart and one-shot pop is
+    atomic across concurrent verify calls."""
+    settings = get_settings()
+    if settings.auth_code_store_backend == "redis":
+        logger.info("code_store_wired", backend="redis", url=settings.redis_url)
+        # `from_url` returns a lazily-connecting client; the first await
+        # call actually opens the connection, which matches our other
+        # singletons (no startup cost just to import the module).
+        return RedisCodeStore(Redis.from_url(settings.redis_url))
+    logger.info("code_store_wired", backend="memory")
     return InMemoryCodeStore()
 
 
@@ -92,6 +105,7 @@ __all__ = [
     "InvalidCodeError",
     "LoggingDispatcher",
     "PostgresUserRepository",
+    "RedisCodeStore",
     "SmsDispatcher",
     "StoredCode",
     "TokenPayload",

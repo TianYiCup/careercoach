@@ -36,10 +36,15 @@ class Settings(BaseSettings):
     # SQLAlchemy-backed impls; alembic must be `upgrade head` first.
     sessions_repo_backend: Literal["memory", "postgres"] = Field(default="memory")
 
-    # Auth user persistence — same defaulting rule. The code store
-    # (SMS verification codes) stays in-memory regardless; codes are
-    # short-lived and don't belong in the relational store.
+    # Auth user persistence — same defaulting rule.
     auth_repo_backend: Literal["memory", "postgres"] = Field(default="memory")
+
+    # SMS code store — Redis is the right home (5-min TTL + atomic
+    # GETDEL for one-shot verification). Defaults to in-memory so dev
+    # runs without docker still work; production should set this to
+    # `redis` so codes survive a restart and parallel verifies can't
+    # replay the same code.
+    auth_code_store_backend: Literal["memory", "redis"] = Field(default="memory")
 
     # Sharecards score-cache persistence. Set to `postgres` so a
     # restart doesn't drop the score-card render cache for previously
