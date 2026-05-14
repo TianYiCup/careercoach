@@ -86,7 +86,10 @@ ignore = [
 # is a Verdict enum value (not a credential).
 "app/agents/**/*.py" = ["RUF001", "RUF002", "RUF003", "S105"]
 # Moderation service holds Chinese red-line resource titles + sample copy.
-"app/services/**/*.py" = ["RUF001", "RUF002", "RUF003"]
+# B008 covers the auth dependency module, where `Depends()` in argument
+# defaults is the canonical FastAPI dependency pattern (same exception
+# the route layer uses).
+"app/services/**/*.py" = ["B008", "RUF001", "RUF002", "RUF003"]
 "tests/test_moderation_*.py" = ["RUF001", "RUF002", "RUF003"]
 # Sessions tests carry Chinese fixtures and implement `LLMProvider` stubs that
 # require the `timeout=` parameter to match the protocol signature.

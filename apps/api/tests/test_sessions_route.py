@@ -172,6 +172,62 @@ async def test_end_session_route_returns_404_for_unknown_session(
     assert body["code"] == "NOT_FOUND"
 
 
+async def test_create_session_with_valid_bearer_token_uses_jwt_user_id(
+    client: AsyncClient,
+) -> None:
+    """When a real JWT lands in the Authorization header, the session
+    must be attributed to that user — not the anonymous sentinel."""
+    from app.services.auth import mint_token
+    from app.services.sessions import get_session_service
+
+    token = mint_token(user_id="u_route_test", persona_type="intern", is_minor=False)
+    resp = await client.post(
+        "/v1/sessions",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "mode": "sandbox",
+            "scenario_id": "sc_001",
+            "persona_id": "p_hard",
+            "user_goal": "保住周末",
+        },
+    )
+
+    assert resp.status_code == 200, resp.text
+    session_id = resp.json()["session_id"]
+
+    # Inspect the persisted SessionRecord to confirm the user_id was
+    # actually carried through — fixture-installed service is async-fresh.
+    service = app.dependency_overrides[get_session_service]()
+    record = await service._repository.get(session_id)
+    assert record is not None
+    assert record.user_id == "u_route_test"
+
+
+async def test_create_session_without_authorization_header_uses_anonymous(
+    client: AsyncClient,
+) -> None:
+    """Soft mode default — missing header still serves the request."""
+    from app.services.sessions import get_session_service
+
+    resp = await client.post(
+        "/v1/sessions",
+        json={
+            "mode": "sandbox",
+            "scenario_id": "sc_001",
+            "persona_id": "p_hard",
+            "user_goal": "保住周末",
+        },
+    )
+
+    assert resp.status_code == 200, resp.text
+    session_id = resp.json()["session_id"]
+
+    service = app.dependency_overrides[get_session_service]()
+    record = await service._repository.get(session_id)
+    assert record is not None
+    assert record.user_id == "anonymous"
+
+
 async def test_end_session_route_returns_409_when_ended_twice(client: AsyncClient) -> None:
     created = await client.post(
         "/v1/sessions",

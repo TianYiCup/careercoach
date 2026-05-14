@@ -140,6 +140,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - JWT: []
   /v1/sessions/{session_id}/turns:
     post:
       tags:
@@ -151,6 +153,8 @@ paths:
 
         once validation passes do we open the SSE stream.'
       operationId: post_turn_v1_sessions__session_id__turns_post
+      security:
+      - JWT: []
       parameters:
       - name: session_id
         in: path
@@ -195,6 +199,8 @@ paths:
       - sessions
       summary: End a session and emit the scorecard + weakness deltas
       operationId: end_session_v1_sessions__session_id__end_post
+      security:
+      - JWT: []
       parameters:
       - name: session_id
         in: path
@@ -252,6 +258,8 @@ paths:
       - sharecards
       summary: Render a 9:16 share card for a finished sandbox session
       operationId: create_session_card_v1_sharecards_session__session_id__post
+      security:
+      - JWT: []
       parameters:
       - name: session_id
         in: path
@@ -311,12 +319,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - JWT: []
   /v1/sharecards/wrapped/year/{year}:
     post:
       tags:
       - sharecards
       summary: Render the 6-page annual Wrapped recap
       operationId: create_wrapped_card_v1_sharecards_wrapped_year__year__post
+      security:
+      - JWT: []
       parameters:
       - name: year
         in: path
@@ -1158,3 +1170,7 @@ components:
       required:
       - data
       title: _OpponentDoneFrame
+  securitySchemes:
+    JWT:
+      type: http
+      scheme: bearer
