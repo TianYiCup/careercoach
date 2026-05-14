@@ -57,36 +57,23 @@ async def client() -> AsyncIterator[AsyncClient]:
         yield ac
 
 
-@pytest.mark.parametrize(
-    ("method", "path", "body"),
-    [
-        ("post", "/v1/auth/sms/send", {"phone": "13800138000"}),
-        ("post", "/v1/auth/sms/verify", {"phone": "13800138000", "code": "123456"}),
-        # NOTE: GET /v1/scenarios landed as a real handler in this PR —
-        # the 200/filter contract lives in test_scenarios_route.py.
-        # NOTE: POST /v1/sessions, /v1/sessions/{id}/turns, and /end all
-        # flipped from 501 to real handlers across PR 4a + 4b. The SSE
-        # contract for /turns is covered in test_sessions_turns_route.py.
-        # NOTE: /v1/moderation/check landed in PR ① — see test_moderation_route.py
-        # for the 200 contract. Keep it out of this list so we don't regress.
-        # NOTE: All three /v1/sharecards endpoints flipped from 501 to
-        # 200 — see test_sharecards_route.py. Keep them out of this list
-        # so we don't regress to a stub.
-    ],
-)
-async def test_stubs_return_501_with_envelope(
-    client: AsyncClient, method: str, path: str, body: dict[str, object] | None
-) -> None:
-    if method == "get":
-        resp = await client.get(path)
-    else:
-        resp = await client.post(path, json=body)
-
-    assert resp.status_code == 501, resp.text
-    payload = resp.json()
-    assert payload["code"] == "NOT_IMPLEMENTED"
-    assert payload["message"]
-    assert payload["trace_id"]
+# NOTE: Every v0.1 endpoint listed in REQUIRED_ENDPOINTS now ships a
+# real handler — the 501 stub canary list is empty. If a future endpoint
+# needs to land as a stub first, add it here.
+async def test_v01_surface_has_no_remaining_501_stubs() -> None:
+    """Belt-and-braces — guards against re-introducing stub responses
+    silently. Each endpoint has its own positive-path test elsewhere."""
+    spec = app.openapi()
+    for path, methods in spec["paths"].items():
+        if not (path == "/health" or path.startswith("/v1/")):
+            continue
+        for method, op in methods.items():
+            if method.lower() not in {"get", "post", "put", "patch", "delete"}:
+                continue
+            responses = op.get("responses", {})
+            assert "501" not in responses, (
+                f"{method.upper()} {path} still ships the 501 stub response"
+            )
 
 
 async def test_validation_error_uses_standard_envelope(client: AsyncClient) -> None:
