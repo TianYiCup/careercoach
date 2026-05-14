@@ -36,12 +36,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SmsSendResponse'
-        '501':
-          description: Endpoint exists in v0.1 schema but the handler is not implemented.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
         '422':
           description: Validation Error
           content:
@@ -67,12 +61,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SmsVerifyResponse'
-        '501':
-          description: Endpoint exists in v0.1 schema but the handler is not implemented.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
+        '400':
+          description: Code expired, never sent, or does not match
         '422':
           description: Validation Error
           content:
@@ -460,33 +450,6 @@ components:
       required:
       - score
       title: EndSessionResponse
-    ErrorResponse:
-      properties:
-        code:
-          type: string
-          title: Code
-          description: Stable machine-readable error code (e.g. RATE_LIMIT_EXCEEDED).
-          examples:
-          - NOT_IMPLEMENTED
-        message:
-          type: string
-          title: Message
-          description: Human-readable, user-safe message. Never leaks internal detail.
-          examples:
-          - this endpoint is not implemented in v0.1
-        trace_id:
-          type: string
-          title: Trace Id
-          description: Per-request id; surface in UI so users can quote it in support.
-          examples:
-          - a3f1c2e0-9b4d-4f1e-8c8b-1c0e7e2f6a01
-      type: object
-      required:
-      - code
-      - message
-      - trace_id
-      title: ErrorResponse
-      description: Standard error envelope returned for any non-2xx HTTP status.
     HTTPValidationError:
       properties:
         detail:
