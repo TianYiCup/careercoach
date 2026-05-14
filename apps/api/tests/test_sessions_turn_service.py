@@ -80,6 +80,7 @@ def _service(
     *,
     llm_provider: LLMProvider | None = None,
     block_moderation: bool = False,
+    langfuse_client: object | None = None,
 ) -> tuple[TurnService, InMemorySessionRepository, InMemoryTurnRepository]:
     if llm_provider is None:
         llm_provider = _ScriptedProvider(
@@ -94,6 +95,7 @@ def _service(
         moderation=_moderation(block=block_moderation),
         session_repo=session_repo,
         turn_repo=turn_repo,
+        langfuse_client=langfuse_client,  # type: ignore[arg-type]
     )
     return svc, session_repo, turn_repo
 
@@ -303,3 +305,117 @@ async def test_coach_parse_failure_falls_back_to_canned_safe_copy() -> None:
     assert hint["safe"]
     assert hint["aggressive"]
     assert hint["humor"]
+
+
+# --- Langfuse trace instrumentation ---
+
+
+async def test_stream_turn_with_no_langfuse_client_works_unchanged() -> None:
+    """The default wiring has no Langfuse keys, so the client is None.
+    The stream must still complete end-to-end."""
+    svc, session_repo, _ = _service(langfuse_client=None)
+    await session_repo.save(_active_session())
+    validated = await svc.validate_turn_request(
+        session_id="ses_aaaa1111",
+        content="hi",
+        user_id="anonymous",
+        trace_id="t1",
+    )
+
+    frames = await _collect(svc.stream_turn(validated))
+    # Same event ordering as the un-instrumented tests.
+    events = [f.event for f in frames]
+    assert events[-3:] == ["opponent.done", "coach.hint", "meta"]
+
+
+async def test_stream_turn_emits_trace_with_three_generations() -> None:
+    """When Langfuse is wired, one trace per turn + one generation per
+    LLM call (roleplay / coach / judge)."""
+    from unittest.mock import MagicMock
+
+    client = MagicMock(name="langfuse")
+    inner_trace = MagicMock(name="trace")
+    inner_gen = MagicMock(name="generation")
+    inner_trace.generation.return_value = inner_gen
+    client.trace.return_value = inner_trace
+
+    svc, session_repo, _ = _service(langfuse_client=client)
+    await session_repo.save(_active_session())
+    validated = await svc.validate_turn_request(
+        session_id="ses_aaaa1111",
+        content="周末有事",
+        user_id="u_42",
+        trace_id="trace-from-route",
+    )
+
+    await _collect(svc.stream_turn(validated))
+
+    # One top-level trace, with the input + metadata the route fed in.
+    client.trace.assert_called_once()
+    _args, kwargs = client.trace.call_args
+    assert kwargs["name"] == "session_turn"
+    assert kwargs["input"]["session_id"] == "ses_aaaa1111"
+    assert kwargs["input"]["user_content"] == "周末有事"
+    assert kwargs["input"]["prior_turn_count"] == 0
+    assert kwargs["metadata"]["user_id"] == "u_42"
+    assert kwargs["metadata"]["trace_id"] == "trace-from-route"
+    assert kwargs["metadata"]["scenario_id"] == "sc_001"
+
+    # Three generations in order: roleplay → coach → judge.
+    generation_names = [c.kwargs["name"] for c in inner_trace.generation.call_args_list]
+    assert generation_names == ["roleplay", "coach.three_tones", "judge"]
+
+    # Trace finished with the per-turn output payload.
+    inner_trace.update.assert_called_once()
+    finish_kwargs = inner_trace.update.call_args.kwargs
+    assert "output" in finish_kwargs
+    output = finish_kwargs["output"]
+    assert output["verdict"] == "guolu"
+    assert output["rating"] == 70
+    assert output["turns_used"] == 1
+    assert output["turn_id"].startswith("t_")
+
+
+async def test_stream_turn_marks_trace_error_when_llm_blows_up() -> None:
+    """Exception during the SSE pipeline must be captured on the trace
+    AND re-raised — the route's error handler still needs to see it."""
+    from unittest.mock import MagicMock
+
+    class _BoomProvider:
+        name = "boom"
+
+        async def stream_chat(
+            self,
+            messages: list[Message],
+            *,
+            temperature: float = 0.7,
+            timeout: float = 8.0,
+        ) -> AsyncIterator[str]:
+            _ = (messages, temperature, timeout)
+            raise RuntimeError("scripted provider failure")
+            yield ""  # pragma: no cover — unreachable
+
+    client = MagicMock(name="langfuse")
+    inner_trace = MagicMock(name="trace")
+    client.trace.return_value = inner_trace
+
+    svc, session_repo, _ = _service(
+        llm_provider=_BoomProvider(),
+        langfuse_client=client,
+    )
+    await session_repo.save(_active_session())
+    validated = await svc.validate_turn_request(
+        session_id="ses_aaaa1111",
+        content="hi",
+        user_id="anonymous",
+        trace_id="t1",
+    )
+
+    with pytest.raises(RuntimeError, match="scripted provider failure"):
+        await _collect(svc.stream_turn(validated))
+
+    # Trace marked ERROR with the exception message.
+    inner_trace.update.assert_called_once()
+    fail_kwargs = inner_trace.update.call_args.kwargs
+    assert fail_kwargs.get("level") == "ERROR"
+    assert "scripted provider failure" in fail_kwargs.get("status_message", "")

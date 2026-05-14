@@ -15,6 +15,7 @@ import structlog
 from app.config import get_settings
 from app.db.session import async_session_factory
 from app.llm.factory import get_llm_router
+from app.observability.langfuse import get_langfuse_client
 from app.services.moderation import get_moderation_service
 from app.services.sessions.repository import (
     InMemorySessionRepository,
@@ -87,6 +88,9 @@ def get_turn_service() -> TurnService:
         moderation=get_moderation_service(),
         session_repo=_get_session_repository(),
         turn_repo=_get_turn_repository(),
+        # `None` when LANGFUSE_* keys are unset — TurnService's no-op
+        # trace path keeps the SSE pipeline identical for dev.
+        langfuse_client=get_langfuse_client(),
     )
 
 
