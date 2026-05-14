@@ -10,6 +10,7 @@ import sentry_sdk
 import structlog
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sentry_sdk.integrations.asgi import SentryAsgiMiddleware
 
@@ -56,6 +57,22 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json",
     )
 
+    # CORS must wrap as the OUTER-most middleware so preflight (OPTIONS)
+    # responses get the access-control headers even when downstream
+    # middleware would otherwise short-circuit. Origins come from
+    # settings — never `*` because we send Bearer credentials and the
+    # CORS spec forbids credentialed wildcards.
+    cors_origins = settings.cors_allowed_origins_list
+    if cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=cors_origins,
+            allow_credentials=True,
+            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_headers=["Authorization", "Content-Type", "X-Request-Id"],
+            expose_headers=["X-Request-Id"],
+        )
+
     # Request-id binding sits OUTSIDE Sentry so the trace_id is on the
     # log line Sentry forwards to its own breadcrumb.
     app.add_middleware(RequestIdMiddleware)
@@ -72,6 +89,7 @@ def create_app() -> FastAPI:
         version=__version__,
         env=settings.app_env,
         sentry=bool(settings.sentry_dsn),
+        cors_origins_count=len(cors_origins),
     )
 
     return app

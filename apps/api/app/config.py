@@ -31,6 +31,29 @@ class Settings(BaseSettings):
     app_port: int = 8000
     app_log_level: str = "info"
 
+    # Comma-separated CORS allowlist. The default covers Vite dev
+    # (`localhost:5173`), the FastAPI host itself (when EXE / web hit
+    # via same host), and Tauri's webview origins. Production sets
+    # `CORS_ALLOWED_ORIGINS` to the real frontend domain(s).
+    #
+    # Wildcard `*` is deliberately NOT supported here because we send
+    # `Authorization` (Bearer JWT once hard auth flips) and the CORS
+    # spec forbids credentialed wildcard. Be explicit.
+    cors_allowed_origins: str = Field(
+        default=(
+            "http://localhost:5173,http://localhost:8000,tauri://localhost,https://tauri.localhost"
+        ),
+        description=(
+            "Comma-separated list of origins permitted via CORS. "
+            "Set CORS_ALLOWED_ORIGINS in prod to the frontend domain."
+        ),
+    )
+
+    @property
+    def cors_allowed_origins_list(self) -> list[str]:
+        """Parsed view — split on comma, strip whitespace, drop blanks."""
+        return [o.strip() for o in self.cors_allowed_origins.split(",") if o.strip()]
+
     database_url: str = Field(
         default="postgresql+asyncpg://postgres:postgres@localhost:5432/careercoach"
     )
