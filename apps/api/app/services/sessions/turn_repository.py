@@ -1,8 +1,9 @@
 """Per-session turn history store.
 
-PR 4b ships in-memory only — keeps SSE flow tests deterministic and
-free of DB dependencies. The SQL-backed implementation drops into the
-same protocol slot when the turns table lands.
+Two implementations live here: the in-memory store that backs unit
+tests and dev runs without a docker stack, and the postgres-backed
+store wired to `app.db.async_session_factory` for production. The
+factory in `__init__.py` picks one based on `settings.sessions_repo_backend`.
 
 Why a turn table at all (v0)
 ----------------------------
@@ -24,7 +25,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 
-from app.agents.state import TurnScore
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from app.agents.state import TurnScore, Verdict
+from app.models.turn import Turn
 
 
 @dataclass(frozen=True)
@@ -75,3 +80,63 @@ class InMemoryTurnRepository:
     async def list_for_session(self, session_id: str) -> list[TurnRecord]:
         # Returns a copy so callers can't mutate the canonical list.
         return list(self._store.get(session_id, []))
+
+
+class PostgresTurnRepository:
+    """SQLAlchemy-backed implementation.
+
+    Append is the hot path here — every /turns call writes exactly
+    one row. We open a fresh AsyncSession per append rather than
+    reusing one across the SSE lifecycle: the SSE handler is
+    single-threaded inside one request, and an open transaction
+    across a streaming response can hold a row lock for the full
+    LLM round-trip.
+
+    `list_for_session` orders by `created_at` so the aggregator's
+    "most recent" semantics stay stable.
+    """
+
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        self._session_factory = session_factory
+
+    async def append(self, record: TurnRecord) -> None:
+        async with self._session_factory() as session, session.begin():
+            session.add(_record_to_model(record))
+
+    async def list_for_session(self, session_id: str) -> list[TurnRecord]:
+        stmt = select(Turn).where(Turn.session_id == session_id).order_by(Turn.created_at.asc())
+        async with self._session_factory() as session:
+            result = await session.execute(stmt)
+            rows = result.scalars().all()
+        return [_model_to_record(row) for row in rows]
+
+
+def _record_to_model(record: TurnRecord) -> Turn:
+    return Turn(
+        turn_id=record.turn_id,
+        session_id=record.session_id,
+        user_content=record.user_content,
+        opponent_reply=record.opponent_reply,
+        coach_hint_safe=record.coach_hint.safe,
+        coach_hint_aggressive=record.coach_hint.aggressive,
+        coach_hint_humor=record.coach_hint.humor,
+        verdict=record.turn_score.verdict.value,
+        rating=record.turn_score.rating,
+        created_at=record.created_at,
+    )
+
+
+def _model_to_record(row: Turn) -> TurnRecord:
+    return TurnRecord(
+        turn_id=row.turn_id,
+        session_id=row.session_id,
+        user_content=row.user_content,
+        opponent_reply=row.opponent_reply,
+        coach_hint=CoachHintTrio(
+            safe=row.coach_hint_safe,
+            aggressive=row.coach_hint_aggressive,
+            humor=row.coach_hint_humor,
+        ),
+        turn_score=TurnScore(verdict=Verdict(row.verdict), rating=row.rating),
+        created_at=row.created_at,
+    )

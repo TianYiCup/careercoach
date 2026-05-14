@@ -30,6 +30,12 @@ class Settings(BaseSettings):
 
     jwt_secret: str = Field(default="dev-only-not-for-prod-32-chars-min!")
 
+    # Sessions + turns persistence backend.
+    # `memory` (default) keeps everything dict-backed inside the worker
+    # so dev runs without docker still work. `postgres` switches to the
+    # SQLAlchemy-backed impls; alembic must be `upgrade head` first.
+    sessions_repo_backend: Literal["memory", "postgres"] = Field(default="memory")
+
     # LLM · DeepSeek (primary, OpenAI-compatible).
     # Empty key means the adapter will refuse to send requests; only the
     # router knows how to fall back when this happens.
