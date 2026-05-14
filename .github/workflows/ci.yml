@@ -172,14 +172,71 @@ jobs:
         run: echo "::notice::apps/wxapp 还没初始化，跳过 lint"
 
   # ============================================================
+  # 条件跑：apps/api 存在时跑 pytest
+  # ============================================================
+  test-api:
+    name: Test API
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        run: |
+          if [ -f apps/api/pyproject.toml ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+      - uses: astral-sh/setup-uv@v3
+        if: steps.check.outputs.exists == 'true'
+      - name: Install
+        if: steps.check.outputs.exists == 'true'
+        working-directory: apps/api
+        run: uv sync --frozen
+      - name: Pytest
+        if: steps.check.outputs.exists == 'true'
+        working-directory: apps/api
+        # `--strict-markers` keeps a typo'd @pytest.mark.* from silently
+        # passing; tests that need postgres / aliyun creds skip themselves.
+        run: uv run --frozen pytest -q --strict-markers
+      - name: Skip notice
+        if: steps.check.outputs.exists == 'false'
+        run: echo "::notice::apps/api 还没初始化，跳过 pytest"
+
+  # ============================================================
+  # 条件跑：apps/web 存在时跑 vitest
+  # ============================================================
+  test-web:
+    name: Test Web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        run: |
+          if [ -f apps/web/package.json ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+      - uses: pnpm/action-setup@v4
+        if: steps.check.outputs.exists == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.check.outputs.exists == 'true'
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install
+        if: steps.check.outputs.exists == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: Vitest
+        if: steps.check.outputs.exists == 'true'
+        run: pnpm --filter web test
+      - name: Skip notice
+        if: steps.check.outputs.exists == 'false'
+        run: echo "::notice::apps/web 还没初始化，跳过 vitest"
+
+  # ============================================================
   # TODO（W1D2 之后启用）
   # ============================================================
-  # test-api:
-  #   name: Test API
-  #   ...
-  # test-web:
-  #   name: Test Web
-  #   ...
   # build-web:
   #   name: Build Web
   #   ...
