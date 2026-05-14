@@ -252,6 +252,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - JWT: []
   /v1/sharecards/session/{session_id}:
     post:
       tags:
