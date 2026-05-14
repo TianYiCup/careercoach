@@ -34,10 +34,12 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
 import structlog
+from langfuse import Langfuse
 
 from app.agents.judge import parse_judge_output
 from app.agents.state import TurnScore
 from app.llm import LLMProvider, Message
+from app.observability.langfuse import TurnTrace, begin_turn_trace
 from app.schemas.moderation import ModerationCheckRequest
 from app.services.moderation.service import ModerationService
 from app.services.sessions.repository import SessionRepository
@@ -139,11 +141,16 @@ class TurnService:
         moderation: ModerationService,
         session_repo: SessionRepository,
         turn_repo: TurnRepository,
+        langfuse_client: Langfuse | None = None,
     ) -> None:
         self._llm = llm
         self._moderation = moderation
         self._session_repo = session_repo
         self._turn_repo = turn_repo
+        # `None` is a real, supported value — when Langfuse keys aren't
+        # configured `begin_turn_trace` returns a no-op `TurnTrace` so
+        # `stream_turn` never branches on observability state.
+        self._langfuse_client = langfuse_client
 
     async def validate_turn_request(
         self,
@@ -188,97 +195,164 @@ class TurnService:
         )
 
     async def stream_turn(self, validated: ValidatedTurn) -> AsyncIterator[SseFrame]:
-        """Drive the LLM, emit SSE frames, persist the turn record."""
+        """Drive the LLM, emit SSE frames, persist the turn record.
+
+        Wrapped in a Langfuse `session_turn` trace. Each LLM call inside
+        emits a `generation` span; the trace is finished with the
+        per-turn output payload, or marked `level=ERROR` on exception
+        before re-raising. When `LANGFUSE_*` keys aren't configured
+        the trace is a no-op so dev runs aren't slowed down.
+        """
         session = await self._session_repo.get(validated.session_id)
         # `validate_turn_request` already confirmed the session exists; the
         # repo lookup here is just to grab the scenario_id for prompts.
         assert session is not None  # pragma: no cover — guarded by precheck
 
-        seed = get_scenario_seed(session.scenario_id)
-        history = _build_history(
-            seed_opening=seed.opening_line,
-            prior_turns=validated.prior_turns,
-        )
-
-        roleplay_messages: list[Message] = [
-            Message.system(_ROLEPLAY_PROMPT),
-            *history,
-            Message.user(validated.content),
-        ]
-
-        full_reply_parts: list[str] = []
-        async for chunk in self._llm.stream_chat(roleplay_messages):
-            if not chunk:
-                continue
-            full_reply_parts.append(chunk)
-            yield SseFrame("opponent.delta", {"text": chunk})
-
-        full_reply = "".join(full_reply_parts).strip()
-        if not full_reply:
-            # LLM hung up before producing anything — emit a graceful
-            # fallback line so the UI doesn't render an empty bubble.
-            full_reply = "……"
-            yield SseFrame("opponent.delta", {"text": full_reply})
-
-        turn_id = _new_turn_id()
-        yield SseFrame(
-            "opponent.done",
-            {"turn_id": turn_id, "full_text": full_reply},
-        )
-
-        coach_hint = await self._coach_three_tones(validated.content, full_reply)
-        yield SseFrame(
-            "coach.hint",
-            {
-                "safe": coach_hint.safe,
-                "aggressive": coach_hint.aggressive,
-                "humor": coach_hint.humor,
+        trace = begin_turn_trace(
+            self._langfuse_client,
+            input={
+                "session_id": validated.session_id,
+                "user_content": validated.content,
+                "prior_turn_count": len(validated.prior_turns),
+            },
+            metadata={
+                "user_id": validated.user_id,
+                "trace_id": validated.trace_id,
+                "scenario_id": session.scenario_id,
             },
         )
 
-        turn_score = await self._judge_turn(validated.content, full_reply)
+        try:
+            seed = get_scenario_seed(session.scenario_id)
+            history = _build_history(
+                seed_opening=seed.opening_line,
+                prior_turns=validated.prior_turns,
+            )
 
-        record = TurnRecord(
-            turn_id=turn_id,
-            session_id=validated.session_id,
-            user_content=validated.content,
-            opponent_reply=full_reply,
-            coach_hint=coach_hint,
-            turn_score=turn_score,
-            created_at=datetime.now(UTC),
-        )
-        await self._turn_repo.append(record)
+            roleplay_messages: list[Message] = [
+                Message.system(_ROLEPLAY_PROMPT),
+                *history,
+                Message.user(validated.content),
+            ]
 
-        turns_used = len(validated.prior_turns) + 1
-        yield SseFrame(
-            "meta",
-            {
-                "turns_used": turns_used,
-                "turns_left": max(0, MAX_TURNS_PER_SESSION - turns_used),
-            },
-        )
+            full_reply_parts: list[str] = []
+            async for chunk in self._llm.stream_chat(roleplay_messages):
+                if not chunk:
+                    continue
+                full_reply_parts.append(chunk)
+                yield SseFrame("opponent.delta", {"text": chunk})
 
-        logger.info(
-            "turn_completed",
-            session_id=validated.session_id,
-            turn_id=turn_id,
-            turns_used=turns_used,
-            verdict=turn_score.verdict,
-            rating=turn_score.rating,
-        )
+            full_reply = "".join(full_reply_parts).strip()
+            if not full_reply:
+                # LLM hung up before producing anything — emit a graceful
+                # fallback line so the UI doesn't render an empty bubble.
+                full_reply = "……"
+                yield SseFrame("opponent.delta", {"text": full_reply})
 
-    async def _coach_three_tones(self, user_content: str, opponent_reply: str) -> CoachHintTrio:
+            trace.record_generation(
+                name="roleplay",
+                model=self._llm.name,
+                input=[m.model_dump() for m in roleplay_messages],
+                output=full_reply,
+            )
+
+            turn_id = _new_turn_id()
+            yield SseFrame(
+                "opponent.done",
+                {"turn_id": turn_id, "full_text": full_reply},
+            )
+
+            coach_hint = await self._coach_three_tones(validated.content, full_reply, trace)
+            yield SseFrame(
+                "coach.hint",
+                {
+                    "safe": coach_hint.safe,
+                    "aggressive": coach_hint.aggressive,
+                    "humor": coach_hint.humor,
+                },
+            )
+
+            turn_score = await self._judge_turn(validated.content, full_reply, trace)
+
+            record = TurnRecord(
+                turn_id=turn_id,
+                session_id=validated.session_id,
+                user_content=validated.content,
+                opponent_reply=full_reply,
+                coach_hint=coach_hint,
+                turn_score=turn_score,
+                created_at=datetime.now(UTC),
+            )
+            await self._turn_repo.append(record)
+
+            turns_used = len(validated.prior_turns) + 1
+            yield SseFrame(
+                "meta",
+                {
+                    "turns_used": turns_used,
+                    "turns_left": max(0, MAX_TURNS_PER_SESSION - turns_used),
+                },
+            )
+
+            logger.info(
+                "turn_completed",
+                session_id=validated.session_id,
+                turn_id=turn_id,
+                turns_used=turns_used,
+                verdict=turn_score.verdict,
+                rating=turn_score.rating,
+            )
+            trace.finish(
+                output={
+                    "turn_id": turn_id,
+                    "opponent_reply": full_reply,
+                    "verdict": turn_score.verdict,
+                    "rating": turn_score.rating,
+                    "turns_used": turns_used,
+                }
+            )
+        except Exception as exc:
+            # GeneratorExit (client disconnect) is BaseException, not
+            # Exception — it falls through this handler unmarked so we
+            # don't paint normal cancellation as a server failure on
+            # the Langfuse UI.
+            trace.fail(exc)
+            raise
+
+    async def _coach_three_tones(
+        self,
+        user_content: str,
+        opponent_reply: str,
+        trace: TurnTrace,
+    ) -> CoachHintTrio:
         """Single LLM call → parse the three-tone block. Fallback on parse fail."""
         prompt = f"用户刚说：{user_content}\n对手回应：{opponent_reply}\n请按三档输出。"
         messages = [Message.system(_COACH_PROMPT), Message.user(prompt)]
         raw = await _collect(self._llm.stream_chat(messages))
+        trace.record_generation(
+            name="coach.three_tones",
+            model=self._llm.name,
+            input=[m.model_dump() for m in messages],
+            output=raw,
+        )
         return _parse_three_tones(raw)
 
-    async def _judge_turn(self, user_content: str, opponent_reply: str) -> TurnScore:
+    async def _judge_turn(
+        self,
+        user_content: str,
+        opponent_reply: str,
+        trace: TurnTrace,
+    ) -> TurnScore:
         """Reuse the agent-level parser so SSE + LangGraph stay in sync."""
         prompt = f"用户的话：{user_content}\n对手的回应：{opponent_reply}\n请评分。"
         messages = [Message.system(_JUDGE_PROMPT), Message.user(prompt)]
         raw = await _collect(self._llm.stream_chat(messages))
+        trace.record_generation(
+            name="judge",
+            model=self._llm.name,
+            input=[m.model_dump() for m in messages],
+            output=raw,
+        )
         return parse_judge_output(raw)
 
 

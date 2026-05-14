@@ -163,3 +163,124 @@ async def test_run_session_turn_default_metadata_is_empty_dict() -> None:
 
     _args, kwargs = client.trace.call_args
     assert kwargs["metadata"] == {}
+
+
+# ---------------------------------------------------------------------
+# `TurnTrace` / `begin_turn_trace` — the SSE-side wrapper used by
+# `TurnService.stream_turn`.
+# ---------------------------------------------------------------------
+
+
+def test_begin_turn_trace_returns_noop_when_client_is_none() -> None:
+    """No Langfuse keys → no trace handle. Caller doesn't have to
+    branch — every method on the returned wrapper short-circuits."""
+    from app.observability.langfuse import begin_turn_trace
+
+    trace = begin_turn_trace(None, input={"x": 1}, metadata={"y": 2})
+
+    # No raises — every method is safe to call.
+    trace.record_generation(name="g", model="m", input={}, output="ok")
+    trace.finish(output={"done": True})
+    trace.fail(RuntimeError("boom"))
+
+
+def test_begin_turn_trace_passes_input_and_metadata_to_client() -> None:
+    from app.observability.langfuse import begin_turn_trace
+
+    client = MagicMock(name="langfuse")
+    client.trace.return_value = MagicMock(name="trace")
+
+    begin_turn_trace(
+        client,
+        input={"session_id": "ses_x"},
+        metadata={"user_id": "u1", "trace_id": "t1"},
+    )
+
+    client.trace.assert_called_once_with(
+        name="session_turn",
+        input={"session_id": "ses_x"},
+        metadata={"user_id": "u1", "trace_id": "t1"},
+    )
+
+
+def test_record_generation_calls_trace_generation_and_ends_it() -> None:
+    from app.observability.langfuse import begin_turn_trace
+
+    client = MagicMock(name="langfuse")
+    inner_trace = MagicMock(name="trace")
+    inner_gen = MagicMock(name="generation")
+    inner_trace.generation.return_value = inner_gen
+    client.trace.return_value = inner_trace
+
+    trace = begin_turn_trace(client, input={}, metadata={})
+    trace.record_generation(
+        name="roleplay",
+        model="router",
+        input=[{"role": "user", "content": "hi"}],
+        output="reply",
+    )
+
+    inner_trace.generation.assert_called_once_with(
+        name="roleplay",
+        model="router",
+        input=[{"role": "user", "content": "hi"}],
+        metadata={},
+    )
+    inner_gen.end.assert_called_once_with(output="reply")
+
+
+def test_finish_calls_update_with_output() -> None:
+    from app.observability.langfuse import begin_turn_trace
+
+    client = MagicMock(name="langfuse")
+    inner_trace = MagicMock(name="trace")
+    client.trace.return_value = inner_trace
+
+    trace = begin_turn_trace(client, input={}, metadata={})
+    trace.finish(output={"verdict": "shenfeng"})
+
+    inner_trace.update.assert_called_once_with(output={"verdict": "shenfeng"})
+
+
+def test_fail_calls_update_with_error_level() -> None:
+    from app.observability.langfuse import begin_turn_trace
+
+    client = MagicMock(name="langfuse")
+    inner_trace = MagicMock(name="trace")
+    client.trace.return_value = inner_trace
+
+    trace = begin_turn_trace(client, input={}, metadata={})
+    trace.fail(RuntimeError("kaboom"))
+
+    inner_trace.update.assert_called_once_with(level="ERROR", status_message="kaboom")
+
+
+def test_trace_create_failure_degrades_to_noop() -> None:
+    """If `client.trace(...)` itself raises (network / SDK bug), the
+    caller must still get a usable no-op trace so the SSE stream
+    isn't broken by an observability failure."""
+    from app.observability.langfuse import begin_turn_trace
+
+    client = MagicMock(name="langfuse")
+    client.trace.side_effect = RuntimeError("langfuse down")
+
+    trace = begin_turn_trace(client, input={}, metadata={})
+
+    # No raise. All subsequent calls also no-op.
+    trace.record_generation(name="g", model="m", input={}, output="ok")
+    trace.finish(output={})
+    trace.fail(RuntimeError("x"))
+
+
+def test_record_generation_swallows_underlying_failure() -> None:
+    """The same fail-open story for sub-calls: observability errors
+    must never propagate out and abort the SSE pipeline."""
+    from app.observability.langfuse import begin_turn_trace
+
+    client = MagicMock(name="langfuse")
+    inner_trace = MagicMock(name="trace")
+    inner_trace.generation.side_effect = RuntimeError("flush failed")
+    client.trace.return_value = inner_trace
+
+    trace = begin_turn_trace(client, input={}, metadata={})
+    trace.record_generation(name="g", model="m", input={}, output="ok")  # no raise
