@@ -1,63 +1,73 @@
 """FastAPI dependency that resolves the current user id from a Bearer token.
 
-Soft policy in this PR: a missing or invalid token logs a warning and
-returns the `"anonymous"` sentinel so the route can still serve the
-request. The follow-up PR flips this to a hard 401 once the frontend
-ships its bearer-token client and we've watched anon traffic drop to
-zero in logs.
+Hard policy: a missing or invalid token raises 401 UNAUTHORIZED so the
+caller knows to obtain credentials before retrying. The anonymous
+sentinel survives in the codebase as a *data* value (for legacy session
+rows minted in soft-mode) but is no longer a valid runtime outcome of
+this dependency.
 
-Why a soft transition: B's `apps/web/src/api/v1/client.ts` doesn't send
-`Authorization` headers yet. Hard-enforcing here would block every
-sandbox session route until B catches up. The sentinel keeps the route
-behaviour identical to today's anonymous wiring while letting real
-tokens flow through as soon as the frontend can mint them.
+The previous soft transition existed because B's
+`apps/web/src/api/v1/client.ts` didn't send `Authorization` headers yet.
+Now that B's client mints and sends Bearer tokens (PR #55), enforcing
+401 here matches OWASP's "deny by default" posture without breaking any
+real caller.
 
 The `Bearer <token>` header parsing uses FastAPI's built-in
 `HTTPBearer` so OpenAPI gets the right `securitySchemes` entry — B's
-codegen will know to wire an Authorization picker as soon as we flip
-to required.
+codegen picks up the requirement automatically.
 """
 
 from __future__ import annotations
 
 import structlog
-from fastapi import Depends
+from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.services.auth.jwt_tokens import TokenPayload, decode_token
 
 logger = structlog.get_logger(__name__)
 
+# Legacy sentinel kept around for the audit/log path: session rows
+# created during the soft-mode window carry this value, and routes that
+# fall back to it on legacy data shouldn't crash. The dependency below
+# does NOT return this value anymore.
 ANONYMOUS_USER_ID = "anonymous"
 
-# `auto_error=False` so a missing header doesn't 403 — the soft-mode
-# dependency interprets None as anonymous instead. When we flip to
-# hard auth, just remove this flag.
+# `auto_error=False` lets us raise our own structured 401 (matching the
+# PRD §7.1 error envelope) instead of FastAPI's default 403 from
+# `HTTPBearer`'s built-in error path.
 _bearer_scheme = HTTPBearer(auto_error=False, scheme_name="JWT")
 
 
 async def get_current_user_id(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
 ) -> str:
-    """Return the user id behind the request.
+    """Return the user id behind the request, or 401 if no valid token.
 
-    Soft transition policy (this PR):
-      * No Authorization header → ANONYMOUS_USER_ID + `auth_missing` log
-      * Invalid / expired token → ANONYMOUS_USER_ID + `auth_invalid` log
+    Three branches:
+      * No Authorization header → 401 UNAUTHORIZED
+      * Invalid / expired / malformed token → 401 UNAUTHORIZED
       * Valid token → the `sub` claim
-
-    The follow-up PR will lift this to raise 401 in the first two cases.
     """
     if credentials is None:
-        logger.info("auth_missing", note="anonymous fallback active")
-        return ANONYMOUS_USER_ID
+        logger.info("auth_missing", note="rejecting unauthenticated request")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "UNAUTHORIZED", "message": "missing bearer token"},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     payload: TokenPayload | None = decode_token(credentials.credentials)
     if payload is None:
         # decode_token already logged the reason — we just record that
-        # the soft fallback kicked in so the next PR can monitor it.
-        logger.info("auth_invalid", note="anonymous fallback active")
-        return ANONYMOUS_USER_ID
+        # the hard 401 fired so dashboards can separate "no header" from
+        # "bad header".
+        logger.info("auth_invalid", note="rejecting request with bad token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "UNAUTHORIZED", "message": "invalid or expired token"},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     return payload.user_id
 
