@@ -28,6 +28,7 @@ function SandboxRoom({ onExit }: { onExit: () => void }) {
   } = useSandboxSession()
 
   const [input, setInput] = useState('')
+  const [showExitConfirm, setShowExitConfirm] = useState(false)
   const chatEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -46,6 +47,13 @@ function SandboxRoom({ onExit }: { onExit: () => void }) {
     })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 30-round limit: auto-end when turns run out
+  useEffect(() => {
+    if (state.started && state.turnsLeft === 0 && !state.isStreaming && !state.score) {
+      endSession()
+    }
+  }, [state.turnsLeft, state.started, state.isStreaming, state.score, endSession])
+
   const handleSend = async () => {
     const text = input.trim()
     if (!text || state.isStreaming) return
@@ -60,27 +68,71 @@ function SandboxRoom({ onExit }: { onExit: () => void }) {
     }
   }
 
+  /** Handle exit: if session active, show confirm; otherwise go back */
+  const handleExitClick = () => {
+    if (state.started && !state.score) {
+      setShowExitConfirm(true)
+    } else {
+      onExit()
+    }
+  }
+
+  /** Confirm exit → end session + go back */
+  const handleExitConfirm = async () => {
+    setShowExitConfirm(false)
+    await endSession()
+    onExit()
+  }
+
+  const totalTurns = state.turnsUsed + state.turnsLeft
+  const turnProgress = totalTurns > 0 ? (state.turnsUsed / totalTurns) * 100 : 0
+
   return (
     <div className="relative flex min-h-screen flex-col overflow-hidden">
       <BlobBackground />
 
-      {/* Header */}
+      {/* Header — design-spec §9.3 */}
       <header className="relative z-10 flex items-center justify-between px-4 py-3 glass">
         <button
           type="button"
-          onClick={state.score ? onExit : undefined}
-          className="text-ink-text-2 text-sm"
+          onClick={handleExitClick}
+          className="text-ink-text-2 text-sm hover:text-ink-text transition-colors"
         >
-          {state.score ? '← 返回' : '← 退出'}
+          ← 退出
         </button>
         <div className="flex items-center gap-2">
           <MascotReaction expression={state.mascotExpression} size="sm" />
-          <span className="text-sm font-body text-ink-text">赵总（刚）</span>
+          <div className="flex flex-col">
+            <span className="text-sm font-body text-ink-text leading-tight">赵总（刚）</span>
+            <span className="text-xs text-ink-text-3 leading-tight">拒绝加班</span>
+          </div>
         </div>
-        <span className="text-xs text-ink-text-3">
-          {state.turnsUsed}/{state.turnsUsed + state.turnsLeft}
-        </span>
+        <div className="flex flex-col items-end gap-0.5">
+          <span className="text-xs text-ink-text-3">
+            {state.turnsUsed}/{totalTurns} 回合
+          </span>
+          <div className="w-12 h-1 rounded-full bg-ink-line overflow-hidden">
+            <div
+              className="h-full rounded-full transition-all duration-300"
+              style={{
+                width: `${turnProgress}%`,
+                background: state.turnsLeft <= 3
+                  ? 'var(--color-vivid-orange)'
+                  : 'var(--color-vivid-purple)',
+              }}
+            />
+          </div>
+        </div>
       </header>
+
+      {/* Turn limit warning */}
+      {state.turnsLeft > 0 && state.turnsLeft <= 3 && !state.score && (
+        <div className="relative z-10 px-4 py-1.5 bg-vivid-orange/10 border-b border-vivid-orange/30 text-center">
+          <span className="text-xs text-vivid-orange font-body">
+            还剩 {state.turnsLeft} 回合，抓紧表现！
+          </span>
+        </div>
+      )}
 
       {/* Chat area */}
       <main className="relative z-10 flex-1 overflow-y-auto px-4 py-6 space-y-4">
@@ -170,9 +222,23 @@ function SandboxRoom({ onExit }: { onExit: () => void }) {
             <button
               type="button"
               onClick={endSession}
-              className="px-5 py-2 rounded-radius-pill bg-ink-card/60 border border-ink-line text-ink-text-2 text-sm font-body hover:bg-ink-card transition-colors"
+              disabled={state.isStreaming}
+              className="px-5 py-2 rounded-radius-pill bg-ink-card/60 border border-ink-line text-ink-text-2 text-sm font-body hover:bg-ink-card transition-colors disabled:opacity-50"
             >
               结束对练
+            </button>
+          </div>
+        )}
+
+        {/* Score → back to home */}
+        {state.score && (
+          <div className="flex justify-center mt-4">
+            <button
+              type="button"
+              onClick={onExit}
+              className="px-5 py-2 rounded-radius-pill gradient-vivid text-white text-sm font-body font-medium hover:scale-105 transition-transform"
+            >
+              返回首页
             </button>
           </div>
         )}
@@ -205,6 +271,33 @@ function SandboxRoom({ onExit }: { onExit: () => void }) {
             </button>
           </div>
         </footer>
+      )}
+
+      {/* Exit confirmation modal */}
+      {showExitConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-bg/70 backdrop-blur-sm">
+          <GlassCard className="mx-4 max-w-sm w-full space-y-4 text-center">
+            <MascotReaction expression="caring" size="md" showLabel />
+            <p className="text-lg font-body text-ink-text">确定要退出对练吗？</p>
+            <p className="text-sm text-ink-text-2">当前进度不会被保存</p>
+            <div className="flex gap-3 justify-center pt-2">
+              <button
+                type="button"
+                onClick={() => setShowExitConfirm(false)}
+                className="px-5 py-2 rounded-radius-pill bg-ink-card border border-ink-line text-ink-text text-sm font-body hover:bg-ink-card-2 transition-colors"
+              >
+                继续练
+              </button>
+              <button
+                type="button"
+                onClick={handleExitConfirm}
+                className="px-5 py-2 rounded-radius-pill bg-vivid-orange/20 border border-vivid-orange/40 text-vivid-orange text-sm font-body hover:bg-vivid-orange/30 transition-colors"
+              >
+                确定退出
+              </button>
+            </div>
+          </GlassCard>
+        </div>
       )}
     </div>
   )
