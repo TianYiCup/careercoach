@@ -91,6 +91,7 @@ ignore = [
 # Sessions tests carry Chinese fixtures and implement `LLMProvider` stubs that
 # require the `timeout=` parameter to match the protocol signature.
 "tests/test_sessions_*.py" = ["RUF001", "RUF002", "RUF003", "ASYNC109"]
+"tests/test_scenarios_*.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/test_sharecards_*.py" = ["RUF001", "RUF002", "RUF003"]
 # Spike runner has Chinese prompts + report copy using full-width
 # punctuation and × / – for human readability.

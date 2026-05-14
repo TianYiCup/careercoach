@@ -1,9 +1,11 @@
 """Scenario library — PRD §7.3."""
 
-from fastapi import APIRouter, Query
+from __future__ import annotations
 
-from app.routes.v1._stub import STUB_RESPONSES, not_implemented
+from fastapi import APIRouter, Depends, Query
+
 from app.schemas.scenarios import ScenarioCategory, ScenarioListResponse
+from app.services.scenarios import ScenarioService, get_scenario_service
 
 router = APIRouter(prefix="/scenarios", tags=["scenarios"])
 
@@ -11,7 +13,6 @@ router = APIRouter(prefix="/scenarios", tags=["scenarios"])
 @router.get(
     "",
     response_model=ScenarioListResponse,
-    responses=STUB_RESPONSES,
     summary="List scenarios filtered by category and free-text query",
 )
 async def list_scenarios(
@@ -24,5 +25,6 @@ async def list_scenarios(
         max_length=64,
         description="Free-text search across title, tags, and background.",
     ),
+    service: ScenarioService = Depends(get_scenario_service),
 ) -> ScenarioListResponse:
-    raise not_implemented("GET /v1/scenarios")
+    return await service.list_scenarios(category=category, query=q)
