@@ -74,7 +74,7 @@ function SandboxRoom({ onExit }: { onExit: () => void }) {
           {state.score ? '← 返回' : '← 退出'}
         </button>
         <div className="flex items-center gap-2">
-          <MascotReaction expression="confident" size="sm" />
+          <MascotReaction expression={state.mascotExpression} size="sm" />
           <span className="text-sm font-body text-ink-text">赵总（刚）</span>
         </div>
         <span className="text-xs text-ink-text-3">
@@ -139,9 +139,12 @@ function SandboxRoom({ onExit }: { onExit: () => void }) {
           </div>
         )}
 
-        {/* Score result (D9 deliverable spike) */}
+        {/* Score result */}
         {state.score && (
           <GlassCard glow className="text-center space-y-3">
+            <div className="flex justify-center">
+              <MascotReaction expression={state.mascotExpression} size="lg" showLabel />
+            </div>
             <p className="text-2xl font-display italic text-gradient-vivid">
               {state.score.score.result === 'shenfeng' && '封神！'}
               {state.score.score.result === 'guolu' && '路过~'}

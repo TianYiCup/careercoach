@@ -8,6 +8,7 @@ import type {
   SseEventFrame,
 } from '../../api/v1/types'
 import type { ToneLevel } from '../../components'
+import type { MascotExpression } from '../../components/mascot/types'
 
 export interface ChatMessage {
   role: 'opponent' | 'user'
@@ -34,6 +35,8 @@ export interface SandboxState {
   score: EndSessionResponse | null
   /** Session started? */
   started: boolean
+  /** Current mascot expression (auto-derived from conversation state) */
+  mascotExpression: MascotExpression
 }
 
 const INITIAL_STATE: SandboxState = {
@@ -47,11 +50,53 @@ const INITIAL_STATE: SandboxState = {
   turnsLeft: 30,
   score: null,
   started: false,
+  mascotExpression: 'confident',
+}
+
+/** Derive mascot expression from conversation state — design-spec §3.3 */
+function deriveExpression(state: SandboxState): MascotExpression {
+  // Score result — highest priority
+  if (state.score) {
+    if (state.score.score.result === 'shenfeng') return 'godlike'
+    if (state.score.score.result === 'fanche') return 'crashed'
+    return 'confident' // guolu
+  }
+  // Opponent thinking → thinking face
+  if (state.isStreaming) return 'thinking'
+  // Tone-driven expressions (when coach.hint arrives)
+  if (state.hints) {
+    if (state.activeTone === 'safe') return 'caring'
+    if (state.activeTone === 'aggro') return 'fired-up'
+    if (state.activeTone === 'fun') return 'clowning'
+  }
+  // Default idle
+  return 'confident'
+}
+
+/** Apply state update + auto-derive mascot expression */
+function withExpression(
+  updater: SandboxState | ((prev: SandboxState) => SandboxState),
+): (prev: SandboxState) => SandboxState {
+  return (prev: SandboxState) => {
+    const next = typeof updater === 'function' ? updater(prev) : updater
+    const expression = deriveExpression(next)
+    return expression === next.mascotExpression
+      ? next
+      : { ...next, mascotExpression: expression }
+  }
 }
 
 export function useSandboxSession() {
-  const [state, setState] = useState<SandboxState>(INITIAL_STATE)
+  const [state, setRawState] = useState<SandboxState>(INITIAL_STATE)
   const abortRef = useRef<AbortController | null>(null)
+
+  /** State setter that auto-derives mascot expression */
+  const setState = useCallback(
+    (updater: SandboxState | ((prev: SandboxState) => SandboxState)) => {
+      setRawState(withExpression(updater))
+    },
+    [],
+  )
 
   /** Start a new session */
   const startSession = useCallback(async (req: CreateSessionRequest) => {
@@ -65,7 +110,7 @@ export function useSandboxSession() {
       started: true,
       messages: [{ role: 'opponent', text: res.opening_line }],
     }))
-  }, [])
+  }, [setState])
 
   /** Send a user message and consume SSE stream */
   const sendTurn = useCallback(
@@ -141,7 +186,7 @@ export function useSandboxSession() {
         }))
       }
     },
-    [state.sessionId, state.isStreaming],
+    [state.sessionId, state.isStreaming, setState],
   )
 
   /** End the session and get score */
@@ -152,18 +197,21 @@ export function useSandboxSession() {
       `/sessions/${state.sessionId}/end`,
     )
     setState((s) => ({ ...s, score: res, isStreaming: false }))
-  }, [state.sessionId])
+  }, [state.sessionId, setState])
 
   /** Set active tone */
-  const setTone = useCallback((tone: ToneLevel) => {
-    setState((s) => ({ ...s, activeTone: tone }))
-  }, [])
+  const setTone = useCallback(
+    (tone: ToneLevel) => {
+      setState((s) => ({ ...s, activeTone: tone }))
+    },
+    [setState],
+  )
 
   /** Reset to initial state */
   const reset = useCallback(() => {
     abortRef.current?.abort()
     setState(INITIAL_STATE)
-  }, [])
+  }, [setState])
 
   return {
     state,
