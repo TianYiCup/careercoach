@@ -1,8 +1,8 @@
 """Wrapped 卡分享路由 — PRD §7.9.
 
-PR ③ flips `/session/{session_id}` from a 501 stub to a real handler
-backed by `ShareCardService`. The weekly + wrapped routes stay 501
-until their renderers ship.
+All three card types now resolve to real handlers backed by
+`ShareCardService`. Session is the per-end card; weekly is the
+Mon-Sun digest; wrapped is the annual 6-page recap.
 """
 
 from __future__ import annotations
@@ -11,7 +11,6 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 
-from app.routes.v1._stub import STUB_RESPONSES, not_implemented
 from app.schemas.sharecards import (
     SessionShareCardRequest,
     ShareCardResponse,
@@ -33,6 +32,10 @@ router = APIRouter(prefix="/sharecards", tags=["sharecards"])
 _ANONYMOUS_USER_ID = "anonymous"
 
 
+def _trace_id(request: Request) -> str:
+    return request.headers.get("x-request-id") or str(uuid.uuid4())
+
+
 @router.post(
     "/session/{session_id}",
     response_model=ShareCardResponse,
@@ -52,7 +55,7 @@ async def create_session_card(
     ),
     service: ShareCardService = Depends(get_sharecard_service),
 ) -> ShareCardResponse:
-    trace_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+    trace_id = _trace_id(request)
     try:
         return await service.create_session_card(
             session_id=session_id,
@@ -84,21 +87,28 @@ async def create_session_card(
 @router.post(
     "/weekly",
     response_model=ShareCardResponse,
-    responses=STUB_RESPONSES,
     summary="Render the weekly digest card (cron and on-demand both call this)",
 )
-async def create_weekly_card(payload: WeeklyShareCardRequest) -> ShareCardResponse:
-    raise not_implemented("POST /v1/sharecards/weekly")
+async def create_weekly_card(
+    payload: WeeklyShareCardRequest,
+    request: Request,
+    service: ShareCardService = Depends(get_sharecard_service),
+) -> ShareCardResponse:
+    return await service.create_weekly_card(
+        request=payload,
+        user_id=_ANONYMOUS_USER_ID,
+        trace_id=_trace_id(request),
+    )
 
 
 @router.post(
     "/wrapped/year/{year}",
     response_model=ShareCardResponse,
-    responses=STUB_RESPONSES,
     summary="Render the 6-page annual Wrapped recap",
 )
 async def create_wrapped_card(
     payload: WrappedShareCardRequest,
+    request: Request,
     year: int = Path(
         ...,
         ge=2024,
@@ -106,5 +116,11 @@ async def create_wrapped_card(
         description="Calendar year. Bounded to keep generated PNGs cacheable.",
         examples=[2026],
     ),
+    service: ShareCardService = Depends(get_sharecard_service),
 ) -> ShareCardResponse:
-    raise not_implemented("POST /v1/sharecards/wrapped/year/{year}")
+    return await service.create_wrapped_card(
+        year=year,
+        request=payload,
+        user_id=_ANONYMOUS_USER_ID,
+        trace_id=_trace_id(request),
+    )

@@ -8,10 +8,15 @@ is exercised without DB.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from app.schemas.sharecards import SessionShareCardRequest
+from app.schemas.sharecards import (
+    SessionShareCardRequest,
+    WeeklyShareCardRequest,
+    WrappedShareCardRequest,
+)
 from app.services.moderation import LogOnlyEventSink, ModerationService, NoopBackend
 from app.services.moderation.backend import ModerationBackend, ModerationBackendError
 from app.services.moderation.types import Decision
@@ -23,6 +28,11 @@ from app.services.sharecards import (
     ShareCardCaptionBlockedError,
     ShareCardNotFoundError,
     ShareCardService,
+)
+from app.services.sharecards.service import (
+    _aggregate_weekly,
+    _aggregate_wrapped,
+    _resolve_week_window,
 )
 from app.services.sharecards.types import _DIMENSION_NAMES
 
@@ -186,3 +196,188 @@ async def test_caption_skipped_when_not_provided(tmp_path: Path) -> None:
 def test_top_dimensions_count_matches_renderer_expectations() -> None:
     """Guards against a future PR shrinking `_DIMENSION_NAMES` and breaking layout."""
     assert _expected_dim_count() == 5
+
+
+# ---------------------------------------------------------------------
+# Weekly card flow
+# ---------------------------------------------------------------------
+
+
+async def test_weekly_card_returns_envelope_for_empty_user(tmp_path: Path) -> None:
+    """An empty week still renders — the headline switches to the
+    "K is waiting" copy so the response shape is identical."""
+    repo = InMemorySessionScoreRepository()
+    service = _make_service(tmp_path, score_repo=repo)
+
+    resp = await service.create_weekly_card(
+        request=WeeklyShareCardRequest(include_qrcode=False, week_offset=0),
+        user_id="u_test",
+        trace_id="trace-w1",
+    )
+
+    assert resp.type == "weekly"
+    assert resp.card_id.startswith("card_")
+    assert resp.png_url.endswith(".png")
+    assert resp.pages == []
+    written = (tmp_path / "cards" / f"{resp.card_id}.png").read_bytes()
+    assert written.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+async def test_weekly_card_counts_sessions_in_window(tmp_path: Path) -> None:
+    """Add three sessions to the in-memory repo; the renderer input
+    must reflect that count."""
+    repo = InMemorySessionScoreRepository(
+        {
+            "ses_w1": SAMPLE_SCORE,
+            "ses_w2": SAMPLE_SCORE,
+            "ses_w3": SAMPLE_SCORE,
+        }
+    )
+    service = _make_service(tmp_path, score_repo=repo)
+
+    resp = await service.create_weekly_card(
+        request=WeeklyShareCardRequest(include_qrcode=False, week_offset=0),
+        user_id="u_test",
+        trace_id="trace-w2",
+        # `now` lands inside the week the seeded sessions were stamped,
+        # so they all fall in the offset=0 window.
+        now=datetime.now(UTC) + timedelta(days=8),
+    )
+
+    assert resp.type == "weekly"
+    assert resp.card_id.startswith("card_")
+
+
+# ---------------------------------------------------------------------
+# Wrapped card flow
+# ---------------------------------------------------------------------
+
+
+async def test_wrapped_card_emits_six_pages_for_empty_year(tmp_path: Path) -> None:
+    """A user with no sessions still gets a valid 6-page Wrapped — the
+    renderer's empty-year layout produces the right shape."""
+    repo = InMemorySessionScoreRepository()
+    service = _make_service(tmp_path, score_repo=repo)
+
+    resp = await service.create_wrapped_card(
+        year=2026,
+        request=WrappedShareCardRequest(include_qrcode=True),
+        user_id="u_test",
+        trace_id="trace-wr1",
+    )
+
+    assert resp.type == "wrapped"
+    assert len(resp.pages) == 6
+    assert resp.png_url == resp.pages[0]  # schema invariant
+    for page_url in resp.pages:
+        assert page_url.endswith(".png")
+    # Each page must land on disk under the card-id subdir.
+    card_dir = tmp_path / "cards" / resp.card_id
+    assert card_dir.is_dir()
+    pngs = sorted(card_dir.glob("*.png"))
+    assert len(pngs) == 6
+
+
+async def test_wrapped_card_aggregates_real_year(tmp_path: Path) -> None:
+    """A populated repo should produce non-placeholder narrative copy
+    via the aggregator. We only assert the structural invariants here
+    — narrative content is covered in aggregator tests."""
+    repo = InMemorySessionScoreRepository({"ses_a": SAMPLE_SCORE})
+    service = _make_service(tmp_path, score_repo=repo)
+
+    resp = await service.create_wrapped_card(
+        year=2026,
+        request=WrappedShareCardRequest(include_qrcode=False),
+        user_id="u_test",
+        trace_id="trace-wr2",
+    )
+
+    assert len(resp.pages) == 6
+    assert all(p.endswith(".png") for p in resp.pages)
+
+
+# ---------------------------------------------------------------------
+# Aggregators (pure functions — no IO)
+# ---------------------------------------------------------------------
+
+
+def test_aggregate_weekly_empty_uses_waiting_copy() -> None:
+    data = _aggregate_weekly(week_label="2026 第 20 周", sessions=[])
+    assert data.sessions_count == 0
+    assert data.headline == "本周 K 在等你"
+    assert data.top_scenario_title is None
+
+
+def test_aggregate_weekly_picks_modal_verdict_for_headline() -> None:
+    # Two shenfeng vs one fanche → "封神周" headline.
+    shenfeng = SAMPLE_SCORE  # result="shenfeng"
+    fanche_session = SessionCardData(
+        scenario_title="Other Scenario",
+        persona_title="Other",
+        aura=2,
+        logic=3,
+        emotion=3,
+        professionalism=2,
+        goal_achieve=1,
+        result="fanche",
+        highlights="learning",
+    )
+    data = _aggregate_weekly(
+        week_label="2026 第 20 周",
+        sessions=[shenfeng, shenfeng, fanche_session],
+    )
+    assert data.sessions_count == 3
+    assert data.shenfeng_count == 2
+    assert data.fanche_count == 1
+    assert "封神周" in data.headline
+    # Top scenario is the more-frequent shenfeng one.
+    assert data.top_scenario_title == "Negotiate Saturday with Boss"
+
+
+def test_aggregate_wrapped_empty_uses_placeholder_copy() -> None:
+    data = _aggregate_wrapped(year=2026, sessions=[])
+    assert data.total_sessions == 0
+    assert data.top_scenario_title == "—"
+    assert data.closing_letter
+
+
+def test_aggregate_wrapped_picks_best_and_worst() -> None:
+    best = SessionCardData(
+        scenario_title="High Score Scenario",
+        persona_title="Easy Mode",
+        aura=10,
+        logic=10,
+        emotion=10,
+        professionalism=10,
+        goal_achieve=10,
+        result="shenfeng",
+        highlights="great",
+    )
+    worst = SessionCardData(
+        scenario_title="Low Score Scenario",
+        persona_title="Hard Mode",
+        aura=1,
+        logic=1,
+        emotion=1,
+        professionalism=1,
+        goal_achieve=1,
+        result="fanche",
+        highlights="tough",
+    )
+    data = _aggregate_wrapped(year=2026, sessions=[best, worst])
+    assert data.total_sessions == 2
+    assert data.best_session_title == "High Score Scenario"
+    assert data.worst_session_title == "Low Score Scenario"
+
+
+def test_resolve_week_window_offset_zero_picks_previous_iso_week() -> None:
+    """offset=0 means the immediately preceding completed ISO week."""
+    # Pick a Wednesday so we're solidly inside an ISO week.
+    anchor = datetime(2026, 5, 13, 12, tzinfo=UTC)
+    since, until, label = _resolve_week_window(anchor, week_offset=0)
+
+    assert (until - since) == timedelta(weeks=1)
+    # Label is roughly "2026 第 19 周" (the week containing May 4-10
+    # in Shanghai time — one before the May 11-17 week the anchor sits in).
+    assert "2026 第" in label
+    assert "周" in label

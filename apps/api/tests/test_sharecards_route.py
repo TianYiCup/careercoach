@@ -169,3 +169,67 @@ async def test_session_card_route_echoes_trace_id_to_log(client: AsyncClient) ->
         json={"include_qrcode": True},
     )
     assert resp.status_code == 200
+
+
+async def test_weekly_card_route_returns_200_with_empty_user(client: AsyncClient) -> None:
+    """A user with no sessions in the requested window still gets a
+    well-formed weekly card — the renderer flips to "no practice"
+    copy rather than 404ing."""
+    resp = await client.post(
+        "/v1/sharecards/weekly",
+        json={"include_qrcode": False, "week_offset": 0},
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["type"] == "weekly"
+    assert body["card_id"].startswith("card_")
+    assert body["png_url"].endswith(".png")
+    assert body["pages"] == []
+    assert body["share_links"]["save_local"] == body["png_url"]
+
+
+async def test_weekly_card_route_validates_week_offset_lower_bound(
+    client: AsyncClient,
+) -> None:
+    """week_offset is bounded to [-12, 0] in the schema."""
+    resp = await client.post(
+        "/v1/sharecards/weekly",
+        json={"include_qrcode": False, "week_offset": -13},
+    )
+    assert resp.status_code == 422
+
+
+async def test_weekly_card_route_validates_week_offset_upper_bound(
+    client: AsyncClient,
+) -> None:
+    resp = await client.post(
+        "/v1/sharecards/weekly",
+        json={"include_qrcode": False, "week_offset": 1},
+    )
+    assert resp.status_code == 422
+
+
+async def test_wrapped_card_route_returns_200_with_six_pages(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/v1/sharecards/wrapped/year/2026",
+        json={"include_qrcode": True},
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["type"] == "wrapped"
+    assert body["card_id"].startswith("card_")
+    # Schema invariant: pages[0] doubles as the OG cover via png_url.
+    assert body["png_url"] == body["pages"][0]
+    assert len(body["pages"]) == 6
+    for url in body["pages"]:
+        assert url.endswith(".png")
+
+
+async def test_wrapped_card_route_rejects_out_of_range_year(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/v1/sharecards/wrapped/year/1999",
+        json={"include_qrcode": True},
+    )
+    assert resp.status_code == 422
