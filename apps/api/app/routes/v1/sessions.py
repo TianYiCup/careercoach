@@ -12,12 +12,12 @@ once the frontend ships its bearer-token client.
 
 from __future__ import annotations
 
-import uuid
 from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 from fastapi.responses import StreamingResponse
 
+from app.middleware import get_request_id
 from app.schemas.sessions import (
     CreateSessionRequest,
     CreateSessionResponse,
@@ -85,7 +85,7 @@ async def post_turn(
     """Validate-then-stream: typed 4xx errors come back as normal HTTP
     responses (so the client's fetch().catch() handler sees them); only
     once validation passes do we open the SSE stream."""
-    trace_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+    trace_id = get_request_id(request)
     try:
         validated = await service.validate_turn_request(
             session_id=session_id,

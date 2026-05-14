@@ -11,10 +11,9 @@ otherwise. The next PR flips this to hard 401.
 
 from __future__ import annotations
 
-import uuid
-
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 
+from app.middleware import get_request_id
 from app.schemas.sharecards import (
     SessionShareCardRequest,
     ShareCardResponse,
@@ -33,7 +32,7 @@ router = APIRouter(prefix="/sharecards", tags=["sharecards"])
 
 
 def _trace_id(request: Request) -> str:
-    return request.headers.get("x-request-id") or str(uuid.uuid4())
+    return get_request_id(request)
 
 
 @router.post(

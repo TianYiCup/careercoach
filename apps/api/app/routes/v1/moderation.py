@@ -11,10 +11,9 @@ without touching this file.
 
 from __future__ import annotations
 
-import uuid
-
 from fastapi import APIRouter, Depends, Request
 
+from app.middleware import get_request_id
 from app.schemas.moderation import ModerationCheckRequest, ModerationCheckResponse
 from app.services.moderation import ModerationService, get_moderation_service
 
@@ -31,5 +30,4 @@ async def moderation_check(
     request: Request,
     service: ModerationService = Depends(get_moderation_service),
 ) -> ModerationCheckResponse:
-    trace_id = request.headers.get("x-request-id") or str(uuid.uuid4())
-    return await service.check(payload, trace_id=trace_id)
+    return await service.check(payload, trace_id=get_request_id(request))

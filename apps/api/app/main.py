@@ -5,7 +5,6 @@ Sentry is initialized only when SENTRY_DSN is set so dev runs stay quiet.
 """
 
 import logging
-import uuid
 
 import sentry_sdk
 import structlog
@@ -16,6 +15,7 @@ from sentry_sdk.integrations.asgi import SentryAsgiMiddleware
 
 from app import __version__
 from app.config import get_settings
+from app.middleware import RequestIdMiddleware, get_request_id
 from app.routes.health import router as health_router
 from app.routes.v1 import router as v1_router
 
@@ -56,6 +56,9 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json",
     )
 
+    # Request-id binding sits OUTSIDE Sentry so the trace_id is on the
+    # log line Sentry forwards to its own breadcrumb.
+    app.add_middleware(RequestIdMiddleware)
     if settings.sentry_dsn:
         app.add_middleware(SentryAsgiMiddleware)
 
@@ -74,22 +77,19 @@ def create_app() -> FastAPI:
     return app
 
 
-def _trace_id(request: Request) -> str:
-    return request.headers.get("x-request-id") or str(uuid.uuid4())
-
-
 def _register_error_handlers(app: FastAPI) -> None:
     """Convert HTTPException + validation errors to the PRD §7.1 envelope."""
 
     @app.exception_handler(HTTPException)
     async def _http_exception(request: Request, exc: HTTPException) -> JSONResponse:
+        trace_id = get_request_id(request)
         if isinstance(exc.detail, dict) and "code" in exc.detail and "message" in exc.detail:
-            payload = {**exc.detail, "trace_id": _trace_id(request)}
+            payload = {**exc.detail, "trace_id": trace_id}
         else:
             payload = {
                 "code": _default_code_for(exc.status_code),
                 "message": str(exc.detail) if exc.detail is not None else "request failed",
-                "trace_id": _trace_id(request),
+                "trace_id": trace_id,
             }
         return JSONResponse(status_code=exc.status_code, content=payload)
 
@@ -100,7 +100,7 @@ def _register_error_handlers(app: FastAPI) -> None:
             content={
                 "code": "VALIDATION_ERROR",
                 "message": "request body or query failed schema validation",
-                "trace_id": _trace_id(request),
+                "trace_id": get_request_id(request),
                 "errors": exc.errors(),
             },
         )
