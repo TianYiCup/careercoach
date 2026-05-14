@@ -92,12 +92,10 @@ describe('apiClient Authorization header', () => {
     clearAuthToken();
     await apiClient.get('/scenarios');
 
-    const firstHeaders = new Headers(
-      (fetchSpy.mock.calls[0]?.[1] as RequestInit | undefined)?.headers,
-    );
-    const secondHeaders = new Headers(
-      (fetchSpy.mock.calls[1]?.[1] as RequestInit | undefined)?.headers,
-    );
+    const firstCall = fetchSpy.mock.calls[0] as [string, RequestInit] | undefined;
+    const secondCall = fetchSpy.mock.calls[1] as [string, RequestInit] | undefined;
+    const firstHeaders = new Headers(firstCall?.[1]?.headers);
+    const secondHeaders = new Headers(secondCall?.[1]?.headers);
 
     expect(firstHeaders.get('authorization')).toBe('Bearer first-token');
     // After logout the second call must NOT carry the prior token —
