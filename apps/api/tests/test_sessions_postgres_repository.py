@@ -4,6 +4,16 @@ Skipped automatically when the configured postgres isn't reachable, so
 the same file is safe locally without docker and tight in CI when
 postgres is booted. Mirrors the pattern in `test_db_smoke.py`.
 
+Engine-per-test note
+--------------------
+We create a fresh `AsyncEngine` inside the test fixture rather than
+reusing `app.db.engine`. pytest-asyncio gives each test its own event
+loop by default, and the module-level engine's connection pool — born
+inside the FIRST test's loop — becomes unreachable from the SECOND
+test's loop ("NoneType has no attribute 'send'" inside asyncpg). The
+per-test engine pays a connection setup cost but keeps the tests
+event-loop-coherent.
+
 Every test cleans up after itself so re-running on a real DB doesn't
 accumulate row debt.
 """
@@ -17,30 +27,53 @@ from datetime import UTC, datetime, timedelta
 import pytest
 import pytest_asyncio
 from app.config import get_settings
-from app.db import async_session_factory, engine
 from app.models import Session as SessionRow
 from app.services.sessions.repository import (
     PostgresSessionRepository,
     SessionRecord,
 )
 from sqlalchemy import delete, text
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 
 @pytest_asyncio.fixture
-async def pg_available() -> AsyncIterator[bool]:
-    """Yield True iff the configured postgres is reachable."""
+async def pg_factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    """Per-test engine + sessionmaker. Skips the whole test when PG is
+    unreachable so the file degrades gracefully without docker."""
+    engine = create_async_engine(
+        get_settings().database_url,
+        echo=False,
+        pool_pre_ping=True,
+        future=True,
+    )
     try:
         async with engine.connect() as conn:
             await conn.execute(text("select 1"))
-        yield True
     except Exception as exc:
+        await engine.dispose()
         pytest.skip(f"postgres unreachable at {get_settings().database_url}: {exc}")
+
+    factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
+        bind=engine,
+        expire_on_commit=False,
+        autoflush=False,
+        autocommit=False,
+    )
+    try:
+        yield factory
+    finally:
+        await engine.dispose()
 
 
 @pytest_asyncio.fixture
-async def repo(pg_available: bool) -> AsyncIterator[PostgresSessionRepository]:
-    assert pg_available
-    yield PostgresSessionRepository(async_session_factory)
+async def repo(
+    pg_factory: async_sessionmaker[AsyncSession],
+) -> AsyncIterator[PostgresSessionRepository]:
+    yield PostgresSessionRepository(pg_factory)
 
 
 def _record(*, session_id: str | None = None, status: str = "active") -> SessionRecord:
@@ -56,13 +89,18 @@ def _record(*, session_id: str | None = None, status: str = "active") -> Session
     )
 
 
-async def _cleanup(session_ids: list[str]) -> None:
-    async with async_session_factory() as session, session.begin():
+async def _cleanup(
+    factory: async_sessionmaker[AsyncSession], session_ids: list[str]
+) -> None:
+    async with factory() as session, session.begin():
         await session.execute(delete(SessionRow).where(SessionRow.session_id.in_(session_ids)))
 
 
 @pytest.mark.integration
-async def test_save_then_get_round_trips(repo: PostgresSessionRepository) -> None:
+async def test_save_then_get_round_trips(
+    repo: PostgresSessionRepository,
+    pg_factory: async_sessionmaker[AsyncSession],
+) -> None:
     record = _record()
     try:
         await repo.save(record)
@@ -74,7 +112,7 @@ async def test_save_then_get_round_trips(repo: PostgresSessionRepository) -> Non
         assert loaded.status == "active"
         assert loaded.ended_at is None
     finally:
-        await _cleanup([record.session_id])
+        await _cleanup(pg_factory, [record.session_id])
 
 
 @pytest.mark.integration
@@ -85,6 +123,7 @@ async def test_get_unknown_session_returns_none(repo: PostgresSessionRepository)
 @pytest.mark.integration
 async def test_mark_ended_flips_status_and_stamps_time(
     repo: PostgresSessionRepository,
+    pg_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     record = _record()
     ended_at = datetime.now(UTC) + timedelta(minutes=5)
@@ -104,7 +143,7 @@ async def test_mark_ended_flips_status_and_stamps_time(
         assert reread is not None
         assert reread.status == "ended"
     finally:
-        await _cleanup([record.session_id])
+        await _cleanup(pg_factory, [record.session_id])
 
 
 @pytest.mark.integration
@@ -116,7 +155,10 @@ async def test_mark_ended_unknown_session_raises_key_error(
 
 
 @pytest.mark.integration
-async def test_save_is_idempotent_for_same_id(repo: PostgresSessionRepository) -> None:
+async def test_save_is_idempotent_for_same_id(
+    repo: PostgresSessionRepository,
+    pg_factory: async_sessionmaker[AsyncSession],
+) -> None:
     """The protocol contract is upsert-on-PK; double-save with the same
     id must update rather than 500 on conflict."""
     record = _record()
@@ -139,4 +181,4 @@ async def test_save_is_idempotent_for_same_id(repo: PostgresSessionRepository) -
         assert loaded is not None
         assert loaded.scenario_id == "sc_002"
     finally:
-        await _cleanup([record.session_id])
+        await _cleanup(pg_factory, [record.session_id])

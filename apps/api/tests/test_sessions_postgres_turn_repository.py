@@ -2,6 +2,9 @@
 
 Skipped automatically when postgres isn't reachable. Each test seeds
 its own session row (FK requirement) and cleans up after itself.
+
+See `test_sessions_postgres_repository.py` for why this file builds
+its own engine per test rather than reusing `app.db.engine`.
 """
 
 from __future__ import annotations
@@ -14,7 +17,6 @@ import pytest
 import pytest_asyncio
 from app.agents.state import TurnScore, Verdict
 from app.config import get_settings
-from app.db import async_session_factory, engine
 from app.models import Session as SessionRow
 from app.models import Turn as TurnRow
 from app.services.sessions.turn_repository import (
@@ -23,24 +25,47 @@ from app.services.sessions.turn_repository import (
     TurnRecord,
 )
 from sqlalchemy import delete, text
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 
 @pytest_asyncio.fixture
-async def pg_available() -> AsyncIterator[bool]:
+async def pg_factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    engine = create_async_engine(
+        get_settings().database_url,
+        echo=False,
+        pool_pre_ping=True,
+        future=True,
+    )
     try:
         async with engine.connect() as conn:
             await conn.execute(text("select 1"))
-        yield True
     except Exception as exc:
+        await engine.dispose()
         pytest.skip(f"postgres unreachable at {get_settings().database_url}: {exc}")
+
+    factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
+        bind=engine,
+        expire_on_commit=False,
+        autoflush=False,
+        autocommit=False,
+    )
+    try:
+        yield factory
+    finally:
+        await engine.dispose()
 
 
 @pytest_asyncio.fixture
-async def session_id(pg_available: bool) -> AsyncIterator[str]:
+async def session_id(
+    pg_factory: async_sessionmaker[AsyncSession],
+) -> AsyncIterator[str]:
     """Seed a sessions row so turn FK inserts have a parent."""
-    assert pg_available
     sid = f"ses_{uuid.uuid4().hex[:16]}"
-    async with async_session_factory() as session, session.begin():
+    async with pg_factory() as session, session.begin():
         session.add(
             SessionRow(
                 session_id=sid,
@@ -56,15 +81,16 @@ async def session_id(pg_available: bool) -> AsyncIterator[str]:
     try:
         yield sid
     finally:
-        async with async_session_factory() as session, session.begin():
+        async with pg_factory() as session, session.begin():
             # CASCADE on the FK cleans up turns automatically.
             await session.execute(delete(SessionRow).where(SessionRow.session_id == sid))
 
 
 @pytest_asyncio.fixture
-async def repo(pg_available: bool) -> AsyncIterator[PostgresTurnRepository]:
-    assert pg_available
-    yield PostgresTurnRepository(async_session_factory)
+async def repo(
+    pg_factory: async_sessionmaker[AsyncSession],
+) -> AsyncIterator[PostgresTurnRepository]:
+    yield PostgresTurnRepository(pg_factory)
 
 
 def _record(
@@ -157,18 +183,21 @@ async def test_each_verdict_round_trips_through_enum(
 
 
 @pytest.mark.integration
-async def test_cascade_delete_on_session_clears_turns(session_id: str) -> None:
+async def test_cascade_delete_on_session_clears_turns(
+    pg_factory: async_sessionmaker[AsyncSession],
+    session_id: str,
+) -> None:
     """Sessions table FK has ON DELETE CASCADE — wiping a session must
     take its turns with it. This is the audit story for moderation
     events being separate (they don't cascade)."""
-    repo = PostgresTurnRepository(async_session_factory)
+    repo = PostgresTurnRepository(pg_factory)
     record = _record(session_id=session_id)
     await repo.append(record)
 
-    async with async_session_factory() as session, session.begin():
+    async with pg_factory() as session, session.begin():
         await session.execute(delete(SessionRow).where(SessionRow.session_id == session_id))
 
-    async with async_session_factory() as session:
+    async with pg_factory() as session, session.begin():
         result = await session.execute(delete(TurnRow).where(TurnRow.turn_id == record.turn_id))
         # nothing left to delete after the cascade
         assert result.rowcount == 0
