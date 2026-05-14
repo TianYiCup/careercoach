@@ -1,12 +1,23 @@
 """Application configuration loaded from environment."""
 
 from functools import lru_cache
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import Field, SecretStr
+import structlog
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+logger = structlog.get_logger(__name__)
+
 AppEnv = Literal["development", "staging", "production"]
+
+# Marker for the unsigned dev default. Production startup must NOT see
+# this value — settings validation raises if it does.
+DEV_JWT_SECRET = "dev-only-not-for-prod-32-chars-min!"  # noqa: S105 — sentinel, not a credential
+
+# HS256 best practice is ≥ 32 bytes of secret material so a brute-force
+# adversary doesn't compress the keyspace.
+_MIN_JWT_SECRET_BYTES = 32
 
 
 class Settings(BaseSettings):
@@ -28,7 +39,12 @@ class Settings(BaseSettings):
 
     sentry_dsn: str = ""
 
-    jwt_secret: str = Field(default="dev-only-not-for-prod-32-chars-min!")
+    # `SecretStr` so `repr(settings)` / debug logging never leaks the
+    # raw value the way a plain `str` field would. The dev default
+    # `DEV_JWT_SECRET` is OK for `app_env == "development"` only —
+    # the cross-field validator below raises if it leaks into staging
+    # or production.
+    jwt_secret: SecretStr = Field(default=SecretStr(DEV_JWT_SECRET))
 
     # Sessions + turns persistence backend.
     # `memory` (default) keeps everything dict-backed inside the worker
@@ -117,6 +133,45 @@ class Settings(BaseSettings):
         extra="ignore",
         case_sensitive=False,
     )
+
+    @model_validator(mode="after")
+    def _validate_jwt_secret(self) -> Self:
+        """Fail-fast on a startup-time misconfiguration of the signing
+        secret. Catches three classes of mistake:
+
+          1. Production / staging deploy that forgot to set
+             `JWT_SECRET` — would otherwise sign tokens with the
+             public dev default, letting anyone mint valid JWTs.
+          2. Any environment with a too-short secret (HS256
+             best-practice is ≥ 32 bytes).
+          3. Dev runs with the canonical default — log a WARNING so
+             nobody mistakes it for a real secret on their screen.
+        """
+        raw = self.jwt_secret.get_secret_value()
+
+        if len(raw.encode("utf-8")) < _MIN_JWT_SECRET_BYTES:
+            raise ValueError(
+                f"jwt_secret must be at least {_MIN_JWT_SECRET_BYTES} bytes "
+                f"(got {len(raw.encode('utf-8'))} bytes). HS256 keys shorter "
+                "than 32 bytes weaken the signature meaningfully."
+            )
+
+        if raw == DEV_JWT_SECRET:
+            if self.app_env != "development":
+                raise ValueError(
+                    "jwt_secret is set to the public dev default in a "
+                    f"non-dev env (app_env={self.app_env}). Set the "
+                    "JWT_SECRET environment variable to a unique value "
+                    "≥ 32 bytes before starting the server."
+                )
+            # Dev: allowed, but make it visible so it never gets shipped
+            # by accident.
+            logger.warning(
+                "jwt_secret_is_dev_default",
+                msg="using DEV_JWT_SECRET; do NOT deploy with this value",
+            )
+
+        return self
 
 
 @lru_cache(maxsize=1)

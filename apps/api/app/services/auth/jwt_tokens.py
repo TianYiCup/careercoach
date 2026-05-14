@@ -66,7 +66,11 @@ def mint_token(
         "persona_type": persona_type,
         "is_minor": is_minor,
     }
-    return jwt.encode(claims, get_settings().jwt_secret, algorithm=_ALGORITHM)
+    return jwt.encode(
+        claims,
+        get_settings().jwt_secret.get_secret_value(),
+        algorithm=_ALGORITHM,
+    )
 
 
 def decode_token(token: str) -> TokenPayload | None:
@@ -80,7 +84,7 @@ def decode_token(token: str) -> TokenPayload | None:
     try:
         claims = jwt.decode(
             token,
-            get_settings().jwt_secret,
+            get_settings().jwt_secret.get_secret_value(),
             algorithms=[_ALGORITHM],
             issuer=_ISSUER,
         )
