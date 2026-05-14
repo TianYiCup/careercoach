@@ -12,10 +12,13 @@ from functools import lru_cache
 
 import structlog
 
+from app.config import get_settings
+from app.db.session import async_session_factory
 from app.llm.factory import get_llm_router
 from app.services.moderation import get_moderation_service
 from app.services.sessions.repository import (
     InMemorySessionRepository,
+    PostgresSessionRepository,
     SessionRecord,
     SessionRepository,
 )
@@ -27,6 +30,7 @@ from app.services.sessions.service import (
 from app.services.sessions.turn_repository import (
     CoachHintTrio,
     InMemoryTurnRepository,
+    PostgresTurnRepository,
     TurnRecord,
     TurnRepository,
 )
@@ -87,12 +91,27 @@ def get_turn_service() -> TurnService:
 
 
 @lru_cache(maxsize=1)
-def _get_session_repository() -> InMemorySessionRepository:
+def _get_session_repository() -> SessionRepository:
+    """Process-wide session repo singleton. Backend chosen via settings —
+    `memory` for dev / tests, `postgres` for production. The factory's
+    `lru_cache` means SessionService and TurnService share the same
+    instance, so a session created here is visible to `/turns` and `/end`."""
+    backend = get_settings().sessions_repo_backend
+    if backend == "postgres":
+        logger.info("session_repository_wired", backend="postgres")
+        return PostgresSessionRepository(async_session_factory)
+    logger.info("session_repository_wired", backend="memory")
     return InMemorySessionRepository()
 
 
 @lru_cache(maxsize=1)
-def _get_turn_repository() -> InMemoryTurnRepository:
+def _get_turn_repository() -> TurnRepository:
+    """Process-wide turn repo singleton; same backend selection rule."""
+    backend = get_settings().sessions_repo_backend
+    if backend == "postgres":
+        logger.info("turn_repository_wired", backend="postgres")
+        return PostgresTurnRepository(async_session_factory)
+    logger.info("turn_repository_wired", backend="memory")
     return InMemoryTurnRepository()
 
 
@@ -101,6 +120,8 @@ __all__ = [
     "CoachHintTrio",
     "InMemorySessionRepository",
     "InMemoryTurnRepository",
+    "PostgresSessionRepository",
+    "PostgresTurnRepository",
     "SessionAlreadyEndedError",
     "SessionEndedForTurnError",
     "SessionNotFoundError",

@@ -1,9 +1,9 @@
 """Session lifecycle repository.
 
-v0 ships in-memory only — keeps tests deterministic without needing a
-running postgres. The DB-backed implementation drops into the same
-factory slot in the next PR (4b), once SSE streaming has a turns
-table to write into.
+Two implementations live here: the in-memory store that backs unit
+tests and dev runs without a docker stack, and the postgres-backed
+store wired to `app.db.async_session_factory` for production. The
+factory in `__init__.py` picks one based on `settings.sessions_repo_backend`.
 
 Naming note: distinct from `SessionScoreRepository` in the sharecards
 package, which holds rendered-card-shaped data (`SessionCardData`).
@@ -15,6 +15,10 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Protocol, runtime_checkable
+
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from app.models.session import Session
 
 
 @dataclass(frozen=True)
@@ -72,6 +76,76 @@ class InMemorySessionRepository:
         updated = replace(existing, status="ended", ended_at=ended_at)
         self._store[session_id] = updated
         return updated
+
+
+class PostgresSessionRepository:
+    """SQLAlchemy-backed implementation.
+
+    Each method opens its own short-lived `AsyncSession` so the
+    repository stays stateless and can be safely shared across
+    request handlers. Long transactions belong in the service layer,
+    not here.
+
+    Conflict semantics for `save()`: the protocol contract is
+    upsert-on-PK (later writes overwrite earlier ones for the same
+    session_id). We rely on `merge()` rather than `add()` so an
+    accidental double-create doesn't 500.
+    """
+
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        self._session_factory = session_factory
+
+    async def save(self, record: SessionRecord) -> None:
+        async with self._session_factory() as session, session.begin():
+            await session.merge(_record_to_model(record))
+
+    async def get(self, session_id: str) -> SessionRecord | None:
+        async with self._session_factory() as session:
+            row = await session.get(Session, session_id)
+            if row is None:
+                return None
+            return _model_to_record(row)
+
+    async def mark_ended(self, session_id: str, *, ended_at: datetime) -> SessionRecord:
+        async with self._session_factory() as session, session.begin():
+            row = await session.get(Session, session_id)
+            if row is None:
+                raise KeyError(session_id)
+            row.status = "ended"
+            row.ended_at = ended_at
+            # `commit()` happens implicitly via `session.begin()`'s context.
+            # Re-read inside the same transaction so the returned record
+            # reflects the post-commit state (created_at server_default
+            # is resolved by now).
+            return _model_to_record(row)
+
+
+def _record_to_model(record: SessionRecord) -> Session:
+    return Session(
+        session_id=record.session_id,
+        user_id=record.user_id,
+        mode=record.mode,
+        scenario_id=record.scenario_id,
+        persona_id=record.persona_id,
+        user_goal=record.user_goal,
+        status=record.status,
+        created_at=record.created_at,
+        ended_at=record.ended_at,
+    )
+
+
+def _model_to_record(row: Session) -> SessionRecord:
+    return SessionRecord(
+        session_id=row.session_id,
+        user_id=row.user_id,
+        mode=row.mode,
+        scenario_id=row.scenario_id,
+        persona_id=row.persona_id,
+        user_goal=row.user_goal,
+        status=row.status,
+        created_at=row.created_at,
+        ended_at=row.ended_at,
+    )
 
 
 def utcnow() -> datetime:
