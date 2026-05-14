@@ -6,6 +6,7 @@ alembic/env.py imports `app.models` so autogenerate sees all tables.
 from app.models.moderation_event import ModerationEvent
 from app.models.scenario import Scenario
 from app.models.session import Session
+from app.models.session_score import SessionScore
 from app.models.sharecard import ShareCard
 from app.models.turn import Turn
 from app.models.user import PersonaType, User
@@ -15,6 +16,7 @@ __all__ = [
     "PersonaType",
     "Scenario",
     "Session",
+    "SessionScore",
     "ShareCard",
     "Turn",
     "User",

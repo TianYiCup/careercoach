@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     # short-lived and don't belong in the relational store.
     auth_repo_backend: Literal["memory", "postgres"] = Field(default="memory")
 
+    # Sharecards score-cache persistence. Set to `postgres` so a
+    # restart doesn't drop the score-card render cache for previously
+    # ended sessions (otherwise `/sharecards/session/{id}` 404s on
+    # sessions that ended pre-restart even though the LLM summary
+    # already cost money to produce).
+    sharecards_score_repo_backend: Literal["memory", "postgres"] = Field(default="memory")
+
     # LLM · DeepSeek (primary, OpenAI-compatible).
     # Empty key means the adapter will refuse to send requests; only the
     # router knows how to fall back when this happens.

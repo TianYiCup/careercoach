@@ -136,7 +136,7 @@ class SessionService:
         # SessionScoreRepository is the read side for `/v1/sharecards/session/{id}`.
         # Writing here is what makes a freshly-ended session render a real card
         # instead of 404.
-        self._score_repo.add(session_id, card_data)
+        await self._score_repo.add(session_id, card_data)
 
         logger.info(
             "session_ended",
