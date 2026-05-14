@@ -21,6 +21,7 @@ from app.services.auth.code_store import (
     InMemoryCodeStore,
     StoredCode,
 )
+from app.services.auth.dependency import ANONYMOUS_USER_ID, get_current_user_id
 from app.services.auth.jwt_tokens import TokenPayload, decode_token, mint_token
 from app.services.auth.service import (
     AuthService,
@@ -73,6 +74,7 @@ def _get_user_repository() -> InMemoryUserRepository:
 
 
 __all__ = [
+    "ANONYMOUS_USER_ID",
     "AuthService",
     "CodeStore",
     "InMemoryCodeStore",
@@ -86,5 +88,6 @@ __all__ = [
     "UserRepository",
     "decode_token",
     "get_auth_service",
+    "get_current_user_id",
     "mint_token",
 ]

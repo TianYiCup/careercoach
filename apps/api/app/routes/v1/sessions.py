@@ -1,13 +1,13 @@
 """Sandbox session endpoints — PRD §7.4.
 
 PR 4a wired create + end to a real `SessionService`. PR 4b adds the
-SSE-driven `/turns` endpoint backed by `TurnService` (streaming LLM
-output, gating user input through moderation, persisting per-turn
-records). PR 4c will replace `/end`'s stub Score with a TurnRepository-
-backed aggregator.
+SSE-driven `/turns` endpoint backed by `TurnService`. PR 4c replaced
+`/end`'s stub Score with a TurnRepository-backed aggregator.
 
-The auth boundary is still anonymous — Sprint-2 swaps `_ANONYMOUS_USER_ID`
-for `Depends(get_current_user)` once SMS verify is real.
+The auth boundary is soft: `get_current_user_id` returns the JWT-
+derived user id when a valid bearer token is present, and the
+`anonymous` sentinel otherwise. The next PR flips this to hard 401
+once the frontend ships its bearer-token client.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from app.schemas.sessions import (
     TurnRequest,
 )
 from app.schemas.sse import SseEventEnvelope
+from app.services.auth import get_current_user_id
 from app.services.sessions import (
     SessionAlreadyEndedError,
     SessionEndedForTurnError,
@@ -40,8 +41,6 @@ from app.services.sessions.sse import SseFrame, encode_frame
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
-_ANONYMOUS_USER_ID = "anonymous"
-
 
 @router.post(
     "",
@@ -51,8 +50,9 @@ _ANONYMOUS_USER_ID = "anonymous"
 async def create_session(
     payload: CreateSessionRequest,
     service: SessionService = Depends(get_session_service),
+    user_id: str = Depends(get_current_user_id),
 ) -> CreateSessionResponse:
-    return await service.create_session(payload, user_id=_ANONYMOUS_USER_ID)
+    return await service.create_session(payload, user_id=user_id)
 
 
 @router.post(
@@ -80,6 +80,7 @@ async def post_turn(
     request: Request,
     session_id: str = Path(..., description="Session id from POST /v1/sessions."),
     service: TurnService = Depends(get_turn_service),
+    user_id: str = Depends(get_current_user_id),
 ) -> StreamingResponse:
     """Validate-then-stream: typed 4xx errors come back as normal HTTP
     responses (so the client's fetch().catch() handler sees them); only
@@ -89,7 +90,7 @@ async def post_turn(
         validated = await service.validate_turn_request(
             session_id=session_id,
             content=payload.content,
-            user_id=_ANONYMOUS_USER_ID,
+            user_id=user_id,
             trace_id=trace_id,
         )
     except SessionNotFoundForTurnError as exc:
@@ -139,9 +140,10 @@ async def post_turn(
 async def end_session(
     session_id: str = Path(..., description="Session id from POST /v1/sessions."),
     service: SessionService = Depends(get_session_service),
+    user_id: str = Depends(get_current_user_id),
 ) -> EndSessionResponse:
     try:
-        return await service.end_session(session_id, user_id=_ANONYMOUS_USER_ID)
+        return await service.end_session(session_id, user_id=user_id)
     except SessionNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

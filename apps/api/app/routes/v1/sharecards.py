@@ -3,6 +3,10 @@
 All three card types now resolve to real handlers backed by
 `ShareCardService`. Session is the per-end card; weekly is the
 Mon-Sun digest; wrapped is the annual 6-page recap.
+
+Auth is soft: `get_current_user_id` returns the JWT-derived user id
+when a valid bearer token is present, and the `anonymous` sentinel
+otherwise. The next PR flips this to hard 401.
 """
 
 from __future__ import annotations
@@ -17,6 +21,7 @@ from app.schemas.sharecards import (
     WeeklyShareCardRequest,
     WrappedShareCardRequest,
 )
+from app.services.auth import get_current_user_id
 from app.services.sharecards import (
     ShareCardCaptionBlockedError,
     ShareCardNotFoundError,
@@ -25,11 +30,6 @@ from app.services.sharecards import (
 )
 
 router = APIRouter(prefix="/sharecards", tags=["sharecards"])
-
-# v0 doesn't have auth wired yet — the user_id used in the audit row
-# falls back to a sentinel so the row still carries useful provenance.
-# Sprint-2 swaps this for `Depends(get_current_user)`.
-_ANONYMOUS_USER_ID = "anonymous"
 
 
 def _trace_id(request: Request) -> str:
@@ -54,13 +54,14 @@ async def create_session_card(
         examples=["ses_018f3a8b1c2d7e3a"],
     ),
     service: ShareCardService = Depends(get_sharecard_service),
+    user_id: str = Depends(get_current_user_id),
 ) -> ShareCardResponse:
     trace_id = _trace_id(request)
     try:
         return await service.create_session_card(
             session_id=session_id,
             request=payload,
-            user_id=_ANONYMOUS_USER_ID,
+            user_id=user_id,
             trace_id=trace_id,
         )
     except ShareCardNotFoundError as exc:
@@ -93,10 +94,11 @@ async def create_weekly_card(
     payload: WeeklyShareCardRequest,
     request: Request,
     service: ShareCardService = Depends(get_sharecard_service),
+    user_id: str = Depends(get_current_user_id),
 ) -> ShareCardResponse:
     return await service.create_weekly_card(
         request=payload,
-        user_id=_ANONYMOUS_USER_ID,
+        user_id=user_id,
         trace_id=_trace_id(request),
     )
 
@@ -117,10 +119,11 @@ async def create_wrapped_card(
         examples=[2026],
     ),
     service: ShareCardService = Depends(get_sharecard_service),
+    user_id: str = Depends(get_current_user_id),
 ) -> ShareCardResponse:
     return await service.create_wrapped_card(
         year=year,
         request=payload,
-        user_id=_ANONYMOUS_USER_ID,
+        user_id=user_id,
         trace_id=_trace_id(request),
     )
