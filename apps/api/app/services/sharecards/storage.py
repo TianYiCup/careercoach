@@ -4,17 +4,27 @@ v0 ships `LocalFilesystemStorage` — fine for dev and the Sprint-0 demo
 where everything runs on the same host. Production swaps in an S3 /
 OSS implementation behind the same Protocol; the service layer never
 sees the difference.
+
+Keys are restricted to `[A-Za-z0-9_-]+` with an optional single `/`
+separator (e.g. `card_abc/p0_cover`). Wrapped writes one PNG per
+page under a `<card_id>/p<index>_<slug>` key so the public URL matches
+the contract the frontend mocks emit.
 """
 
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from app.services.sharecards.renderer import ShareCardRendererError
 
 _PNG_CONTENT_TYPE = "image/png"
+
+# `key` or `parent/child`, where each segment is alphanumeric with
+# `_` or `-`. No leading `.`, no slashes-of-slashes, no traversal.
+_KEY_PATTERN = re.compile(r"^[A-Za-z0-9_\-]+(/[A-Za-z0-9_\-]+)?$")
 
 
 @runtime_checkable
@@ -66,7 +76,7 @@ class LocalFilesystemStorage:
         _ = content_type  # local FS doesn't track MIME; S3 impl will use this
         if not key:
             raise ShareCardRendererError("storage key must not be empty", renderer=self.name)
-        if "/" in key or "\\" in key or key.startswith("."):
+        if not _KEY_PATTERN.fullmatch(key):
             # Defensive — guard against traversal in case caller passes
             # raw user input. card_ids are server-generated so this is
             # belt-and-braces, not the primary defence.
@@ -76,6 +86,8 @@ class LocalFilesystemStorage:
             )
 
         path = self._root / f"{key}.png"
+        # Create the subdirectory if the key encodes one (wrapped pages).
+        await asyncio.to_thread(path.parent.mkdir, parents=True, exist_ok=True)
         await asyncio.to_thread(path.write_bytes, data)
         return self.url_for(key)
 

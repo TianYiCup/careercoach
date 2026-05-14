@@ -44,9 +44,14 @@ from qrcode.image.pil import PilImage
 from app.services.sharecards.renderer import (
     CARD_HEIGHT,
     CARD_WIDTH,
+    WRAPPED_PAGE_COUNT,
     ShareCardRendererError,
 )
-from app.services.sharecards.types import SessionCardData
+from app.services.sharecards.types import (
+    SessionCardData,
+    WeeklyCardData,
+    WrappedCardData,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -141,9 +146,7 @@ class PillowShareCardRenderer:
         if include_qrcode:
             self._paste_qrcode(canvas, data)
 
-        buf = BytesIO()
-        canvas.save(buf, format="PNG", optimize=True)
-        return buf.getvalue()
+        return _encode_png(canvas)
 
     def _draw_k_placeholder(self, draw: ImageDraw.ImageDraw) -> None:
         cx, cy, r = CARD_WIDTH // 2, 380, 160
@@ -200,10 +203,89 @@ class PillowShareCardRenderer:
         x = (CARD_WIDTH - text_w) // 2
         draw.text((x, y), text, font=font, fill=fill)
 
+    def render_weekly_card(
+        self,
+        data: WeeklyCardData,
+        *,
+        include_qrcode: bool = False,
+    ) -> bytes:
+        # Weekly always uses the "vivid" mid-band gradient — feels
+        # neither hyped (shenfeng glory) nor doomy (fanche crash), and
+        # the card surfaces for almost every user every week.
+        canvas = _make_vertical_gradient(CARD_WIDTH, CARD_HEIGHT, *_GRADIENTS["guolu"])
+        draw = ImageDraw.Draw(canvas)
+
+        self._draw_k_placeholder(draw)
+        self._draw_centered(draw, data.week_label, y=720, font=self._font(72), fill=(255, 255, 255))
+        self._draw_centered(
+            draw,
+            str(data.sessions_count),
+            y=820,
+            font=self._font(220),
+            fill=(255, 255, 255),
+        )
+        self._draw_centered(draw, "次练习", y=1080, font=self._font(56), fill=(255, 255, 255))
+        verdict_line = (
+            f"封神 {data.shenfeng_count} · 路过 {data.guolu_count} · 翻车 {data.fanche_count}"
+        )
+        self._draw_centered(draw, verdict_line, y=1200, font=self._font(48), fill=(255, 255, 255))
+        if data.top_scenario_title:
+            self._draw_centered(
+                draw,
+                f"主战场：{data.top_scenario_title}",
+                y=1320,
+                font=self._font(42),
+                fill=(255, 255, 255),
+            )
+        self._draw_centered(draw, data.headline, y=1480, font=self._font(46), fill=(255, 255, 255))
+        self._draw_watermark(draw)
+
+        if include_qrcode:
+            self._paste_qrcode_with_slug(canvas, f"weekly_{data.week_label}")
+
+        return _encode_png(canvas)
+
+    def render_wrapped_pages(
+        self,
+        data: WrappedCardData,
+        *,
+        include_qrcode: bool = True,
+    ) -> list[bytes]:
+        # Six pages, all 1080×1920, sharing the glory gradient since
+        # Wrapped is designed to be shared — celebratory by default.
+        # Page-by-page hero copy lives in `_WRAPPED_PAGE_BUILDERS`
+        # below so the loop here stays narrative-free.
+        pages: list[bytes] = []
+        builders = _wrapped_page_specs(data)
+        if len(builders) != WRAPPED_PAGE_COUNT:  # pragma: no cover — guarded by tests
+            raise ShareCardRendererError(
+                f"wrapped expected {WRAPPED_PAGE_COUNT} pages, got {len(builders)}",
+                renderer=self.name,
+            )
+        top, bottom = _GRADIENTS["shenfeng"]
+        for index, (title, hero, sub) in enumerate(builders):
+            canvas = _make_vertical_gradient(CARD_WIDTH, CARD_HEIGHT, top, bottom)
+            draw = ImageDraw.Draw(canvas)
+            self._draw_k_placeholder(draw)
+            self._draw_centered(draw, title, y=720, font=self._font(72), fill=(255, 255, 255))
+            self._draw_centered(draw, hero, y=900, font=self._font(180), fill=(255, 255, 255))
+            self._draw_centered(draw, sub, y=1200, font=self._font(48), fill=(255, 255, 255))
+            self._draw_watermark(draw)
+            if include_qrcode and index == 0:
+                # Only the cover gets the QR — saves visual noise on
+                # the inner pages while still routing share clicks back.
+                self._paste_qrcode_with_slug(canvas, f"wrapped_{data.year}")
+            pages.append(_encode_png(canvas))
+        return pages
+
     def _paste_qrcode(self, canvas: Image.Image, data: SessionCardData) -> None:
-        # Real card_id arrives in PR ③ — for the renderer-only spike the
-        # URL is keyed on scenario+persona so QRs are still unique.
         slug = f"{data.scenario_title}_{data.persona_title}".replace(" ", "_")
+        self._paste_qrcode_with_slug(canvas, slug)
+
+    def _paste_qrcode_with_slug(self, canvas: Image.Image, slug: str) -> None:
+        # Real card_id is only available in the service layer, so the
+        # renderer uses a stable slug per card type. The QR always
+        # routes back to the app's share landing page.
         url = f"{self._app_share_origin}/share/{slug}"
 
         qr = qrcode.QRCode(version=4, box_size=8, border=2)
@@ -242,6 +324,39 @@ def _detect_cjk_font() -> Path | None:
         if path.exists():
             return path
     return None
+
+
+def _encode_png(canvas: Image.Image) -> bytes:
+    """Serialize the canvas to PNG bytes once — used by all three renderers."""
+    buf = BytesIO()
+    canvas.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
+
+
+def _wrapped_page_specs(data: WrappedCardData) -> list[tuple[str, str, str]]:
+    """Six (title, hero, sub) triples — one per Wrapped page.
+
+    Returns exactly `WRAPPED_PAGE_COUNT` entries even when the user
+    had zero sessions: empty-year copy keeps the cover layout coherent
+    so frontend can render every page slot without conditional branching.
+    """
+    if data.total_sessions == 0:
+        return [
+            (f"{data.year} Wrapped", "0", "今年没练过 K"),
+            ("主战场", "—", "还没解锁"),
+            ("常见对手", "—", "等你来挑"),
+            ("最高光", "—", "等第一次封神"),
+            ("翻车现场", "—", "也等第一次"),
+            ("教练 K 留言", "明年见", data.closing_letter),
+        ]
+    return [
+        (f"{data.year} Wrapped", str(data.total_sessions), "次对话练习"),
+        ("主战场", "TOP", data.top_scenario_title),
+        ("常见对手", "VS", data.top_opponent_title),
+        ("最高光", "✨", data.best_session_title),
+        ("翻车现场", "💥", data.worst_session_title),
+        ("教练 K 留言", "明年继续", data.closing_letter),
+    ]
 
 
 def _make_vertical_gradient(width: int, height: int, top: _RGB, bottom: _RGB) -> Image.Image:
