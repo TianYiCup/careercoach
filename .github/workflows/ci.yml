@@ -172,11 +172,32 @@ jobs:
         run: echo "::notice::apps/wxapp 还没初始化，跳过 lint"
 
   # ============================================================
-  # 条件跑：apps/api 存在时跑 pytest
+  # 条件跑：apps/api 存在时跑 pytest（含 PG 集成）
   # ============================================================
   test-api:
     name: Test API
     runs-on: ubuntu-latest
+    # GitHub Actions service container — runs alongside the job and is
+    # reachable at localhost:5432 because we map the port. Image + creds
+    # match docker-compose.yml so the default `database_url` in settings
+    # works without override.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: careercoach
+        ports:
+          - 5432:5432
+        # Without --health-cmd the runner won't wait for "select 1" to
+        # work before kicking off the job, so tests can hit a not-yet-
+        # listening postgres and degrade to the skip path silently.
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - id: check
@@ -192,11 +213,19 @@ jobs:
         if: steps.check.outputs.exists == 'true'
         working-directory: apps/api
         run: uv sync --frozen
+      - name: Alembic upgrade
+        if: steps.check.outputs.exists == 'true'
+        working-directory: apps/api
+        # Creates every table the integration tests assume. Without
+        # this step the `@pytest.mark.integration` tests would fail at
+        # first INSERT instead of running against an empty schema.
+        run: uv run --frozen alembic upgrade head
       - name: Pytest
         if: steps.check.outputs.exists == 'true'
         working-directory: apps/api
         # `--strict-markers` keeps a typo'd @pytest.mark.* from silently
-        # passing; tests that need postgres / aliyun creds skip themselves.
+        # passing. PG is reachable here, so integration tests run; the
+        # aliyun-creds-only test still skips.
         run: uv run --frozen pytest -q --strict-markers
       - name: Skip notice
         if: steps.check.outputs.exists == 'false'
