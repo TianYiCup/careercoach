@@ -89,9 +89,7 @@ def _record(*, session_id: str | None = None, status: str = "active") -> Session
     )
 
 
-async def _cleanup(
-    factory: async_sessionmaker[AsyncSession], session_ids: list[str]
-) -> None:
+async def _cleanup(factory: async_sessionmaker[AsyncSession], session_ids: list[str]) -> None:
     async with factory() as session, session.begin():
         await session.execute(delete(SessionRow).where(SessionRow.session_id.in_(session_ids)))
 
