@@ -139,3 +139,36 @@ export interface ErrorResponse {
   message: string
   trace_id: string
 }
+
+// --- Auth (PRD §7.2) ---
+export type PersonaType = 'in_school' | 'intern' | 'graduate'
+
+export interface SmsSendRequest {
+  /** Mainland China mobile number, 11 digits, no country prefix. */
+  phone: string
+}
+
+export interface SmsSendResponse {
+  /** Seconds until the user may request another code. v0.1 hard-codes 60s. */
+  ttl: number
+}
+
+export interface SmsVerifyRequest {
+  phone: string
+  /** 6-digit verification code received by SMS. */
+  code: string
+}
+
+export interface UserPublic {
+  id: string
+  nickname: string
+  persona_type: PersonaType
+  /** True if user.birthdate < 18 — triggers minor mode (PRD §3.0.5 C). */
+  is_minor: boolean
+}
+
+export interface SmsVerifyResponse {
+  /** JWT bearer token. Pass as `Authorization: Bearer <token>`. */
+  token: string
+  user: UserPublic
+}

@@ -11,6 +11,7 @@ import {
 } from './components'
 
 import { useSandboxSession } from './features/sandbox/useSandboxSession'
+import { AuthProvider, LoginPage, useAuth } from './features/auth'
 
 type Page = 'home' | 'sandbox' | 'wrapped'
 
@@ -368,9 +369,25 @@ function HomePage({
 }: {
   onNavigate: (page: Page) => void
 }) {
+  const { user, logout } = useAuth()
   return (
     <div className="relative min-h-screen flex flex-col items-center px-4 py-12 overflow-hidden">
       <BlobBackground />
+
+      {/* Top-right: nickname + 退出 */}
+      {user && (
+        <div className="relative z-10 self-end flex items-center gap-3 text-xs font-body">
+          <span className="text-ink-text-2">{user.nickname}</span>
+          <button
+            type="button"
+            onClick={logout}
+            className="text-ink-text-3 hover:text-ink-text-2 transition-colors"
+          >
+            退出
+          </button>
+        </div>
+      )}
+
       <div className="relative z-10 text-center max-w-lg mt-8">
         <MascotReaction expression="confident" size="lg" showLabel />
         <h1 className="mt-6 text-5xl md:text-6xl font-display italic tracking-tight text-gradient-vivid">
@@ -421,14 +438,33 @@ function HomePage({
   )
 }
 
-function App() {
+/**
+ * AppGate — auth boundary. Renders <LoginPage> until the user has a
+ * token (per useAuth.isAuthenticated). After login the provider
+ * re-renders and we drop into the real navigation below.
+ *
+ * Routing is a tiny union ('home' | 'sandbox' | 'wrapped') instead of
+ * react-router for now — the surface is three pages and the gate is
+ * one bit. We'll bring in router when the route count grows.
+ */
+function AppGate() {
+  const { isAuthenticated } = useAuth()
   const [page, setPage] = useState<Page>('home')
+  if (!isAuthenticated) return <LoginPage />
   return (
     <>
       {page === 'home' && <HomePage onNavigate={setPage} />}
       {page === 'sandbox' && <SandboxRoom onExit={() => setPage('home')} />}
       {page === 'wrapped' && <WrappedPage />}
     </>
+  )
+}
+
+function App() {
+  return (
+    <AuthProvider>
+      <AppGate />
+    </AuthProvider>
   )
 }
 
