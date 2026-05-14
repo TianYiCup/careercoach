@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 from app.main import app
+from app.services.auth import mint_token
 from app.services.moderation import LogOnlyEventSink, ModerationService, NoopBackend
 from app.services.moderation.types import Decision
 from app.services.sharecards import (
@@ -63,8 +64,16 @@ def service_override(tmp_path: Path) -> Iterator[InMemorySessionScoreRepository]
 async def client(
     service_override: InMemorySessionScoreRepository,
 ) -> AsyncIterator[AsyncClient]:
+    """Default-authenticated client — sharecard routes are auth-gated
+    after the JWT hard-mode flip, so the fixture mints a token once."""
+    _ = service_override
+    token = mint_token(user_id="u_default_test", persona_type="intern", is_minor=False)
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"Authorization": f"Bearer {token}"},
+    ) as ac:
         yield ac
 
 

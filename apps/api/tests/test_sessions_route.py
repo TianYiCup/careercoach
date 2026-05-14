@@ -15,6 +15,7 @@ from collections.abc import AsyncIterator, Iterator
 import pytest
 from app.llm import Message
 from app.main import app
+from app.services.auth import mint_token
 from app.services.sessions import (
     InMemorySessionRepository,
     InMemoryTurnRepository,
@@ -26,6 +27,11 @@ from app.services.sharecards.session_score import (
     get_session_score_repository,
 )
 from httpx import ASGITransport, AsyncClient
+
+# A default Bearer token is attached to the `client` fixture so the
+# vast majority of tests don't need to repeat the auth plumbing. Tests
+# that probe unauth/bad-token branches use the bare `anon_client` below.
+_DEFAULT_TEST_USER_ID = "u_default_test"
 
 
 class _RouteStubLLM:
@@ -81,6 +87,27 @@ def service_override() -> Iterator[InMemorySessionScoreRepository]:
 async def client(
     service_override: InMemorySessionScoreRepository,
 ) -> AsyncIterator[AsyncClient]:
+    _ = service_override
+    token = mint_token(
+        user_id=_DEFAULT_TEST_USER_ID,
+        persona_type="intern",
+        is_minor=False,
+    )
+    transport = ASGITransport(app=app)
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"Authorization": f"Bearer {token}"},
+    ) as ac:
+        yield ac
+
+
+@pytest.fixture
+async def anon_client(
+    service_override: InMemorySessionScoreRepository,
+) -> AsyncIterator[AsyncClient]:
+    """Client without the default Authorization header — for tests that
+    assert the 401 branch fires when no token is supplied."""
     _ = service_override
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -203,13 +230,11 @@ async def test_create_session_with_valid_bearer_token_uses_jwt_user_id(
     assert record.user_id == "u_route_test"
 
 
-async def test_create_session_without_authorization_header_uses_anonymous(
-    client: AsyncClient,
+async def test_create_session_without_authorization_header_returns_401(
+    anon_client: AsyncClient,
 ) -> None:
-    """Soft mode default — missing header still serves the request."""
-    from app.services.sessions import get_session_service
-
-    resp = await client.post(
+    """Hard auth: missing bearer token → 401 before the service runs."""
+    resp = await anon_client.post(
         "/v1/sessions",
         json={
             "mode": "sandbox",
@@ -219,13 +244,12 @@ async def test_create_session_without_authorization_header_uses_anonymous(
         },
     )
 
-    assert resp.status_code == 200, resp.text
-    session_id = resp.json()["session_id"]
-
-    service = app.dependency_overrides[get_session_service]()
-    record = await service._repository.get(session_id)
-    assert record is not None
-    assert record.user_id == "anonymous"
+    assert resp.status_code == 401
+    body = resp.json()
+    assert body["code"] == "UNAUTHORIZED"
+    # Trace id must still flow through the error path so a 401 in
+    # production is traceable in Sentry / Langfuse.
+    assert "trace_id" in body
 
 
 async def test_end_session_route_returns_409_when_ended_twice(client: AsyncClient) -> None:

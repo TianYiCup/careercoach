@@ -14,6 +14,7 @@ from collections.abc import AsyncIterator, Iterator
 
 import pytest
 from app.main import app
+from app.services.auth import mint_token
 from app.services.moderation import LogOnlyEventSink, ModerationService, NoopBackend
 from app.services.moderation.types import Decision
 from app.services.sessions import (
@@ -112,8 +113,17 @@ def blocking_service_override() -> Iterator[None]:
 
 @pytest.fixture
 async def client() -> AsyncIterator[AsyncClient]:
+    """Default-authenticated client — every route here is auth-gated,
+    so the fixture mints a token once and attaches it as a default
+    header. Per-test calls still win on header conflicts (the existing
+    `headers={"Authorization": ...}` overrides keep working)."""
+    token = mint_token(user_id="u_default_test", persona_type="intern", is_minor=False)
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"Authorization": f"Bearer {token}"},
+    ) as ac:
         yield ac
 
 
