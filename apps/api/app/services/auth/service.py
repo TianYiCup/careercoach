@@ -161,10 +161,16 @@ class AuthService:
             raise InvalidCodeError("code does not match")
 
         user = await self._upsert_user(phone)
+        # Returning users who already declared their birth_year keep
+        # the age-gate-cleared flag on the fresh token; first-time
+        # users start with age_set=False and the next request to a
+        # gated endpoint will 403 AGE_REQUIRED, prompting the client
+        # to call `POST /v1/users/me/birth-year`.
         token = mint_token(
             user_id=user.user_id,
             persona_type=user.persona_type,
             is_minor=user.is_minor,
+            age_set=user.birthdate is not None,
         )
 
         # Reset failure state AFTER mint succeeds so a downstream error
@@ -257,10 +263,13 @@ class AuthService:
         except KeyError as exc:
             raise ProfileUserNotFoundError(user_id) from exc
 
+        # birth_year is now set, so age_set=True on every mint here —
+        # the route layer's age gate stops firing for this user.
         token = mint_token(
             user_id=record.user_id,
             persona_type=record.persona_type,
             is_minor=record.is_minor,
+            age_set=True,
         )
         logger.info(
             "user_birth_year_updated",

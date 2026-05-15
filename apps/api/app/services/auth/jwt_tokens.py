@@ -9,10 +9,14 @@ Tokens are HS256-signed with `settings.jwt_secret`. Claims:
   * `exp`  — expiry, default 30 days out (PRD §7.2 — "stay signed in").
   * `persona_type` + `is_minor` — denormalised onto the token so the
     minor-mode gate (red-line) doesn't need a DB round-trip per request.
+  * `age_set` — True iff the user has declared `birth_year` (PRD §1.5
+    compulsory age gate). Tokens minted before this claim existed are
+    treated as `age_set=False` so the gate fires for legacy clients
+    and they re-prompt via the existing 403 AGE_REQUIRED branch.
 
-The denormalisation is safe because both fields are stable for the
-session lifetime; if a user re-onboards their persona, the next mint
-picks up the change.
+The denormalisation is safe because all three fields are stable for the
+session lifetime; if a user re-onboards their persona or sets their
+birth year, the next mint picks up the change.
 
 Decoding is non-throwing on bad/expired tokens — `decode_token` returns
 `None` and the route layer maps that to a 401. Surfacing concrete jose
@@ -44,6 +48,7 @@ class TokenPayload:
     user_id: str
     persona_type: str
     is_minor: bool
+    age_set: bool
     expires_at: datetime
 
 
@@ -52,10 +57,16 @@ def mint_token(
     user_id: str,
     persona_type: str,
     is_minor: bool,
+    age_set: bool = False,
     ttl: timedelta = _DEFAULT_TTL,
     now: datetime | None = None,
 ) -> str:
-    """Return a signed JWT. `now` is injectable so tests can pin issuance time."""
+    """Return a signed JWT. `now` is injectable so tests can pin issuance time.
+
+    `age_set` defaults to False so a caller that hasn't been updated to
+    pass it (e.g. an old test fixture) mints tokens that fail the
+    compulsory age gate — fail-closed by construction.
+    """
     issued_at = now or datetime.now(UTC)
     expires_at = issued_at + ttl
     claims: dict[str, object] = {
@@ -65,6 +76,7 @@ def mint_token(
         "exp": int(expires_at.timestamp()),
         "persona_type": persona_type,
         "is_minor": is_minor,
+        "age_set": age_set,
     }
     return jwt.encode(
         claims,
@@ -106,6 +118,11 @@ def decode_token(token: str) -> TokenPayload | None:
         user_id=user_id,
         persona_type=persona_type,
         is_minor=bool(claims.get("is_minor", False)),
+        # Missing claim → False so tokens minted before the age-gate
+        # ship treat the holder as "age not yet declared" and trip the
+        # gate's 403 AGE_REQUIRED, prompting a fresh login + birth_year
+        # set. Never assume the user is already past the gate.
+        age_set=bool(claims.get("age_set", False)),
         expires_at=datetime.fromtimestamp(expires_at_ts, tz=UTC),
     )
 

@@ -167,7 +167,9 @@ async def test_minor_jwt_drives_warn_to_block_via_route(client: AsyncClient) -> 
     """End-to-end: minor JWT → backend returns warn → route surfaces
     block. Proves the JWT flag is actually plumbed through the route
     layer (not just sitting in the service unit tests)."""
-    minor_token = mint_token(user_id="u_minor", persona_type="in_school", is_minor=True)
+    minor_token = mint_token(
+        user_id="u_minor", persona_type="in_school", is_minor=True, age_set=True
+    )
 
     resp = await client.post(
         "/v1/moderation/check",
@@ -182,7 +184,7 @@ async def test_minor_jwt_drives_warn_to_block_via_route(client: AsyncClient) -> 
 
 async def test_adult_jwt_keeps_warn_via_route(client: AsyncClient) -> None:
     """Counter-test: same content, adult JWT → warn stays warn."""
-    adult_token = mint_token(user_id="u_adult", persona_type="intern", is_minor=False)
+    adult_token = mint_token(user_id="u_adult", persona_type="intern", is_minor=False, age_set=True)
 
     resp = await client.post(
         "/v1/moderation/check",

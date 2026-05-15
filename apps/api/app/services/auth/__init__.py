@@ -36,6 +36,7 @@ from app.services.auth.dependency import (
     get_current_user,
     get_current_user_id,
     require_adult,
+    require_age_set,
 )
 from app.services.auth.jwt_tokens import TokenPayload, decode_token, mint_token
 from app.services.auth.rate_limit import (
@@ -168,4 +169,5 @@ __all__ = [
     "get_current_user_id",
     "mint_token",
     "require_adult",
+    "require_age_set",
 ]

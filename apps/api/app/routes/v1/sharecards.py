@@ -21,7 +21,7 @@ from app.schemas.sharecards import (
     WeeklyShareCardRequest,
     WrappedShareCardRequest,
 )
-from app.services.auth import CurrentUser, get_current_user, get_current_user_id
+from app.services.auth import CurrentUser, require_age_set
 from app.services.sharecards import (
     ShareCardCaptionBlockedError,
     ShareCardNotFoundError,
@@ -54,12 +54,13 @@ async def create_session_card(
         examples=["ses_018f3a8b1c2d7e3a"],
     ),
     service: ShareCardService = Depends(get_sharecard_service),
-    current: CurrentUser = Depends(get_current_user),
+    current: CurrentUser = Depends(require_age_set),
 ) -> ShareCardResponse:
     """`is_minor` flows from the JWT so the caption-override moderation
     check uses the strict tier for under-18 users (PRD §3.0.5 C).
-    Weekly + wrapped don't take user content, so they only need the
-    user id."""
+    The compulsory age gate fires first — sharing a card is committing
+    to a public artifact, so we require the user to declare age before
+    minting any sharecard."""
     trace_id = _trace_id(request)
     try:
         return await service.create_session_card(
@@ -99,11 +100,11 @@ async def create_weekly_card(
     payload: WeeklyShareCardRequest,
     request: Request,
     service: ShareCardService = Depends(get_sharecard_service),
-    user_id: str = Depends(get_current_user_id),
+    current: CurrentUser = Depends(require_age_set),
 ) -> ShareCardResponse:
     return await service.create_weekly_card(
         request=payload,
-        user_id=user_id,
+        user_id=current.user_id,
         trace_id=_trace_id(request),
     )
 
@@ -124,11 +125,11 @@ async def create_wrapped_card(
         examples=[2026],
     ),
     service: ShareCardService = Depends(get_sharecard_service),
-    user_id: str = Depends(get_current_user_id),
+    current: CurrentUser = Depends(require_age_set),
 ) -> ShareCardResponse:
     return await service.create_wrapped_card(
         year=year,
         request=payload,
-        user_id=user_id,
+        user_id=current.user_id,
         trace_id=_trace_id(request),
     )

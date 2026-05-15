@@ -67,7 +67,12 @@ async def client(
     """Default-authenticated client — sharecard routes are auth-gated
     after the JWT hard-mode flip, so the fixture mints a token once."""
     _ = service_override
-    token = mint_token(user_id="u_default_test", persona_type="intern", is_minor=False)
+    token = mint_token(
+        user_id="u_default_test",
+        persona_type="intern",
+        is_minor=False,
+        age_set=True,  # bypass A-6 age gate; gate tests live in test_age_gate.py
+    )
     transport = ASGITransport(app=app)
     async with AsyncClient(
         transport=transport,

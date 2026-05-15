@@ -117,7 +117,12 @@ async def client() -> AsyncIterator[AsyncClient]:
     so the fixture mints a token once and attaches it as a default
     header. Per-test calls still win on header conflicts (the existing
     `headers={"Authorization": ...}` overrides keep working)."""
-    token = mint_token(user_id="u_default_test", persona_type="intern", is_minor=False)
+    token = mint_token(
+        user_id="u_default_test",
+        persona_type="intern",
+        is_minor=False,
+        age_set=True,  # bypass A-6 age gate; gate tests live in test_age_gate.py
+    )
     transport = ASGITransport(app=app)
     async with AsyncClient(
         transport=transport,
