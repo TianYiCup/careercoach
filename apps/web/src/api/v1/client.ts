@@ -1,4 +1,5 @@
 import { getAuthToken } from './auth-token';
+import { emitAuthInvalid } from './auth-events';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/v1';
 
@@ -18,6 +19,13 @@ class ApiClient {
 
     if (!res.ok) {
       const error = await res.json().catch(() => ({ message: res.statusText }));
+      // 401 means the backend rejected our bearer token. Emit a
+      // global signal so AuthProvider can wipe the stale token and
+      // route back to the login page. We still throw the ApiError so
+      // local error UI (banners, toasts) can render on the way out.
+      if (res.status === 401) {
+        emitAuthInvalid();
+      }
       throw new ApiError(res.status, error);
     }
 

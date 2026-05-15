@@ -17,9 +17,10 @@
  * push the token into the client — they share the same storage layer.
  */
 
-import { useCallback, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import {
+  AUTH_INVALID_EVENT,
   clearAuthToken,
   clearAuthUser,
   getAuthToken,
@@ -54,6 +55,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     clearAuthUser();
     setState({ token: null, user: null });
   }, []);
+
+  // Listen for the global "auth invalid" event emitted by the api
+  // client / postSSE on a 401. Force-logout when it fires so the UI
+  // routes back to <LoginPage> instead of leaving the user staring at
+  // a half-broken sandbox with a stale token in storage.
+  useEffect(() => {
+    const handler = () => logout();
+    window.addEventListener(AUTH_INVALID_EVENT, handler);
+    return () => window.removeEventListener(AUTH_INVALID_EVENT, handler);
+  }, [logout]);
 
   const value = useMemo<AuthContextValue>(
     () => ({

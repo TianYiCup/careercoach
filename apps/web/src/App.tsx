@@ -41,6 +41,7 @@ function SandboxRoom({
     sendTurn,
     endSession,
     setTone,
+    dismissError,
   } = useSandboxSession()
 
   const [input, setInput] = useState('')
@@ -140,6 +141,27 @@ function SandboxRoom({
           </div>
         </div>
       </header>
+
+      {/* Error banner — surfaces non-401 startSession/endSession failures.
+          401s never reach here; AuthProvider intercepts and routes to LoginPage. */}
+      {state.error && (
+        <div
+          className="relative z-10 flex items-center justify-between px-4 py-2 bg-vivid-orange/15 border-b border-vivid-orange/40"
+          role="alert"
+        >
+          <span className="text-sm text-vivid-orange font-body">
+            {state.error}
+          </span>
+          <button
+            type="button"
+            onClick={dismissError}
+            aria-label="关闭"
+            className="text-vivid-orange/80 hover:text-vivid-orange text-lg leading-none px-2"
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       {/* Turn limit warning */}
       {state.turnsLeft > 0 && state.turnsLeft <= 3 && !state.score && (
