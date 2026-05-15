@@ -109,7 +109,15 @@ def _register_error_handlers(app: FastAPI) -> None:
                 "message": str(exc.detail) if exc.detail is not None else "request failed",
                 "trace_id": trace_id,
             }
-        return JSONResponse(status_code=exc.status_code, content=payload)
+        # Forward `exc.headers` so callers like the rate-limit endpoints
+        # can attach `Retry-After` + `WWW-Authenticate`. FastAPI's
+        # default JSONResponse(headers=None) is a no-op so the wider
+        # surface stays unchanged.
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=payload,
+            headers=exc.headers,
+        )
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:

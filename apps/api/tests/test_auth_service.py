@@ -6,6 +6,11 @@ Hits every branch the route layer cares about:
   * verify with wrong code → InvalidCodeError (and code is consumed)
   * verify with right code → JWT + UserPublic with the upsert'd user
   * second verify same phone → reuses the existing user row
+
+Rate-limit policy (PRD §F1 L2) is exercised in `test_auth_rate_limit.py`
+at the limiter level and `test_auth_service_rate_limit.py` at the
+service level — this file injects a fresh `InMemoryRateLimiter` so the
+`/send` and `/verify` paths under test never trip the cap.
 """
 
 from __future__ import annotations
@@ -13,6 +18,7 @@ from __future__ import annotations
 import pytest
 from app.services.auth.code_store import InMemoryCodeStore
 from app.services.auth.jwt_tokens import decode_token
+from app.services.auth.rate_limit import InMemoryRateLimiter
 from app.services.auth.service import (
     AuthService,
     InvalidCodeError,
@@ -28,6 +34,7 @@ def _service() -> tuple[AuthService, InMemoryCodeStore, InMemoryUserRepository]:
         code_store=store,
         user_repo=repo,
         dispatcher=LoggingDispatcher(),
+        rate_limiter=InMemoryRateLimiter(),
     )
     return svc, store, repo
 
@@ -94,7 +101,13 @@ async def test_verify_with_right_code_returns_token_and_user() -> None:
 
 
 async def test_verify_twice_returns_same_user_id() -> None:
-    """Re-auth (verify after a new send) must NOT create a duplicate user."""
+    """Re-auth (verify after a new send) must NOT create a duplicate user.
+
+    The second `/send` happens via the store directly because the
+    real flow would hit the 60s cooldown — the property under test
+    here is repo-upsert idempotency, not the cooldown."""
+    from datetime import timedelta
+
     svc, store, _ = _service()
 
     await svc.send_code("13800138000")
@@ -102,10 +115,11 @@ async def test_verify_twice_returns_same_user_id() -> None:
     assert code is not None
     first = await svc.verify_code("13800138000", code)
 
-    await svc.send_code("13800138000")
-    code2 = await store.get("13800138000")
-    assert code2 is not None
-    second = await svc.verify_code("13800138000", code2)
+    # Bypass the 60s send-cooldown — see PRD §F1 L2 — by writing a
+    # fresh code straight into the store. We're isolating the user-id
+    # idempotency from the rate-limit policy.
+    await store.set("13800138000", "654321", ttl=timedelta(minutes=5))
+    second = await svc.verify_code("13800138000", "654321")
 
     assert first.user.id == second.user.id
 
