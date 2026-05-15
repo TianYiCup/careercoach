@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from 'react'
-import { apiClient } from '../../api/v1/client'
+import { apiClient, ApiError } from '../../api/v1/client'
 import { postSSE } from '../../api/v1/sse'
 import type {
   CreateSessionRequest,
@@ -37,6 +37,13 @@ export interface SandboxState {
   started: boolean
   /** Current mascot expression (auto-derived from conversation state) */
   mascotExpression: MascotExpression
+  /**
+   * Last user-visible error from startSession / endSession (non-401).
+   * Null when no error is showing. 401s are handled globally by
+   * AuthProvider — we skip them here so we don't double-render the
+   * "session expired" UI.
+   */
+  error: string | null
 }
 
 const INITIAL_STATE: SandboxState = {
@@ -51,6 +58,16 @@ const INITIAL_STATE: SandboxState = {
   score: null,
   started: false,
   mascotExpression: 'confident',
+  error: null,
+}
+
+/**
+ * Was this rejection a 401 we already routed through the global auth
+ * handler? If so the api client has already emitted `auth-invalid` and
+ * AuthProvider is about to unmount us — skip the local banner.
+ */
+function _isAuthError(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 401
 }
 
 /** Derive mascot expression from conversation state — design-spec §3.3 */
@@ -99,18 +116,28 @@ export function useSandboxSession() {
   )
 
   /** Start a new session */
-  const startSession = useCallback(async (req: CreateSessionRequest) => {
-    const res = await apiClient.post<CreateSessionResponse>(
-      '/sessions',
-      req,
-    )
-    setState((s) => ({
-      ...s,
-      sessionId: res.session_id,
-      started: true,
-      messages: [{ role: 'opponent', text: res.opening_line }],
-    }))
-  }, [setState])
+  const startSession = useCallback(
+    async (req: CreateSessionRequest) => {
+      // Wipe any prior error so a retry doesn't show the stale banner.
+      setState((s) => (s.error === null ? s : { ...s, error: null }))
+      try {
+        const res = await apiClient.post<CreateSessionResponse>('/sessions', req)
+        setState((s) => ({
+          ...s,
+          sessionId: res.session_id,
+          started: true,
+          messages: [{ role: 'opponent', text: res.opening_line }],
+        }))
+      } catch (err) {
+        if (_isAuthError(err)) return
+        setState((s) => ({
+          ...s,
+          error: '加载失败，请稍后重试',
+        }))
+      }
+    },
+    [setState],
+  )
 
   /** Send a user message and consume SSE stream */
   const sendTurn = useCallback(
@@ -193,11 +220,30 @@ export function useSandboxSession() {
   const endSession = useCallback(async () => {
     if (!state.sessionId) return
     abortRef.current?.abort()
-    const res = await apiClient.post<EndSessionResponse>(
-      `/sessions/${state.sessionId}/end`,
-    )
-    setState((s) => ({ ...s, score: res, isStreaming: false }))
+    try {
+      const res = await apiClient.post<EndSessionResponse>(
+        `/sessions/${state.sessionId}/end`,
+      )
+      setState((s) => ({ ...s, score: res, isStreaming: false, error: null }))
+    } catch (err) {
+      if (_isAuthError(err)) {
+        // AuthProvider will unmount us; just clear the streaming flag
+        // so we don't leave a phantom typing indicator behind.
+        setState((s) => ({ ...s, isStreaming: false }))
+        return
+      }
+      setState((s) => ({
+        ...s,
+        isStreaming: false,
+        error: '结算失败，可重试或先退出',
+      }))
+    }
   }, [state.sessionId, setState])
+
+  /** Dismiss the error banner — user clicked × on the banner. */
+  const dismissError = useCallback(() => {
+    setState((s) => (s.error === null ? s : { ...s, error: null }))
+  }, [setState])
 
   /** Set active tone */
   const setTone = useCallback(
@@ -220,5 +266,6 @@ export function useSandboxSession() {
     endSession,
     setTone,
     reset,
+    dismissError,
   }
 }
