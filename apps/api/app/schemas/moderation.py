@@ -35,7 +35,14 @@ class ModerationCheckRequest(BaseModel):
         description="Where the content came from. Drives different sensitivity tables.",
         examples=["user_input"],
     )
-    user_id: str = Field(..., description="UUID of acting user (for ModerationEvent audit log).")
+    # Note: there is intentionally no `user_id` field. The acting user is
+    # always derived from the Bearer token by the route layer and passed
+    # to `ModerationService.check()` as a separate argument. Carrying a
+    # self-reported id in the payload was a framing attack vector — a
+    # caller could attribute audit rows to anyone — and now that the
+    # JWT dependency is hard (PR #59), there's no fallback that would
+    # need it. Pydantic v2's default `extra='ignore'` keeps the API
+    # backward-compatible for clients that still send the field.
     session_id: str | None = Field(
         default=None,
         description="Optional — present when content is part of a Session/Turn.",

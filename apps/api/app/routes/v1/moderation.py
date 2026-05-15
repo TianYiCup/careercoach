@@ -41,10 +41,12 @@ async def moderation_check(
     service: ModerationService = Depends(get_moderation_service),
     user_id: str = Depends(get_current_user_id),
 ) -> ModerationCheckResponse:
-    # The JWT-derived id is authoritative for audit. The schema-level
-    # `payload.user_id` field is kept for v0.1 contract stability —
-    # future PR drops it once frontends migrate. Override here so the
-    # ModerationEvent row reflects the actual caller, not whoever the
-    # client claims to be.
-    trusted = payload.model_copy(update={"user_id": user_id})
-    return await service.check(trusted, trace_id=get_request_id(request))
+    # The JWT-derived `user_id` is passed to the service as a separate
+    # argument — the request schema no longer carries it, so there's
+    # nothing to override. Any `user_id` a client still puts in the body
+    # is silently ignored by Pydantic's `extra='ignore'` default.
+    return await service.check(
+        payload,
+        user_id=user_id,
+        trace_id=get_request_id(request),
+    )

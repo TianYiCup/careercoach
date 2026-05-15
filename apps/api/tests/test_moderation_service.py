@@ -33,13 +33,14 @@ class _RecordingSink:
         self,
         *,
         request: ModerationCheckRequest,
+        user_id: str,
         decision: Decision,
         backend_name: str,
         trace_id: str,
     ) -> None:
         self.events.append(
             {
-                "user_id": request.user_id,
+                "user_id": user_id,
                 "session_id": request.session_id,
                 "context": request.context,
                 "content_length": len(request.content),
@@ -92,8 +93,8 @@ async def test_noop_backend_allows_everything() -> None:
         ModerationCheckRequest(
             content="今天天气真好，去吃个面",
             context="user_input",
-            user_id="u_test",
         ),
+        user_id="u_test",
         trace_id="trace_001",
     )
 
@@ -112,9 +113,9 @@ async def test_service_records_audit_event_for_every_call() -> None:
         ModerationCheckRequest(
             content="hello",
             context="user_input",
-            user_id="u_42",
             session_id="ses_99",
         ),
+        user_id="u_42",
         trace_id="trace_xyz",
     )
 
@@ -151,8 +152,8 @@ async def test_service_passes_redirect_resource_through() -> None:
         ModerationCheckRequest(
             content="想从楼上跳下去",
             context="user_input",
-            user_id="u_minor",
         ),
+        user_id="u_minor",
         trace_id="trace_self_harm",
     )
 
@@ -175,8 +176,8 @@ async def test_service_propagates_backend_errors() -> None:
             ModerationCheckRequest(
                 content="hello",
                 context="user_input",
-                user_id="u_test",
             ),
+            user_id="u_test",
             trace_id="trace_fail",
         )
 
@@ -194,8 +195,8 @@ async def test_audit_failure_does_not_block_response() -> None:
         ModerationCheckRequest(
             content="hello",
             context="user_input",
-            user_id="u_test",
         ),
+        user_id="u_test",
         trace_id="trace_db_down",
     )
 

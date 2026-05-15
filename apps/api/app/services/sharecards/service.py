@@ -266,9 +266,9 @@ class ShareCardService:
             ModerationCheckRequest(
                 content=caption,
                 context="user_input",
-                user_id=user_id,
                 session_id=session_id,
             ),
+            user_id=user_id,
             trace_id=trace_id,
         )
         if decision.verdict != "allow":

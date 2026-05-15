@@ -38,13 +38,20 @@ class ModerationService:
         self,
         request: ModerationCheckRequest,
         *,
+        user_id: str,
         trace_id: str,
     ) -> ModerationCheckResponse:
+        # `user_id` is a separate argument (not on `request`) so the
+        # acting user can never be self-reported via the request body —
+        # the route layer derives it from the Bearer token and hands it
+        # in here. See `app.schemas.moderation.ModerationCheckRequest`
+        # for the rationale on the schema-side drop.
         decision = await self._backend.evaluate(request.content, request.context)
 
         try:
             await self._event_sink.record(
                 request=request,
+                user_id=user_id,
                 decision=decision,
                 backend_name=self._backend.name,
                 trace_id=trace_id,
