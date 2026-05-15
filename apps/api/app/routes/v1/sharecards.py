@@ -21,7 +21,7 @@ from app.schemas.sharecards import (
     WeeklyShareCardRequest,
     WrappedShareCardRequest,
 )
-from app.services.auth import get_current_user_id
+from app.services.auth import CurrentUser, get_current_user, get_current_user_id
 from app.services.sharecards import (
     ShareCardCaptionBlockedError,
     ShareCardNotFoundError,
@@ -54,14 +54,19 @@ async def create_session_card(
         examples=["ses_018f3a8b1c2d7e3a"],
     ),
     service: ShareCardService = Depends(get_sharecard_service),
-    user_id: str = Depends(get_current_user_id),
+    current: CurrentUser = Depends(get_current_user),
 ) -> ShareCardResponse:
+    """`is_minor` flows from the JWT so the caption-override moderation
+    check uses the strict tier for under-18 users (PRD §3.0.5 C).
+    Weekly + wrapped don't take user content, so they only need the
+    user id."""
     trace_id = _trace_id(request)
     try:
         return await service.create_session_card(
             session_id=session_id,
             request=payload,
-            user_id=user_id,
+            user_id=current.user_id,
+            is_minor=current.is_minor,
             trace_id=trace_id,
         )
     except ShareCardNotFoundError as exc:

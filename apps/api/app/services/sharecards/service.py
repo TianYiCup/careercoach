@@ -102,6 +102,7 @@ class ShareCardService:
         session_id: str,
         request: SessionShareCardRequest,
         user_id: str,
+        is_minor: bool = False,
         trace_id: str,
     ) -> ShareCardResponse:
         score = await self._score_repo.get(session_id, user_id=user_id)
@@ -112,6 +113,7 @@ class ShareCardService:
             await self._gate_caption(
                 request.user_caption_override,
                 user_id=user_id,
+                is_minor=is_minor,
                 session_id=session_id,
                 trace_id=trace_id,
             )
@@ -259,6 +261,7 @@ class ShareCardService:
         caption: str,
         *,
         user_id: str,
+        is_minor: bool,
         session_id: str,
         trace_id: str,
     ) -> None:
@@ -269,6 +272,7 @@ class ShareCardService:
                 session_id=session_id,
             ),
             user_id=user_id,
+            is_minor=is_minor,
             trace_id=trace_id,
         )
         if decision.verdict != "allow":

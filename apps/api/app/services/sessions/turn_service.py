@@ -158,9 +158,17 @@ class TurnService:
         session_id: str,
         content: str,
         user_id: str,
+        is_minor: bool = False,
         trace_id: str,
     ) -> ValidatedTurn:
-        """Run all checks that should fail with 4xx instead of an SSE error."""
+        """Run all checks that should fail with 4xx instead of an SSE error.
+
+        `is_minor` flows from the JWT through the route layer so the
+        moderation strict tier (PRD §3.0.5 C) fires for under-18 users.
+        Default False keeps the historical behavior for any test that
+        hasn't been updated yet — production routes always pass the
+        JWT-derived value.
+        """
         session = await self._session_repo.get(session_id)
         if session is None:
             raise SessionNotFoundForTurnError(session_id)
@@ -174,6 +182,7 @@ class TurnService:
                 session_id=session_id,
             ),
             user_id=user_id,
+            is_minor=is_minor,
             trace_id=trace_id,
         )
         if decision.verdict == "block":
