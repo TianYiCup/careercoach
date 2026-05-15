@@ -4,9 +4,10 @@ All three card types now resolve to real handlers backed by
 `ShareCardService`. Session is the per-end card; weekly is the
 Mon-Sun digest; wrapped is the annual 6-page recap.
 
-Auth is soft: `get_current_user_id` returns the JWT-derived user id
-when a valid bearer token is present, and the `anonymous` sentinel
-otherwise. The next PR flips this to hard 401.
+Auth is hard: every endpoint here depends on `get_current_user_id`,
+which 401s on a missing or invalid bearer token. The `anonymous`
+sentinel survives only on legacy DB rows minted during the prior
+soft-auth window; the dependency itself can no longer return it.
 """
 
 from __future__ import annotations
