@@ -77,6 +77,43 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /v1/users/me/birth-year:
+    post:
+      tags:
+      - users
+      summary: Set the caller's birth year and re-mint JWT with refreshed minor flag
+      description: 'Server computes `is_minor` from `birth_year` and persists. The
+
+        response carries a fresh JWT so the client''s old token (still
+
+        carrying the previous `is_minor` value) can be discarded — no need
+
+        to wait for the 30-day expiry to roll over.'
+      operationId: update_birth_year_v1_users_me_birth_year_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateBirthYearRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SmsVerifyResponse'
+        '404':
+          description: JWT subject no longer corresponds to a user (deleted account or stale token after
+            a DB wipe).
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - JWT: []
   /v1/scenarios:
     get:
       tags:
@@ -1008,6 +1045,33 @@ components:
       - content
       title: TurnRequest
       description: Body for POST /v1/sessions/{id}/turns. Response is SSE — see route description.
+    UpdateBirthYearRequest:
+      properties:
+        birth_year:
+          type: integer
+          maximum: 2100.0
+          minimum: 1900.0
+          title: Birth Year
+          description: Year of birth as a 4-digit integer. Server derives `is_minor` from this; the client
+            cannot self-declare it.
+          examples:
+          - 2003
+      type: object
+      required:
+      - birth_year
+      title: UpdateBirthYearRequest
+      description: 'Set the caller''s birth year for the minor-mode gate (PRD §1.5).
+
+
+        We collect year only (minimal PII) — a mid-year proxy is enough
+
+        for the `<18` decision. Static bounds catch gross typos
+
+        (`99999`, `0`); years beyond the current year are accepted and
+
+        land the caller on the strict tier (`compute_is_minor` returns
+
+        True for negative ages — fail-closed).'
     UserPublic:
       properties:
         id:

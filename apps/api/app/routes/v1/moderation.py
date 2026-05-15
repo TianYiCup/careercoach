@@ -24,7 +24,7 @@ from fastapi import APIRouter, Depends, Request
 
 from app.middleware import get_request_id
 from app.schemas.moderation import ModerationCheckRequest, ModerationCheckResponse
-from app.services.auth import get_current_user_id
+from app.services.auth import CurrentUser, get_current_user
 from app.services.moderation import ModerationService, get_moderation_service
 
 router = APIRouter(prefix="/moderation", tags=["moderation"])
@@ -39,14 +39,17 @@ async def moderation_check(
     payload: ModerationCheckRequest,
     request: Request,
     service: ModerationService = Depends(get_moderation_service),
-    user_id: str = Depends(get_current_user_id),
+    current: CurrentUser = Depends(get_current_user),
 ) -> ModerationCheckResponse:
-    # The JWT-derived `user_id` is passed to the service as a separate
-    # argument — the request schema no longer carries it, so there's
-    # nothing to override. Any `user_id` a client still puts in the body
-    # is silently ignored by Pydantic's `extra='ignore'` default.
+    # Both `user_id` and `is_minor` come from the JWT, never the body.
+    # The `is_minor` flag drives the strict moderation tier (PRD
+    # §3.0.5 C): minors get `warn` elevated to `block`, while
+    # `redirect` is preserved so a minor in crisis still receives the
+    # help resource. Any `user_id` a client still puts in the body is
+    # silently ignored by Pydantic's `extra='ignore'` default.
     return await service.check(
         payload,
-        user_id=user_id,
+        user_id=current.user_id,
+        is_minor=current.is_minor,
         trace_id=get_request_id(request),
     )

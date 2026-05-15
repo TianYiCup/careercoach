@@ -19,6 +19,8 @@ codegen picks up the requirement automatically.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import structlog
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -39,15 +41,32 @@ ANONYMOUS_USER_ID = "anonymous"
 _bearer_scheme = HTTPBearer(auto_error=False, scheme_name="JWT")
 
 
-async def get_current_user_id(
+@dataclass(frozen=True)
+class CurrentUser:
+    """The subset of JWT claims that route layers care about.
+
+    Carries `is_minor` alongside `user_id` so the minor-mode gate
+    (PRD §3.0.5 C) can be enforced at the route boundary without a
+    DB round-trip. `is_minor` is the value baked into the token at
+    `/auth/sms/verify` time; it stays stable for the JWT lifetime
+    (currently 30 days). Profile updates that change minor status
+    only take effect on the next mint.
+    """
+
+    user_id: str
+    is_minor: bool
+
+
+async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
-) -> str:
-    """Return the user id behind the request, or 401 if no valid token.
+) -> CurrentUser:
+    """Return the authenticated user, or 401 if no valid token.
 
     Three branches:
       * No Authorization header → 401 UNAUTHORIZED
       * Invalid / expired / malformed token → 401 UNAUTHORIZED
-      * Valid token → the `sub` claim
+      * Valid token → a `CurrentUser` carrying the `sub` + `is_minor`
+        claims.
     """
     if credentials is None:
         logger.info("auth_missing", note="rejecting unauthenticated request")
@@ -69,7 +88,51 @@ async def get_current_user_id(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    return payload.user_id
+    return CurrentUser(user_id=payload.user_id, is_minor=payload.is_minor)
 
 
-__all__ = ["ANONYMOUS_USER_ID", "get_current_user_id"]
+async def get_current_user_id(
+    user: CurrentUser = Depends(get_current_user),
+) -> str:
+    """Back-compat dependency: return just the user id. Existing routes
+    (`/sessions`, `/sharecards`, …) keep this signature so they don't
+    need to know about the minor flag yet; routes that DO need it
+    depend on `get_current_user` directly."""
+    return user.user_id
+
+
+async def require_adult(
+    user: CurrentUser = Depends(get_current_user),
+) -> CurrentUser:
+    """Gate for features that PRD §1.5 / §3.0.5 C bans for minors —
+    primarily the 副驾 (live-coaching) flow which involves voice
+    recording. Returns 403 MINOR_FORBIDDEN if the JWT says the caller
+    is under 18.
+
+    No 副驾 routes exist in v0.1 yet, so this dependency currently
+    only has a smoke-test. It's wired now so future copilot endpoints
+    drop into a single import instead of growing ad-hoc inline checks.
+    """
+    if user.is_minor:
+        logger.info(
+            "minor_forbidden",
+            user_id=user.user_id,
+            note="rejecting minor from adult-only feature",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "MINOR_FORBIDDEN",
+                "message": "该功能未对未成年开放",
+            },
+        )
+    return user
+
+
+__all__ = [
+    "ANONYMOUS_USER_ID",
+    "CurrentUser",
+    "get_current_user",
+    "get_current_user_id",
+    "require_adult",
+]

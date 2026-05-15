@@ -16,6 +16,7 @@ REQUIRED_ENDPOINTS: set[tuple[str, str]] = {
     ("get", "/health"),
     ("post", "/v1/auth/sms/send"),
     ("post", "/v1/auth/sms/verify"),
+    ("post", "/v1/users/me/birth-year"),
     ("get", "/v1/scenarios"),
     ("post", "/v1/sessions"),
     ("post", "/v1/sessions/{session_id}/turns"),

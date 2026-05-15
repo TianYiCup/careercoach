@@ -19,13 +19,24 @@ from redis.asyncio import Redis
 
 from app.config import get_settings
 from app.db.session import async_session_factory
+from app.services.auth.age import (
+    MINOR_AGE_THRESHOLD,
+    birthdate_from_year,
+    compute_is_minor,
+)
 from app.services.auth.code_store import (
     CodeStore,
     InMemoryCodeStore,
     RedisCodeStore,
     StoredCode,
 )
-from app.services.auth.dependency import ANONYMOUS_USER_ID, get_current_user_id
+from app.services.auth.dependency import (
+    ANONYMOUS_USER_ID,
+    CurrentUser,
+    get_current_user,
+    get_current_user_id,
+    require_adult,
+)
 from app.services.auth.jwt_tokens import TokenPayload, decode_token, mint_token
 from app.services.auth.rate_limit import (
     MAX_VERIFY_FAILURES,
@@ -40,6 +51,7 @@ from app.services.auth.service import (
     AuthService,
     InvalidCodeError,
     LoggingDispatcher,
+    ProfileUserNotFoundError,
     SmsDispatcher,
 )
 from app.services.auth.user_repository import (
@@ -126,16 +138,19 @@ def _get_rate_limiter() -> RateLimiter:
 __all__ = [
     "ANONYMOUS_USER_ID",
     "MAX_VERIFY_FAILURES",
+    "MINOR_AGE_THRESHOLD",
     "SEND_COOLDOWN",
     "VERIFY_LOCK_DURATION",
     "AuthService",
     "CodeStore",
+    "CurrentUser",
     "InMemoryCodeStore",
     "InMemoryRateLimiter",
     "InMemoryUserRepository",
     "InvalidCodeError",
     "LoggingDispatcher",
     "PostgresUserRepository",
+    "ProfileUserNotFoundError",
     "RateLimited",
     "RateLimiter",
     "RedisCodeStore",
@@ -145,8 +160,12 @@ __all__ = [
     "TokenPayload",
     "UserRecord",
     "UserRepository",
+    "birthdate_from_year",
+    "compute_is_minor",
     "decode_token",
     "get_auth_service",
+    "get_current_user",
     "get_current_user_id",
     "mint_token",
+    "require_adult",
 ]

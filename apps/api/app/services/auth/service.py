@@ -21,12 +21,13 @@ and logged. The `SmsDispatcher` Protocol lives here so the future Aliyun
 from __future__ import annotations
 
 import secrets
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Protocol, runtime_checkable
 
 import structlog
 
 from app.schemas.auth import SmsSendResponse, SmsVerifyResponse, UserPublic
+from app.services.auth.age import birthdate_from_year, compute_is_minor
 from app.services.auth.code_store import CodeStore
 from app.services.auth.jwt_tokens import mint_token
 from app.services.auth.rate_limit import (
@@ -56,6 +57,11 @@ _DEFAULT_NICKNAME_TEMPLATE = "K 学员 {tail}"
 
 class InvalidCodeError(RuntimeError):
     """Route maps to 400 — supplied code doesn't match or has expired."""
+
+
+class ProfileUserNotFoundError(RuntimeError):
+    """Route maps to 404 — JWT subject doesn't correspond to any user
+    (deleted account, stale token after DB wipe, malformed id)."""
 
 
 @runtime_checkable
@@ -218,6 +224,60 @@ class AuthService:
             is_minor=False,
         )
 
+    async def update_birth_year(
+        self,
+        user_id: str,
+        *,
+        birth_year: int,
+        today: datetime | None = None,
+    ) -> SmsVerifyResponse:
+        """Set the caller's `birthdate` (proxied from `birth_year`) and
+        mint a fresh JWT carrying the recomputed `is_minor` flag.
+
+        Returns a `SmsVerifyResponse` shape so the client doesn't need
+        a second schema: same `{user, token}` envelope as the SMS verify
+        flow, just minted from a profile-update trigger rather than a
+        code-verify trigger.
+
+        Raises `ProfileUserNotFoundError` if the JWT subject doesn't
+        match any user — the route maps that to 404. This shouldn't
+        happen for a valid token (sub came from our own user repo) but
+        a deleted user or a stale token from a wiped DB would land
+        here and we don't want a 500.
+        """
+        anchor = today or datetime.now(UTC)
+        birthdate = birthdate_from_year(birth_year)
+        is_minor = compute_is_minor(birthdate, anchor.date())
+        try:
+            record = await self._user_repo.update_birthdate(
+                user_id,
+                birthdate=birthdate,
+                is_minor=is_minor,
+            )
+        except KeyError as exc:
+            raise ProfileUserNotFoundError(user_id) from exc
+
+        token = mint_token(
+            user_id=record.user_id,
+            persona_type=record.persona_type,
+            is_minor=record.is_minor,
+        )
+        logger.info(
+            "user_birth_year_updated",
+            user_id=_mask_user_id(record.user_id),
+            birth_year=birth_year,
+            is_minor=record.is_minor,
+        )
+        return SmsVerifyResponse(
+            token=token,
+            user=UserPublic(
+                id=record.user_id,
+                nickname=record.nickname,
+                persona_type=record.persona_type,
+                is_minor=record.is_minor,
+            ),
+        )
+
 
 def _generate_code() -> str:
     """Six-digit zero-padded code. `secrets.randbelow` is the
@@ -232,9 +292,17 @@ def _mask_phone(phone: str) -> str:
     return f"{phone[:3]}****{phone[-4:]}"
 
 
+def _mask_user_id(user_id: str) -> str:
+    """Truncate the UUID body to first 8 chars for log discipline."""
+    if len(user_id) <= 10:
+        return user_id
+    return f"{user_id[:10]}…"
+
+
 __all__ = [
     "AuthService",
     "InvalidCodeError",
     "LoggingDispatcher",
+    "ProfileUserNotFoundError",
     "SmsDispatcher",
 ]
