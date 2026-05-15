@@ -17,10 +17,12 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import pytest
 from app.main import app
 from app.services.auth import mint_token
+from app.services.auth.quiet_hours import _now_provider
 from app.services.moderation import (
     Decision,
     LogOnlyEventSink,
@@ -41,6 +43,11 @@ from app.services.sharecards.session_score import (
 from httpx import ASGITransport, AsyncClient
 
 from tests.test_sessions_turn_service import _ScriptedProvider
+
+# Pin the clock to 06:00 UTC = 14:00 Asia/Shanghai, solidly outside
+# the A-7 quiet-hours window (22:00-08:00 SH), so these tests don't
+# intermittently fail at certain times of day.
+_DAYTIME = datetime(2026, 5, 15, 6, 0, tzinfo=UTC)
 
 
 @dataclass
@@ -93,6 +100,10 @@ def warn_services() -> Iterator[None]:
     app.dependency_overrides[get_session_score_repository] = lambda: (
         InMemorySessionScoreRepository()
     )
+    # Pin the clock outside minor quiet hours (A-7). These tests
+    # exercise content moderation behavior, not the quiet-hours gate
+    # — that's in test_minor_quiet_hours.py.
+    app.dependency_overrides[_now_provider] = lambda: _DAYTIME
     try:
         yield
     finally:
@@ -100,6 +111,7 @@ def warn_services() -> Iterator[None]:
             get_session_service,
             get_turn_service,
             get_session_score_repository,
+            _now_provider,
         ):
             app.dependency_overrides.pop(dep, None)
 
