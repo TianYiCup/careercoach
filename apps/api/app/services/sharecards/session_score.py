@@ -116,9 +116,9 @@ class PostgresSessionScoreRepository:
     cached score instead of crashing on a PK conflict.
 
     `list_for_user` filters by `created_at` window for the weekly /
-    wrapped aggregators; user_id is currently ignored (anon mode) but
-    accepted on the signature so callers don't change when hard auth
-    flips and we add a user_id column to the table.
+    wrapped aggregators; user_id is currently ignored (the table has
+    no `user_id` column yet) but accepted on the signature so callers
+    don't change when we add the column and start scoping per user.
     """
 
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
@@ -156,7 +156,7 @@ class PostgresSessionScoreRepository:
         since: datetime | None = None,
         until: datetime | None = None,
     ) -> list[SessionCardData]:
-        _ = user_id  # v0 ignores user scoping; column lands with hard auth
+        _ = user_id  # v0 ignores user scoping; column lands in a later migration
         stmt = select(SessionScoreRow)
         if since is not None:
             stmt = stmt.where(SessionScoreRow.created_at >= since)

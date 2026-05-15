@@ -37,8 +37,8 @@ class Settings(BaseSettings):
     # `CORS_ALLOWED_ORIGINS` to the real frontend domain(s).
     #
     # Wildcard `*` is deliberately NOT supported here because we send
-    # `Authorization` (Bearer JWT once hard auth flips) and the CORS
-    # spec forbids credentialed wildcard. Be explicit.
+    # `Authorization` (Bearer JWT — hard auth is on) and the CORS spec
+    # forbids credentialed wildcard. Be explicit.
     cors_allowed_origins: str = Field(
         default=(
             "http://localhost:5173,http://localhost:8000,tauri://localhost,https://tauri.localhost"

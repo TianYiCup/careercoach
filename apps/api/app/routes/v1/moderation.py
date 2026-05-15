@@ -11,11 +11,11 @@ without touching this file.
 
 Auth posture
 ------------
-Same soft auth as sessions / sharecards: a valid Bearer token gives
-the real user id, anything else falls back to `"anonymous"`. The
-audit row always carries the JWT-derived id — never the payload's
-self-reported one — so a caller can't frame another user by stuffing
-their id into the request body.
+Hard auth: `get_current_user_id` returns the JWT-derived user id on a
+valid Bearer token and raises 401 UNAUTHORIZED otherwise. The audit
+row is always written with that JWT-derived id (passed to the service
+as a separate kwarg, never via the request body) so a caller can't
+frame another user.
 """
 
 from __future__ import annotations

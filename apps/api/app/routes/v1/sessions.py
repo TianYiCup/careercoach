@@ -4,10 +4,10 @@ PR 4a wired create + end to a real `SessionService`. PR 4b adds the
 SSE-driven `/turns` endpoint backed by `TurnService`. PR 4c replaced
 `/end`'s stub Score with a TurnRepository-backed aggregator.
 
-The auth boundary is soft: `get_current_user_id` returns the JWT-
-derived user id when a valid bearer token is present, and the
-`anonymous` sentinel otherwise. The next PR flips this to hard 401
-once the frontend ships its bearer-token client.
+Auth boundary: `get_current_user_id` is the hard dependency — every
+endpoint here 401s on a missing or invalid bearer token. Legacy rows
+written during the soft-auth window still carry the `anonymous`
+sentinel as a *data* value, but no live request can produce one.
 """
 
 from __future__ import annotations
