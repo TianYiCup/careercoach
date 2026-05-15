@@ -92,6 +92,9 @@ async def client(
         user_id=_DEFAULT_TEST_USER_ID,
         persona_type="intern",
         is_minor=False,
+        # age_set so the compulsory age gate (PRD §1.5) doesn't fire —
+        # these tests exercise session behavior, not the gate itself.
+        age_set=True,
     )
     transport = ASGITransport(app=app)
     async with AsyncClient(
@@ -207,7 +210,7 @@ async def test_create_session_with_valid_bearer_token_uses_jwt_user_id(
     from app.services.auth import mint_token
     from app.services.sessions import get_session_service
 
-    token = mint_token(user_id="u_route_test", persona_type="intern", is_minor=False)
+    token = mint_token(user_id="u_route_test", persona_type="intern", is_minor=False, age_set=True)
     resp = await client.post(
         "/v1/sessions",
         headers={"Authorization": f"Bearer {token}"},

@@ -25,10 +25,15 @@ _DEFAULT_TEST_USER_ID = "u_default_test"
 
 
 def _default_auth_headers() -> dict[str, str]:
+    # `age_set=True` so the compulsory age gate (PRD §1.5) doesn't fire
+    # for these tests — they exercise content-handling behavior, not
+    # the gate itself. Negative-branch (age-gate) tests live in
+    # test_age_gate.py.
     token = mint_token(
         user_id=_DEFAULT_TEST_USER_ID,
         persona_type="intern",
         is_minor=False,
+        age_set=True,
     )
     return {"Authorization": f"Bearer {token}"}
 
@@ -214,7 +219,7 @@ async def test_audit_row_uses_jwt_user_id_when_bearer_token_present(
     from app.services.auth import mint_token
 
     client, sink = capturing_client
-    token = mint_token(user_id="u_real_caller", persona_type="intern", is_minor=False)
+    token = mint_token(user_id="u_real_caller", persona_type="intern", is_minor=False, age_set=True)
 
     resp = await client.post(
         "/v1/moderation/check",
@@ -245,7 +250,7 @@ async def test_extra_user_id_in_body_is_ignored_not_attributed(
     from app.services.auth import mint_token
 
     client, sink = capturing_client
-    token = mint_token(user_id="u_real_caller", persona_type="intern", is_minor=False)
+    token = mint_token(user_id="u_real_caller", persona_type="intern", is_minor=False, age_set=True)
 
     resp = await client.post(
         "/v1/moderation/check",

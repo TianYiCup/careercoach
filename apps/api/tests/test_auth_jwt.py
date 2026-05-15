@@ -76,3 +76,56 @@ def test_is_minor_flag_round_trips_as_bool() -> None:
     payload = decode_token(minor_token)
     assert payload is not None
     assert payload.is_minor is True
+
+
+def test_age_set_defaults_to_false_on_mint() -> None:
+    """Fail-closed: a caller that forgets to pass `age_set` mints
+    tokens that trip the compulsory age gate. Pinned so a future
+    refactor doesn't quietly flip the default to True."""
+    token = mint_token(user_id="u_x", persona_type="intern", is_minor=False)
+    payload = decode_token(token)
+    assert payload is not None
+    assert payload.age_set is False
+
+
+def test_age_set_true_round_trips() -> None:
+    token = mint_token(
+        user_id="u_x",
+        persona_type="intern",
+        is_minor=False,
+        age_set=True,
+    )
+    payload = decode_token(token)
+    assert payload is not None
+    assert payload.age_set is True
+
+
+def test_decode_treats_missing_age_set_claim_as_false() -> None:
+    """Defense for tokens minted before the age-gate ship: when the
+    claim is absent, `decode_token` must materialise `age_set=False`
+    so the gate fires and prompts a re-login (which mints a current
+    token).
+    """
+    from app.config import get_settings
+    from jose import jwt
+
+    # Hand-mint a token missing the `age_set` claim entirely.
+    now = datetime.now(UTC)
+    legacy_claims = {
+        "iss": "careercoach-api",
+        "sub": "u_legacy",
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(days=1)).timestamp()),
+        "persona_type": "intern",
+        "is_minor": False,
+        # NOTE: no `age_set` key — simulating a pre-A-6 token.
+    }
+    legacy_token = jwt.encode(
+        legacy_claims,
+        get_settings().jwt_secret.get_secret_value(),
+        algorithm="HS256",
+    )
+
+    payload = decode_token(legacy_token)
+    assert payload is not None
+    assert payload.age_set is False

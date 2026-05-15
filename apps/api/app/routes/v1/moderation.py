@@ -24,7 +24,7 @@ from fastapi import APIRouter, Depends, Request
 
 from app.middleware import get_request_id
 from app.schemas.moderation import ModerationCheckRequest, ModerationCheckResponse
-from app.services.auth import CurrentUser, get_current_user
+from app.services.auth import CurrentUser, require_age_set
 from app.services.moderation import ModerationService, get_moderation_service
 
 router = APIRouter(prefix="/moderation", tags=["moderation"])
@@ -39,7 +39,7 @@ async def moderation_check(
     payload: ModerationCheckRequest,
     request: Request,
     service: ModerationService = Depends(get_moderation_service),
-    current: CurrentUser = Depends(get_current_user),
+    current: CurrentUser = Depends(require_age_set),
 ) -> ModerationCheckResponse:
     # Both `user_id` and `is_minor` come from the JWT, never the body.
     # The `is_minor` flag drives the strict moderation tier (PRD

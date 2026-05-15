@@ -165,6 +165,13 @@ paths:
       tags:
       - sessions
       summary: Create a new sandbox session
+      description: 'Starting a session means about to send user content into the
+
+        LLM, so the compulsory age gate fires here. End-session is NOT
+
+        gated — sessions already started must be end-able even if the
+
+        user''s age claim somehow regresses.'
       operationId: create_session_v1_sessions_post
       requestBody:
         content:
@@ -196,7 +203,18 @@ paths:
 
         responses (so the client''s fetch().catch() handler sees them); only
 
-        once validation passes do we open the SSE stream.'
+        once validation passes do we open the SSE stream.
+
+
+        `current.is_minor` flows into the turn''s moderation check so the
+
+        strict tier (PRD §3.0.5 C) fires for under-18 users — `warn` from
+
+        the backend is elevated to a `block` verdict, which the route then
+
+        surfaces as USER_INPUT_BLOCKED instead of letting an edge-case
+
+        message through to the LLM.'
       operationId: post_turn_v1_sessions__session_id__turns_post
       security:
       - JWT: []
@@ -304,6 +322,15 @@ paths:
       tags:
       - sharecards
       summary: Render a 9:16 share card for a finished sandbox session
+      description: '`is_minor` flows from the JWT so the caption-override moderation
+
+        check uses the strict tier for under-18 users (PRD §3.0.5 C).
+
+        The compulsory age gate fires first — sharing a card is committing
+
+        to a public artifact, so we require the user to declare age before
+
+        minting any sharecard.'
       operationId: create_session_card_v1_sharecards_session__session_id__post
       security:
       - JWT: []

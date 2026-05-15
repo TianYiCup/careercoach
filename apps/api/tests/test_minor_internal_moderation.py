@@ -141,7 +141,9 @@ async def test_minor_jwt_blocks_warn_content_on_turns(
     a minor JWT must elevate to `block` and surface as
     USER_INPUT_BLOCKED, not silently pass through to the LLM."""
     _ = warn_services
-    minor_token = mint_token(user_id="u_minor", persona_type="in_school", is_minor=True)
+    minor_token = mint_token(
+        user_id="u_minor", persona_type="in_school", is_minor=True, age_set=True
+    )
     session_id = await _create_session(client, token=minor_token)
 
     resp = await client.post(
@@ -163,7 +165,7 @@ async def test_adult_jwt_lets_warn_content_through_on_turns(
     be elevated — confirms the strict tier is gated on `is_minor`
     and not just always-on."""
     _ = warn_services
-    adult_token = mint_token(user_id="u_adult", persona_type="intern", is_minor=False)
+    adult_token = mint_token(user_id="u_adult", persona_type="intern", is_minor=False, age_set=True)
     session_id = await _create_session(client, token=adult_token)
 
     resp = await client.post(
@@ -231,7 +233,9 @@ async def test_minor_jwt_blocks_warn_caption_on_session_card(
     app.dependency_overrides[get_sharecard_service] = lambda: service
 
     try:
-        minor_token = mint_token(user_id="u_minor", persona_type="in_school", is_minor=True)
+        minor_token = mint_token(
+            user_id="u_minor", persona_type="in_school", is_minor=True, age_set=True
+        )
         resp = await client.post(
             "/v1/sharecards/session/ses_minor_test",
             headers=_bearer(minor_token),

@@ -25,7 +25,7 @@ from app.schemas.sessions import (
     TurnRequest,
 )
 from app.schemas.sse import SseEventEnvelope
-from app.services.auth import CurrentUser, get_current_user, get_current_user_id
+from app.services.auth import CurrentUser, get_current_user_id, require_age_set
 from app.services.sessions import (
     SessionAlreadyEndedError,
     SessionEndedForTurnError,
@@ -50,9 +50,13 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 async def create_session(
     payload: CreateSessionRequest,
     service: SessionService = Depends(get_session_service),
-    user_id: str = Depends(get_current_user_id),
+    current: CurrentUser = Depends(require_age_set),
 ) -> CreateSessionResponse:
-    return await service.create_session(payload, user_id=user_id)
+    """Starting a session means about to send user content into the
+    LLM, so the compulsory age gate fires here. End-session is NOT
+    gated — sessions already started must be end-able even if the
+    user's age claim somehow regresses."""
+    return await service.create_session(payload, user_id=current.user_id)
 
 
 @router.post(
@@ -80,7 +84,7 @@ async def post_turn(
     request: Request,
     session_id: str = Path(..., description="Session id from POST /v1/sessions."),
     service: TurnService = Depends(get_turn_service),
-    current: CurrentUser = Depends(get_current_user),
+    current: CurrentUser = Depends(require_age_set),
 ) -> StreamingResponse:
     """Validate-then-stream: typed 4xx errors come back as normal HTTP
     responses (so the client's fetch().catch() handler sees them); only

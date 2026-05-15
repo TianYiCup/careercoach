@@ -45,16 +45,22 @@ _bearer_scheme = HTTPBearer(auto_error=False, scheme_name="JWT")
 class CurrentUser:
     """The subset of JWT claims that route layers care about.
 
-    Carries `is_minor` alongside `user_id` so the minor-mode gate
-    (PRD §3.0.5 C) can be enforced at the route boundary without a
-    DB round-trip. `is_minor` is the value baked into the token at
-    `/auth/sms/verify` time; it stays stable for the JWT lifetime
-    (currently 30 days). Profile updates that change minor status
-    only take effect on the next mint.
+    * `is_minor` — drives the moderation strict tier (PRD §3.0.5 C).
+    * `age_set`  — has the user declared `birth_year` yet? Drives the
+                   compulsory age gate (PRD §1.5). Routes that handle
+                   content depend on `require_age_set` to refuse
+                   service until this is True.
+
+    All three values are baked into the token at mint time and stay
+    stable for the JWT lifetime (currently 30 days). Profile changes
+    that flip either flag only take effect on the next mint —
+    `update_birth_year` re-mints, so a user who sets their age sees
+    the gate stop firing on their very next request.
     """
 
     user_id: str
     is_minor: bool
+    age_set: bool
 
 
 async def get_current_user(
@@ -88,7 +94,11 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    return CurrentUser(user_id=payload.user_id, is_minor=payload.is_minor)
+    return CurrentUser(
+        user_id=payload.user_id,
+        is_minor=payload.is_minor,
+        age_set=payload.age_set,
+    )
 
 
 async def get_current_user_id(
@@ -129,10 +139,48 @@ async def require_adult(
     return user
 
 
+async def require_age_set(
+    user: CurrentUser = Depends(get_current_user),
+) -> CurrentUser:
+    """Compulsory age gate (PRD §1.5). Block content-handling routes
+    until the user has declared `birth_year` via `POST /v1/users/me/
+    birth-year`. Returns 403 AGE_REQUIRED if the JWT carries
+    `age_set=False`.
+
+    Why we don't auto-redirect: the client decides whether to surface
+    an in-app age form, a hard wall, or a degraded read-only mode.
+    Server-side we just refuse the request with a stable error code
+    so the frontend has one place to handle it.
+
+    Endpoints intentionally NOT gated:
+      * `/v1/auth/*`            — that's how the user logs in
+      * `/v1/users/me/birth-year` — that's how the user clears the gate
+      * `/v1/scenarios` GET     — browsing the catalog is fine
+      * `/v1/sessions/{id}/end` — already-started sessions must be
+                                   end-able, otherwise an age set
+                                   change mid-session strands the row
+    """
+    if not user.age_set:
+        logger.info(
+            "age_required",
+            user_id=user.user_id,
+            note="rejecting content-handling request until birth_year is declared",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "AGE_REQUIRED",
+                "message": "请先在「我的」中填写出生年份后再使用",
+            },
+        )
+    return user
+
+
 __all__ = [
     "ANONYMOUS_USER_ID",
     "CurrentUser",
     "get_current_user",
     "get_current_user_id",
     "require_adult",
+    "require_age_set",
 ]
