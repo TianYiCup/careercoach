@@ -1,5 +1,6 @@
 import { View, Text } from '@tarojs/components'
 import { Button } from '@nutui/nutui-react-taro'
+import Taro from '@tarojs/taro'
 import './index.scss'
 
 /** 首页 — 设计还原 design-spec §9.2
@@ -42,7 +43,11 @@ export default function Index() {
         <Text className="home-section-title">教练 K 觉得你该练这个 👇</Text>
         <View className="home-scenarios">
           {SCENARIOS.map((s) => (
-            <View key={s.title} className="home-scenario-card">
+            <View
+              key={s.title}
+              className="home-scenario-card"
+              onClick={() => Taro.navigateTo({ url: '/pages/sandbox/index' })}
+            >
               <Text className="home-scenario-icon">{s.icon}</Text>
               <Text className="home-scenario-title">{s.title}</Text>
               <Text className="home-scenario-desc">{s.desc}</Text>
@@ -55,7 +60,10 @@ export default function Index() {
       {/* ── 继续练习 ───────────────── */}
       <View className="home-continue">
         <Text className="home-continue-label">上次没练完...</Text>
-        <View className="home-continue-card">
+        <View
+          className="home-continue-card"
+          onClick={() => Taro.navigateTo({ url: '/pages/sandbox/index' })}
+        >
           <Text className="home-continue-title">和领导提涨薪 · 进度 60%</Text>
           <Button size="small" type="primary" className="home-continue-btn">
             继续 ▶
