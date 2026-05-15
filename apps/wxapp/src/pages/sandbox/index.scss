@@ -1,0 +1,435 @@
+/* 沙盘对练房 — 小程序文字版样式
+ * 适配限制：no backdrop-filter / no Rive / no framer-motion
+ * GlassCard → rgba 半透明 + 1px border 描边
+ * 尺寸单位用 rpx 适配不同屏幕
+ */
+
+.sandbox {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background-color: #0f0e1a;
+  color: #f5f0ff;
+}
+
+/* ── Header ─────────────────── */
+
+.sandbox-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20rpx 32rpx;
+  background: rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.sandbox-header-left {
+  flex-shrink: 0;
+}
+
+.sandbox-header-back {
+  font-size: 28rpx;
+  color: #a8a3c2;
+}
+
+.sandbox-header-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.sandbox-header-name {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #f5f0ff;
+}
+
+.sandbox-header-scene {
+  font-size: 22rpx;
+  color: #7c7799;
+}
+
+.sandbox-header-right {
+  flex-shrink: 0;
+}
+
+.sandbox-header-turns {
+  font-size: 24rpx;
+  color: #a8a3c2;
+}
+
+/* ── Progress bar ───────────── */
+
+.sandbox-progress {
+  height: 4rpx;
+  background: #252246;
+}
+
+.sandbox-progress-fill {
+  height: 100%;
+  transition: width 0.3s ease;
+  border-radius: 2rpx;
+}
+
+/* ── Turn limit warning ─────── */
+
+.sandbox-warning {
+  padding: 12rpx 32rpx;
+  background: rgba(255, 107, 53, 0.1);
+  border-bottom: 1px solid rgba(255, 107, 53, 0.2);
+  text-align: center;
+}
+
+.sandbox-warning-text {
+  font-size: 24rpx;
+  color: #ff6b35;
+}
+
+/* ── Chat area ──────────────── */
+
+.sandbox-chat {
+  flex: 1;
+  padding: 24rpx 32rpx;
+  overflow-y: auto;
+}
+
+/* ── Bubble layout ──────────── */
+
+.sandbox-bubble-wrap {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 32rpx;
+  max-width: 80%;
+}
+
+.sandbox-bubble-wrap--left {
+  align-self: flex-start;
+}
+
+.sandbox-bubble-wrap--right {
+  align-self: flex-end;
+  flex-direction: row-reverse;
+}
+
+/* ── Avatar ─────────────────── */
+
+.sandbox-avatar {
+  width: 64rpx;
+  height: 64rpx;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 28rpx;
+}
+
+.sandbox-avatar--opponent {
+  background: #252246;
+  margin-right: 16rpx;
+}
+
+.sandbox-avatar--user {
+  background: linear-gradient(135deg, #6c4dff, #b0ff3c);
+  margin-left: 16rpx;
+  color: white;
+  font-size: 24rpx;
+  font-weight: 600;
+}
+
+/* ── Chat bubbles ───────────── */
+
+.sandbox-bubble {
+  padding: 24rpx 28rpx;
+  border-radius: 20rpx;
+  max-width: 600rpx;
+  word-break: break-all;
+}
+
+.sandbox-bubble--opponent {
+  background: rgba(26, 24, 46, 0.9);
+  border: 1px solid rgba(108, 77, 255, 0.12);
+  border-top-left-radius: 4rpx;
+}
+
+.sandbox-bubble--user {
+  background: linear-gradient(135deg, #6c4dff, #8b6fff);
+  border-top-right-radius: 4rpx;
+}
+
+.sandbox-bubble-text {
+  font-size: 28rpx;
+  color: #f5f0ff;
+  line-height: 1.6;
+}
+
+.sandbox-bubble-text--user {
+  color: #ffffff;
+}
+
+/* ── Streaming cursor ────────── */
+
+.sandbox-cursor {
+  color: #6c4dff;
+  animation: blink 1s infinite;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* ── Typing indicator ────────── */
+
+.sandbox-typing {
+  display: flex;
+  gap: 8rpx;
+  padding: 4rpx 0;
+}
+
+.sandbox-typing-dot {
+  width: 16rpx;
+  height: 16rpx;
+  border-radius: 50%;
+  background: #7c7799;
+  animation: typing-bounce 1.4s infinite;
+}
+
+.sandbox-typing-dot--2 {
+  animation-delay: 0.2s;
+}
+
+.sandbox-typing-dot--3 {
+  animation-delay: 0.4s;
+}
+
+@keyframes typing-bounce {
+  0%, 60%, 100% { transform: translateY(0); }
+  30% { transform: translateY(-12rpx); }
+}
+
+/* ── Coach hint card ──────────
+ * GlassCard 降级: rgba + border, 无 backdrop-filter
+ */
+
+.sandbox-hint-card {
+  margin: 32rpx 0;
+  padding: 28rpx;
+  background: rgba(26, 24, 46, 0.8);
+  border: 1px solid rgba(108, 77, 255, 0.25);
+  border-radius: 20rpx;
+}
+
+.sandbox-hint-label {
+  font-size: 24rpx;
+  color: #b8a7ff;
+  margin-bottom: 16rpx;
+  display: block;
+}
+
+.sandbox-hint-text {
+  font-size: 28rpx;
+  color: #f5f0ff;
+  line-height: 1.6;
+  display: block;
+  margin-bottom: 24rpx;
+}
+
+.sandbox-hint-tones {
+  display: flex;
+  gap: 16rpx;
+}
+
+.sandbox-tone-btn {
+  padding: 12rpx 28rpx;
+  border-radius: 999rpx;
+  background: rgba(108, 77, 255, 0.12);
+  border: 1px solid rgba(108, 77, 255, 0.25);
+  font-size: 26rpx;
+  color: #b8a7ff;
+}
+
+.sandbox-tone-btn--active-safe {
+  background: rgba(60, 255, 232, 0.15);
+  border-color: rgba(60, 255, 232, 0.5);
+  color: #3cffe8;
+}
+
+.sandbox-tone-btn--active-aggro {
+  background: rgba(255, 107, 53, 0.15);
+  border-color: rgba(255, 107, 53, 0.5);
+  color: #ff6b35;
+}
+
+.sandbox-tone-btn--active-fun {
+  background: rgba(255, 243, 60, 0.15);
+  border-color: rgba(255, 243, 60, 0.5);
+  color: #fff33c;
+}
+
+/* ── Score card ─────────────── */
+
+.sandbox-score-card {
+  margin: 48rpx auto;
+  padding: 48rpx;
+  background: rgba(26, 24, 46, 0.9);
+  border: 1px solid rgba(108, 77, 255, 0.2);
+  border-radius: 24rpx;
+  text-align: center;
+  max-width: 560rpx;
+}
+
+.sandbox-score-result {
+  font-size: 56rpx;
+  font-weight: 700;
+  color: #6c4dff;
+  display: block;
+  margin-bottom: 24rpx;
+}
+
+.sandbox-score-highlight {
+  font-size: 28rpx;
+  color: #a8a3c2;
+  line-height: 1.6;
+  display: block;
+  margin-bottom: 32rpx;
+}
+
+.sandbox-score-btn {
+  padding: 20rpx 48rpx;
+  background: linear-gradient(135deg, #6c4dff, #8b6fff);
+  border-radius: 999rpx;
+  display: inline-block;
+}
+
+.sandbox-score-btn-text {
+  color: white;
+  font-size: 28rpx;
+  font-weight: 600;
+}
+
+/* ── End session button ──────── */
+
+.sandbox-end-btn {
+  margin: 32rpx auto;
+  padding: 16rpx 40rpx;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999rpx;
+  text-align: center;
+  width: fit-content;
+}
+
+.sandbox-end-btn-text {
+  font-size: 26rpx;
+  color: #a8a3c2;
+}
+
+/* ── Input bar ──────────────── */
+
+.sandbox-input-bar {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  padding: 20rpx 32rpx;
+  background: rgba(255, 255, 255, 0.05);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.sandbox-input {
+  flex: 1;
+  height: 72rpx;
+  padding: 0 28rpx;
+  background: #1a1830;
+  border: 1px solid rgba(108, 77, 255, 0.2);
+  border-radius: 999rpx;
+  color: #f5f0ff;
+  font-size: 28rpx;
+}
+
+.sandbox-input-placeholder {
+  color: #7c7799;
+  font-size: 28rpx;
+}
+
+.sandbox-send-btn {
+  width: 72rpx;
+  height: 72rpx;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #6c4dff, #8b6fff);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.sandbox-send-btn--disabled {
+  opacity: 0.4;
+}
+
+.sandbox-send-btn-text {
+  font-size: 32rpx;
+}
+
+/* ── Exit confirm modal ──────── */
+
+.sandbox-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(15, 11, 26, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+}
+
+.sandbox-modal {
+  width: 580rpx;
+  padding: 48rpx;
+  background: rgba(26, 24, 46, 0.95);
+  border: 1px solid rgba(108, 77, 255, 0.2);
+  border-radius: 24rpx;
+  text-align: center;
+}
+
+.sandbox-modal-title {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #f5f0ff;
+  display: block;
+  margin-bottom: 16rpx;
+}
+
+.sandbox-modal-desc {
+  font-size: 26rpx;
+  color: #a8a3c2;
+  display: block;
+  margin-bottom: 32rpx;
+}
+
+.sandbox-modal-actions {
+  display: flex;
+  gap: 24rpx;
+  justify-content: center;
+}
+
+.sandbox-modal-cancel {
+  padding: 16rpx 40rpx;
+  background: #252246;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999rpx;
+  font-size: 28rpx;
+  color: #f5f0ff;
+}
+
+.sandbox-modal-confirm {
+  padding: 16rpx 40rpx;
+  background: rgba(255, 107, 53, 0.15);
+  border: 1px solid rgba(255, 107, 53, 0.4);
+  border-radius: 999rpx;
+  font-size: 28rpx;
+  color: #ff6b35;
+}
