@@ -20,12 +20,14 @@ codegen picks up the requirement automatically.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 import structlog
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.services.auth.jwt_tokens import TokenPayload, decode_token
+from app.services.auth.quiet_hours import _now_provider, is_in_minor_quiet_hours
 
 logger = structlog.get_logger(__name__)
 
@@ -176,9 +178,46 @@ async def require_age_set(
     return user
 
 
+async def block_minor_quiet_hours(
+    user: CurrentUser = Depends(require_age_set),
+    now: datetime = Depends(_now_provider),
+) -> CurrentUser:
+    """Anti-addiction gate (PRD §1.5 防沉迷). Reject engagement
+    endpoints (`POST /sessions`, `POST /turns`) for minor JWTs during
+    Asia/Shanghai 22:00–08:00. Adults pass through unchanged.
+
+    Chains AFTER `require_age_set` so:
+      * no token              → 401 UNAUTHORIZED (`get_current_user`)
+      * token but age unset   → 403 AGE_REQUIRED (`require_age_set`)
+      * token, age set, minor, in quiet hours → 403 MINOR_QUIET_HOURS
+      * everything else       → pass
+
+    Note: the gate fires per-request, not per-session. A minor who
+    enters a session at 21:55 and posts a turn at 22:05 gets blocked
+    on the second call. That's intentional — the alternative ("once
+    inside you finish") makes the policy easy to game by starting a
+    session right before bedtime.
+    """
+    if user.is_minor and is_in_minor_quiet_hours(now):
+        logger.info(
+            "minor_quiet_hours_blocked",
+            user_id=user.user_id,
+            note="rejecting minor engagement during 22:00–08:00 Asia/Shanghai",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "MINOR_QUIET_HOURS",
+                "message": "未成年模式已开启夜间静默（22:00–次日 08:00），明早再来",
+            },
+        )
+    return user
+
+
 __all__ = [
     "ANONYMOUS_USER_ID",
     "CurrentUser",
+    "block_minor_quiet_hours",
     "get_current_user",
     "get_current_user_id",
     "require_adult",

@@ -33,12 +33,18 @@ from app.services.auth.code_store import (
 from app.services.auth.dependency import (
     ANONYMOUS_USER_ID,
     CurrentUser,
+    block_minor_quiet_hours,
     get_current_user,
     get_current_user_id,
     require_adult,
     require_age_set,
 )
 from app.services.auth.jwt_tokens import TokenPayload, decode_token, mint_token
+from app.services.auth.quiet_hours import (
+    QUIET_END_HOUR,
+    QUIET_START_HOUR,
+    is_in_minor_quiet_hours,
+)
 from app.services.auth.rate_limit import (
     MAX_VERIFY_FAILURES,
     SEND_COOLDOWN,
@@ -140,6 +146,8 @@ __all__ = [
     "ANONYMOUS_USER_ID",
     "MAX_VERIFY_FAILURES",
     "MINOR_AGE_THRESHOLD",
+    "QUIET_END_HOUR",
+    "QUIET_START_HOUR",
     "SEND_COOLDOWN",
     "VERIFY_LOCK_DURATION",
     "AuthService",
@@ -162,11 +170,13 @@ __all__ = [
     "UserRecord",
     "UserRepository",
     "birthdate_from_year",
+    "block_minor_quiet_hours",
     "compute_is_minor",
     "decode_token",
     "get_auth_service",
     "get_current_user",
     "get_current_user_id",
+    "is_in_minor_quiet_hours",
     "mint_token",
     "require_adult",
     "require_age_set",
