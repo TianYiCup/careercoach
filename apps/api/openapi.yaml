@@ -435,6 +435,89 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /v1/copilot/sessions:
+    post:
+      tags:
+      - copilot
+      summary: Create a realtime copilot session (stub — adult-only gate)
+      description: 'Validate body, run the adult-only gate, then 501 until the real
+
+        realtime backend lands. The schema is honored so B can already
+
+        generate the client — the 501 just signals "wired but not built".'
+      operationId: create_copilot_session_v1_copilot_sessions_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCopilotSessionRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateCopilotSessionResponse'
+        '501':
+          description: Endpoint exists in v0.1 schema but the handler is not implemented.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid bearer token.
+        '403':
+          description: '`AGE_REQUIRED` if the JWT lacks `age_set=true`; `MINOR_FORBIDDEN` if the caller
+            is under 18. PRD §1.5 / R-15.'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - JWT: []
+  /v1/review/uploads:
+    post:
+      tags:
+      - review
+      summary: Upload a conversation transcript for review (stub — text-only)
+      description: 'v0.1 only accepts JSON text bodies — image / audio multipart is v2.
+
+        See `apps/api/app/schemas/review.py` for the rationale.'
+      operationId: create_review_upload_v1_review_uploads_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReviewUploadRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateReviewUploadResponse'
+        '501':
+          description: Endpoint exists in v0.1 schema but the handler is not implemented.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid bearer token.
+        '403':
+          description: '`AGE_REQUIRED` if the JWT lacks `age_set=true` (PRD §1.5).'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - JWT: []
 components:
   schemas:
     CoachHintEvent:
@@ -469,6 +552,107 @@ components:
         All three tiers are returned together so the UI can render the HintCardV2
 
         pill switcher without an extra round-trip.'
+    CreateCopilotSessionRequest:
+      properties:
+        scenario_hint:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Scenario Hint
+          description: Free-text scenario hint, e.g. '面试谈薪'.
+          examples:
+          - 面试谈薪
+        privacy_level:
+          type: string
+          enum:
+          - standard
+          - high
+          title: Privacy Level
+          description: '`high` enables on-device ASR + redaction (US-B3, v2). v0.1 accepts the field but
+            does not act on it.'
+          default: standard
+          examples:
+          - high
+      type: object
+      required:
+      - scenario_hint
+      title: CreateCopilotSessionRequest
+      description: 'Mirrors PRD §7.5 — `{ "scenario_hint": "...", "privacy_level": "..." }`.
+
+
+        `privacy_level=high` is the future on-device-ASR + redaction path
+
+        (US-B3). v0.1 only validates the shape; the handler returns 501.'
+    CreateCopilotSessionResponse:
+      properties:
+        copilot_id:
+          type: string
+          title: Copilot Id
+          examples:
+          - cop_018f3a8b1c2d7e3a
+        ws_url:
+          type: string
+          title: Ws Url
+          description: WebSocket URL the client connects to for audio chunks + hints. v0.1 placeholder
+            — v1 will use SSE over the same scheme.
+          examples:
+          - wss://realtime.careercoach.ai/copilot/cop_018f3a8b1c2d7e3a
+      type: object
+      required:
+      - copilot_id
+      - ws_url
+      title: CreateCopilotSessionResponse
+      description: 'Placeholder so OpenAPI''s 200 row points at a real schema. The
+
+        v0.1 stub never returns 200 — the handler raises 501 — but the
+
+        type is locked here so B''s codegen can already stub a client.'
+    CreateReviewUploadRequest:
+      properties:
+        text:
+          type: string
+          maxLength: 5000
+          minLength: 1
+          title: Text
+          description: Conversation transcript pasted as text. PRD §3.3 caps at 5000 chars; longer payloads
+            are 422.
+          examples:
+          - '对方：你周末有空吗？
+
+            我：有事，下次约。'
+      type: object
+      required:
+      - text
+      title: CreateReviewUploadRequest
+      description: 'Text-only review upload — PRD §3.3 US-C1 L4 (5000 字 ≤ 2s).
+
+
+        v0.1 intentionally has no `images` / `audio` fields. Adding those
+
+        on the v2 multipart path is a separate route operation, not an
+
+        extension of this body — keeping JSON-only here lets B keep the
+
+        `apiClient.post()` codepath instead of branching to FormData.'
+    CreateReviewUploadResponse:
+      properties:
+        upload_id:
+          type: string
+          title: Upload Id
+          examples:
+          - up_018f3a8b1c2d7e3a
+        status:
+          type: string
+          title: Status
+          description: Processing state. v1 starts as `processing` and flips via GET.
+          examples:
+          - processing
+      type: object
+      required:
+      - upload_id
+      - status
+      title: CreateReviewUploadResponse
+      description: Placeholder — see copilot.CreateCopilotSessionResponse for why.
     CreateSessionRequest:
       properties:
         mode:
@@ -536,6 +720,33 @@ components:
       required:
       - score
       title: EndSessionResponse
+    ErrorResponse:
+      properties:
+        code:
+          type: string
+          title: Code
+          description: Stable machine-readable error code (e.g. RATE_LIMIT_EXCEEDED).
+          examples:
+          - NOT_IMPLEMENTED
+        message:
+          type: string
+          title: Message
+          description: Human-readable, user-safe message. Never leaks internal detail.
+          examples:
+          - this endpoint is not implemented in v0.1
+        trace_id:
+          type: string
+          title: Trace Id
+          description: Per-request id; surface in UI so users can quote it in support.
+          examples:
+          - a3f1c2e0-9b4d-4f1e-8c8b-1c0e7e2f6a01
+      type: object
+      required:
+      - code
+      - message
+      - trace_id
+      title: ErrorResponse
+      description: Standard error envelope returned for any non-2xx HTTP status.
     HTTPValidationError:
       properties:
         detail:

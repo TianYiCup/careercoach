@@ -113,34 +113,6 @@ async def get_current_user_id(
     return user.user_id
 
 
-async def require_adult(
-    user: CurrentUser = Depends(get_current_user),
-) -> CurrentUser:
-    """Gate for features that PRD §1.5 / §3.0.5 C bans for minors —
-    primarily the 副驾 (live-coaching) flow which involves voice
-    recording. Returns 403 MINOR_FORBIDDEN if the JWT says the caller
-    is under 18.
-
-    No 副驾 routes exist in v0.1 yet, so this dependency currently
-    only has a smoke-test. It's wired now so future copilot endpoints
-    drop into a single import instead of growing ad-hoc inline checks.
-    """
-    if user.is_minor:
-        logger.info(
-            "minor_forbidden",
-            user_id=user.user_id,
-            note="rejecting minor from adult-only feature",
-        )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "code": "MINOR_FORBIDDEN",
-                "message": "该功能未对未成年开放",
-            },
-        )
-    return user
-
-
 async def require_age_set(
     user: CurrentUser = Depends(get_current_user),
 ) -> CurrentUser:
@@ -173,6 +145,41 @@ async def require_age_set(
             detail={
                 "code": "AGE_REQUIRED",
                 "message": "请先在「我的」中填写出生年份后再使用",
+            },
+        )
+    return user
+
+
+async def require_adult(
+    user: CurrentUser = Depends(require_age_set),
+) -> CurrentUser:
+    """Gate for features that PRD §1.5 / §3.0.5 C bans for minors —
+    primarily the 副驾 (live-coaching) flow which involves voice
+    recording. Returns 403 MINOR_FORBIDDEN if the JWT says the caller
+    is under 18.
+
+    Chains AFTER `require_age_set` so a user who hasn't declared their
+    birth year can't sneak in via the default `is_minor=False`
+    fallback. Order matters:
+      * no token                 → 401 UNAUTHORIZED (`get_current_user`)
+      * token, age unset         → 403 AGE_REQUIRED  (`require_age_set`)
+      * token, age set, minor    → 403 MINOR_FORBIDDEN
+      * token, age set, adult    → pass
+
+    The 副驾 stub route is wired in v0.1; this dependency is its
+    primary compliance attach point (R-15).
+    """
+    if user.is_minor:
+        logger.info(
+            "minor_forbidden",
+            user_id=user.user_id,
+            note="rejecting minor from adult-only feature",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "MINOR_FORBIDDEN",
+                "message": "该功能未对未成年开放",
             },
         )
     return user
