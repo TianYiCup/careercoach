@@ -2,14 +2,14 @@
 
 Public surface:
   * `AuthService` + `InvalidCodeError` + dispatcher Protocol
-  * `CodeStore` Protocol + `InMemoryCodeStore`
+  * `CodeStore` Protocol + `InMemoryCodeStore` / `RedisCodeStore`
+  * `RateLimiter` Protocol + `InMemoryRateLimiter` / `RedisRateLimiter`
+    + `RateLimited` exception (per PRD §F1 L2 — 60s send cooldown,
+    3-strike verify lock for 5 min)
   * `UserRepository` Protocol + `InMemoryUserRepository` + `UserRecord`
   * `TokenPayload` + `mint_token` + `decode_token`
-  * `get_auth_service()` factory singleton
-
-JWT enforcement on other routes is a follow-up PR — this one ships
-the issuance side. Routes still treat the user as anonymous until
-the middleware lands.
+  * `get_auth_service()` factory singleton (wires the above together)
+  * `get_current_user_id` dependency (hard-401 since #59)
 """
 
 from functools import lru_cache
@@ -27,6 +27,15 @@ from app.services.auth.code_store import (
 )
 from app.services.auth.dependency import ANONYMOUS_USER_ID, get_current_user_id
 from app.services.auth.jwt_tokens import TokenPayload, decode_token, mint_token
+from app.services.auth.rate_limit import (
+    MAX_VERIFY_FAILURES,
+    SEND_COOLDOWN,
+    VERIFY_LOCK_DURATION,
+    InMemoryRateLimiter,
+    RateLimited,
+    RateLimiter,
+    RedisRateLimiter,
+)
 from app.services.auth.service import (
     AuthService,
     InvalidCodeError,
@@ -47,24 +56,27 @@ logger = structlog.get_logger(__name__)
 def get_auth_service() -> AuthService:
     """Default wiring for `/v1/auth/sms/{send,verify}`.
 
-    All three dependencies are process-wide singletons so a `send`
-    followed by a `verify` on the same phone sees the same code store.
-    The dispatcher is the dev-only `LoggingDispatcher`; production
-    will inject a real SMS gateway here.
+    All four dependencies are process-wide singletons so a `send`
+    followed by a `verify` on the same phone sees the same code store
+    AND the same rate-limit counters. The dispatcher is the dev-only
+    `LoggingDispatcher`; production will inject a real SMS gateway here.
     """
     code_store = _get_code_store()
     user_repo = _get_user_repository()
+    rate_limiter = _get_rate_limiter()
     dispatcher = LoggingDispatcher()
     logger.info(
         "auth_service_wired",
         code_store=code_store.__class__.__name__,
         user_repo=user_repo.__class__.__name__,
+        rate_limiter=rate_limiter.__class__.__name__,
         dispatcher=dispatcher.name,
     )
     return AuthService(
         code_store=code_store,
         user_repo=user_repo,
         dispatcher=dispatcher,
+        rate_limiter=rate_limiter,
     )
 
 
@@ -96,16 +108,38 @@ def _get_user_repository() -> UserRepository:
     return InMemoryUserRepository()
 
 
+@lru_cache(maxsize=1)
+def _get_rate_limiter() -> RateLimiter:
+    """Piggybacks on the same `auth_code_store_backend` setting as the
+    code store: if you have Redis configured for codes, you also have
+    it for rate-limit counters. Avoids a second config knob with
+    obvious "should be the same" semantics.
+    """
+    settings = get_settings()
+    if settings.auth_code_store_backend == "redis":
+        logger.info("rate_limiter_wired", backend="redis", url=settings.redis_url)
+        return RedisRateLimiter(Redis.from_url(settings.redis_url))
+    logger.info("rate_limiter_wired", backend="memory")
+    return InMemoryRateLimiter()
+
+
 __all__ = [
     "ANONYMOUS_USER_ID",
+    "MAX_VERIFY_FAILURES",
+    "SEND_COOLDOWN",
+    "VERIFY_LOCK_DURATION",
     "AuthService",
     "CodeStore",
     "InMemoryCodeStore",
+    "InMemoryRateLimiter",
     "InMemoryUserRepository",
     "InvalidCodeError",
     "LoggingDispatcher",
     "PostgresUserRepository",
+    "RateLimited",
+    "RateLimiter",
     "RedisCodeStore",
+    "RedisRateLimiter",
     "SmsDispatcher",
     "StoredCode",
     "TokenPayload",

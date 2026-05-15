@@ -29,6 +29,13 @@ import structlog
 from app.schemas.auth import SmsSendResponse, SmsVerifyResponse, UserPublic
 from app.services.auth.code_store import CodeStore
 from app.services.auth.jwt_tokens import mint_token
+from app.services.auth.rate_limit import (
+    MAX_VERIFY_FAILURES,
+    SEND_COOLDOWN,
+    VERIFY_LOCK_DURATION,
+    RateLimited,
+    RateLimiter,
+)
 from app.services.auth.user_repository import UserRecord, UserRepository
 
 logger = structlog.get_logger(__name__)
@@ -78,7 +85,22 @@ class LoggingDispatcher:
 
 
 class AuthService:
-    """Owns code generation, dispatch, verification, and JWT minting."""
+    """Owns code generation, dispatch, verification, and JWT minting.
+
+    Per-phone rate limit policy (PRD §F1 L2) is enforced here, in front
+    of `CodeStore` and the dispatcher, so an attacker can't drive any
+    side-effects (SMS dispatch, code-store writes, repo lookups) by
+    spamming the API:
+
+      * `send_code` checks `RateLimiter.get_send_cooldown_seconds`
+        before doing anything; rejects with `RateLimited(send_cooldown)`
+        if blocked. On success, marks the phone for `SEND_COOLDOWN`.
+      * `verify_code` checks `get_verify_lock_seconds` before touching
+        `CodeStore.pop`; rejects with `RateLimited(verify_locked)` if
+        the phone is locked. Every wrong code (or "no pending code")
+        increments the failure counter; the 3rd failure sets the lock
+        for `VERIFY_LOCK_DURATION`. A successful verify resets both.
+    """
 
     def __init__(
         self,
@@ -86,15 +108,27 @@ class AuthService:
         code_store: CodeStore,
         user_repo: UserRepository,
         dispatcher: SmsDispatcher,
+        rate_limiter: RateLimiter,
     ) -> None:
         self._code_store = code_store
         self._user_repo = user_repo
         self._dispatcher = dispatcher
+        self._rate_limiter = rate_limiter
 
     async def send_code(self, phone: str) -> SmsSendResponse:
+        cooldown_left = await self._rate_limiter.get_send_cooldown_seconds(phone)
+        if cooldown_left is not None:
+            logger.info(
+                "sms_send_rate_limited",
+                phone=_mask_phone(phone),
+                seconds_left=cooldown_left,
+            )
+            raise RateLimited(kind="send_cooldown", retry_after_seconds=cooldown_left)
+
         code = _generate_code()
         await self._code_store.set(phone, code, ttl=_CODE_TTL)
         await self._dispatcher.send(phone=phone, code=code)
+        await self._rate_limiter.mark_send(phone, cooldown=SEND_COOLDOWN)
         logger.info(
             "sms_send_requested",
             phone=_mask_phone(phone),
@@ -104,12 +138,20 @@ class AuthService:
         return SmsSendResponse(ttl=_RESEND_COOLDOWN_SECONDS)
 
     async def verify_code(self, phone: str, code: str) -> SmsVerifyResponse:
+        lock_left = await self._rate_limiter.get_verify_lock_seconds(phone)
+        if lock_left is not None:
+            logger.info(
+                "sms_verify_locked",
+                phone=_mask_phone(phone),
+                seconds_left=lock_left,
+            )
+            raise RateLimited(kind="verify_locked", retry_after_seconds=lock_left)
+
         stored = await self._code_store.pop(phone)
-        if stored is None:
-            logger.info("sms_verify_no_pending_code", phone=_mask_phone(phone))
-            raise InvalidCodeError("code expired or never requested")
-        if not secrets.compare_digest(stored, code):
-            logger.info("sms_verify_mismatch", phone=_mask_phone(phone))
+        if stored is None or not secrets.compare_digest(stored, code):
+            await self._record_verify_failure(phone, has_pending=stored is not None)
+            if stored is None:
+                raise InvalidCodeError("code expired or never requested")
             raise InvalidCodeError("code does not match")
 
         user = await self._upsert_user(phone)
@@ -118,6 +160,11 @@ class AuthService:
             persona_type=user.persona_type,
             is_minor=user.is_minor,
         )
+
+        # Reset failure state AFTER mint succeeds so a downstream error
+        # (e.g. user repo timeout) doesn't leave the phone unlocked
+        # without a confirmed login.
+        await self._rate_limiter.reset_verify_state(phone)
 
         logger.info(
             "sms_verify_succeeded",
@@ -134,6 +181,31 @@ class AuthService:
                 is_minor=user.is_minor,
             ),
         )
+
+    async def _record_verify_failure(self, phone: str, *, has_pending: bool) -> None:
+        """Increment the failure counter and log. `has_pending` is just
+        for log discipline so we can distinguish "wrong code" from "no
+        code in flight" in production logs — both count as failures
+        for the lockout to keep the attack surface from being skipped
+        by an attacker who doesn't bother calling /send first.
+        """
+        count = await self._rate_limiter.record_verify_failure(
+            phone,
+            max_failures=MAX_VERIFY_FAILURES,
+            lock_duration=VERIFY_LOCK_DURATION,
+        )
+        if has_pending:
+            logger.info(
+                "sms_verify_mismatch",
+                phone=_mask_phone(phone),
+                failure_count=count,
+            )
+        else:
+            logger.info(
+                "sms_verify_no_pending_code",
+                phone=_mask_phone(phone),
+                failure_count=count,
+            )
 
     async def _upsert_user(self, phone: str) -> UserRecord:
         existing = await self._user_repo.get_by_phone(phone)
