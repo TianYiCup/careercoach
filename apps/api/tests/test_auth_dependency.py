@@ -1,13 +1,13 @@
-"""Tests for `get_current_user_id` — the soft-auth FastAPI dependency.
+"""Tests for `get_current_user_id` — the hard-auth FastAPI dependency.
 
 Covers three branches:
-  1. No Authorization header → ANONYMOUS_USER_ID
-  2. Bad / expired / tampered token → ANONYMOUS_USER_ID
+  1. No Authorization header → 401 UNAUTHORIZED
+  2. Bad / expired / tampered token → 401 UNAUTHORIZED
   3. Valid token → the `sub` claim
 
-When the soft transition flips to hard 401, these tests get updated to
-expect 401 in branches 1 and 2; that's the canary that catches the flip
-landing without also updating callers.
+The previous soft transition (anonymous fallback) is gone. These tests
+now lock in the deny-by-default contract — any regression that lets an
+unauthenticated request through will fail loudly here.
 """
 
 from __future__ import annotations
@@ -16,7 +16,6 @@ from collections.abc import AsyncIterator
 
 import pytest
 from app.services.auth import (
-    ANONYMOUS_USER_ID,
     get_current_user_id,
     mint_token,
 )
@@ -47,12 +46,14 @@ async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
         yield ac
 
 
-async def test_missing_authorization_header_falls_back_to_anonymous(
+async def test_missing_authorization_header_rejected_with_401(
     client: AsyncClient,
 ) -> None:
     resp = await client.get("/whoami")
-    assert resp.status_code == 200
-    assert resp.json() == {"user_id": ANONYMOUS_USER_ID}
+    assert resp.status_code == 401
+    # WWW-Authenticate is RFC 6750 standard for Bearer-token 401s — a
+    # well-behaved client uses it to know which scheme to retry under.
+    assert resp.headers.get("www-authenticate") == "Bearer"
 
 
 async def test_valid_bearer_token_resolves_to_user_id(client: AsyncClient) -> None:
@@ -68,29 +69,25 @@ async def test_valid_bearer_token_resolves_to_user_id(client: AsyncClient) -> No
     assert resp.json() == {"user_id": "u_abc"}
 
 
-async def test_garbage_bearer_token_falls_back_to_anonymous(client: AsyncClient) -> None:
-    """Soft mode: invalid token logs and degrades, doesn't 401.
-
-    The follow-up PR flips this branch to 401; updating that assertion
-    is the planned signal that the flip has landed."""
+async def test_garbage_bearer_token_rejected_with_401(client: AsyncClient) -> None:
+    """Tampered / expired / malformed token never reaches the route."""
     resp = await client.get(
         "/whoami",
         headers={"Authorization": "Bearer not-a-real-jwt"},
     )
 
-    assert resp.status_code == 200
-    assert resp.json() == {"user_id": ANONYMOUS_USER_ID}
+    assert resp.status_code == 401
+    assert resp.headers.get("www-authenticate") == "Bearer"
 
 
-async def test_missing_bearer_prefix_falls_back_to_anonymous(
+async def test_missing_bearer_prefix_rejected_with_401(
     client: AsyncClient,
 ) -> None:
     """HTTPBearer requires the `Bearer ` scheme; anything else is
-    treated as no header in soft mode."""
+    treated the same as a missing header — 401."""
     resp = await client.get(
         "/whoami",
         headers={"Authorization": "Token some-string"},
     )
 
-    assert resp.status_code == 200
-    assert resp.json() == {"user_id": ANONYMOUS_USER_ID}
+    assert resp.status_code == 401

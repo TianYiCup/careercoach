@@ -14,6 +14,7 @@ import { useSandboxSession } from './features/sandbox/useSandboxSession'
 import { ScorePage } from './features/sandbox/ScorePage'
 import type { Score } from './api/v1/types'
 import type { MascotExpression } from './components/mascot/types'
+import { AuthProvider, LoginPage, useAuth } from './features/auth'
 
 type Page = 'home' | 'sandbox' | 'wrapped' | 'score'
 
@@ -358,9 +359,25 @@ function HomePage({
 }: {
   onNavigate: (page: Page) => void
 }) {
+  const { user, logout } = useAuth()
   return (
     <div className="relative min-h-screen flex flex-col items-center px-4 py-12 overflow-hidden">
       <BlobBackground />
+
+      {/* Top-right: nickname + 退出 */}
+      {user && (
+        <div className="relative z-10 self-end flex items-center gap-3 text-xs font-body">
+          <span className="text-ink-text-2">{user.nickname}</span>
+          <button
+            type="button"
+            onClick={logout}
+            className="text-ink-text-3 hover:text-ink-text-2 transition-colors"
+          >
+            退出
+          </button>
+        </div>
+      )}
+
       <div className="relative z-10 text-center max-w-lg mt-8">
         <MascotReaction expression="confident" size="lg" showLabel />
         <h1 className="mt-6 text-5xl md:text-6xl font-display italic tracking-tight text-gradient-vivid">
@@ -411,12 +428,24 @@ function HomePage({
   )
 }
 
-function App() {
+/**
+ * AppGate — auth boundary. Renders <LoginPage> until the user has a
+ * token (per useAuth.isAuthenticated). After login the provider
+ * re-renders and we drop into the real navigation below.
+ *
+ * Routing is a tiny union ('home' | 'sandbox' | 'wrapped') instead of
+ * react-router for now — the surface is three pages and the gate is
+ * one bit. We'll bring in router when the route count grows.
+ */
+function AppGate() {
+  const { isAuthenticated } = useAuth()
   const [page, setPage] = useState<Page>('home')
   const [scoreData, setScoreData] = useState<{
     score: Score
     expression: 'godlike' | 'crashed' | 'confident'
   } | null>(null)
+
+  if (!isAuthenticated) return <LoginPage />
 
   const handleScore = (score: Score, expression: 'godlike' | 'crashed' | 'confident') => {
     setScoreData({ score, expression })
@@ -444,6 +473,14 @@ function App() {
         />
       )}
     </>
+  )
+}
+
+function App() {
+  return (
+    <AuthProvider>
+      <AppGate />
+    </AuthProvider>
   )
 }
 

@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator, Iterator
 
 import pytest
 from app.main import app
+from app.services.auth import mint_token
 from app.services.moderation import (
     LogOnlyEventSink,
     ModerationService,
@@ -19,6 +20,17 @@ from app.services.moderation import (
     get_moderation_service,
 )
 from httpx import ASGITransport, AsyncClient
+
+_DEFAULT_TEST_USER_ID = "u_default_test"
+
+
+def _default_auth_headers() -> dict[str, str]:
+    token = mint_token(
+        user_id=_DEFAULT_TEST_USER_ID,
+        persona_type="intern",
+        is_minor=False,
+    )
+    return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture
@@ -36,6 +48,21 @@ def service_override() -> Iterator[ModerationService]:
 async def client(
     service_override: ModerationService,
 ) -> AsyncIterator[AsyncClient]:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers=_default_auth_headers(),
+    ) as ac:
+        yield ac
+
+
+@pytest.fixture
+async def anon_client(
+    service_override: ModerationService,
+) -> AsyncIterator[AsyncClient]:
+    """Client with no default Authorization header — for 401-branch tests."""
+    _ = service_override
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
@@ -161,6 +188,22 @@ async def capturing_client(
     capturing_sink_override: _CapturingEventSink,
 ) -> AsyncIterator[tuple[AsyncClient, _CapturingEventSink]]:
     transport = ASGITransport(app=app)
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers=_default_auth_headers(),
+    ) as ac:
+        yield ac, capturing_sink_override
+
+
+@pytest.fixture
+async def anon_capturing_client(
+    capturing_sink_override: _CapturingEventSink,
+) -> AsyncIterator[tuple[AsyncClient, _CapturingEventSink]]:
+    """Capturing client without the default Authorization header — for
+    the 401-branch tests that assert the request never even reaches the
+    sink because the dependency rejects upstream."""
+    transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac, capturing_sink_override
 
@@ -192,13 +235,13 @@ async def test_audit_row_uses_jwt_user_id_when_bearer_token_present(
     assert sink.recorded[0].user_id == "u_real_caller"
 
 
-async def test_audit_row_uses_anonymous_sentinel_without_bearer_token(
-    capturing_client: tuple[AsyncClient, _CapturingEventSink],
+async def test_request_without_bearer_token_returns_401(
+    anon_capturing_client: tuple[AsyncClient, _CapturingEventSink],
 ) -> None:
-    """Soft auth path: no token → anonymous. The route still serves
-    (so dev / B's MSW path works) but the audit truth is the
-    sentinel, not whatever the client put in the body."""
-    client, sink = capturing_client
+    """Hard auth: no token → 401 before the moderation service runs.
+    The capturing sink must be empty — the request never reached the
+    audit path."""
+    client, sink = anon_capturing_client
 
     resp = await client.post(
         "/v1/moderation/check",
@@ -209,18 +252,20 @@ async def test_audit_row_uses_anonymous_sentinel_without_bearer_token(
         },
     )
 
-    assert resp.status_code == 200
-    assert len(sink.recorded) == 1
-    assert sink.recorded[0].user_id == "anonymous"
+    assert resp.status_code == 401
+    assert resp.json()["code"] == "UNAUTHORIZED"
+    # No audit row should be written for a request that was rejected at
+    # the auth boundary — otherwise an unauthenticated attacker could
+    # pollute the moderation event stream.
+    assert sink.recorded == []
 
 
-async def test_audit_row_uses_anonymous_for_invalid_bearer_token(
-    capturing_client: tuple[AsyncClient, _CapturingEventSink],
+async def test_request_with_invalid_bearer_token_returns_401(
+    anon_capturing_client: tuple[AsyncClient, _CapturingEventSink],
 ) -> None:
-    """Tampered / expired / garbage tokens get the same anonymous
-    treatment as no token at all — same soft-auth fallback rule the
-    sessions + sharecards routes use."""
-    client, sink = capturing_client
+    """Tampered / expired / garbage tokens get the same 401 treatment as
+    no token at all."""
+    client, sink = anon_capturing_client
 
     resp = await client.post(
         "/v1/moderation/check",
@@ -232,5 +277,6 @@ async def test_audit_row_uses_anonymous_for_invalid_bearer_token(
         },
     )
 
-    assert resp.status_code == 200
-    assert sink.recorded[0].user_id == "anonymous"
+    assert resp.status_code == 401
+    assert resp.json()["code"] == "UNAUTHORIZED"
+    assert sink.recorded == []
