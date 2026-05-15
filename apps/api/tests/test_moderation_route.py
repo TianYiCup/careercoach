@@ -74,7 +74,6 @@ async def test_moderation_check_returns_allow_for_benign_text(client: AsyncClien
         json={
             "content": "今天天气真好",
             "context": "user_input",
-            "user_id": "u_test",
         },
     )
 
@@ -94,7 +93,6 @@ async def test_moderation_check_echoes_trace_id_header(client: AsyncClient) -> N
         json={
             "content": "hi",
             "context": "user_input",
-            "user_id": "u_test",
         },
     )
 
@@ -108,7 +106,6 @@ async def test_moderation_check_rejects_empty_content(client: AsyncClient) -> No
         json={
             "content": "",
             "context": "user_input",
-            "user_id": "u_test",
         },
     )
 
@@ -124,7 +121,6 @@ async def test_moderation_check_rejects_unknown_context(client: AsyncClient) -> 
         json={
             "content": "hi",
             "context": "not_a_context",
-            "user_id": "u_test",
         },
     )
 
@@ -144,22 +140,24 @@ async def test_moderation_response_is_locked_in_openapi() -> None:
 
 
 class _CapturingEventSink:
-    """Test sink that snapshots the `ModerationCheckRequest` it receives.
+    """Test sink that snapshots the (`request`, `user_id`) pair it receives.
 
-    Tests assert on `.recorded[-1].user_id` to verify the route layer
-    overrode the payload's self-reported user_id with the JWT-derived
-    one. We don't care about the decision / backend_name fields here.
+    Tests assert on `.recorded[-1][1]` to verify the route layer hands
+    the sink the JWT-derived user id — not whatever a caller might have
+    stuffed into the request body. We don't care about the decision /
+    backend_name fields here.
     """
 
     def __init__(self) -> None:
         from app.schemas.moderation import ModerationCheckRequest
 
-        self.recorded: list[ModerationCheckRequest] = []
+        self.recorded: list[tuple[ModerationCheckRequest, str]] = []
 
     async def record(
         self,
         *,
         request: object,
+        user_id: str,
         decision: object,
         backend_name: str,
         trace_id: str,
@@ -167,7 +165,7 @@ class _CapturingEventSink:
         from app.schemas.moderation import ModerationCheckRequest
 
         assert isinstance(request, ModerationCheckRequest)
-        self.recorded.append(request)
+        self.recorded.append((request, user_id))
 
 
 @pytest.fixture
@@ -211,8 +209,8 @@ async def anon_capturing_client(
 async def test_audit_row_uses_jwt_user_id_when_bearer_token_present(
     capturing_client: tuple[AsyncClient, _CapturingEventSink],
 ) -> None:
-    """JWT-derived id is authoritative — even if the payload claims
-    someone else's id, the audit row gets the real caller."""
+    """JWT-derived id is authoritative — the route hands it to the sink
+    as a separate argument so a caller can't frame another user."""
     from app.services.auth import mint_token
 
     client, sink = capturing_client
@@ -224,15 +222,47 @@ async def test_audit_row_uses_jwt_user_id_when_bearer_token_present(
         json={
             "content": "hi",
             "context": "user_input",
-            "user_id": "u_spoofed_victim",  # client-claimed id
         },
     )
 
     assert resp.status_code == 200
     assert len(sink.recorded) == 1
-    # The audit row carries the JWT-derived id, NOT the spoofed one
-    # the client put in the payload. This is the framing defense.
-    assert sink.recorded[0].user_id == "u_real_caller"
+    # The audit row carries the JWT-derived id, NOT the request body.
+    _, recorded_user_id = sink.recorded[0]
+    assert recorded_user_id == "u_real_caller"
+
+
+async def test_extra_user_id_in_body_is_ignored_not_attributed(
+    capturing_client: tuple[AsyncClient, _CapturingEventSink],
+) -> None:
+    """The framing defense: even if a caller still sends `user_id` in
+    the body (old client, attack attempt, …), Pydantic's `extra='ignore'`
+    drops it and the audit row stays on the JWT-derived id.
+
+    This pins the contract: dropping `user_id` from the schema MUST NOT
+    leave any path where a self-reported id leaks into the audit log.
+    """
+    from app.services.auth import mint_token
+
+    client, sink = capturing_client
+    token = mint_token(user_id="u_real_caller", persona_type="intern", is_minor=False)
+
+    resp = await client.post(
+        "/v1/moderation/check",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "content": "hi",
+            "context": "user_input",
+            "user_id": "u_spoofed_victim",  # explicitly stuffed — must be ignored
+        },
+    )
+
+    assert resp.status_code == 200
+    request_obj, recorded_user_id = sink.recorded[0]
+    # Schema doesn't expose the field at all, so it never lands on the
+    # request model — and the sink got the JWT id, not the spoofed one.
+    assert not hasattr(request_obj, "user_id")
+    assert recorded_user_id == "u_real_caller"
 
 
 async def test_request_without_bearer_token_returns_401(
@@ -240,7 +270,9 @@ async def test_request_without_bearer_token_returns_401(
 ) -> None:
     """Hard auth: no token → 401 before the moderation service runs.
     The capturing sink must be empty — the request never reached the
-    audit path."""
+    audit path. We deliberately stuff `user_id` in the body to prove
+    that an unauthenticated caller can't seed audit rows by lying about
+    identity either."""
     client, sink = anon_capturing_client
 
     resp = await client.post(
@@ -273,7 +305,6 @@ async def test_request_with_invalid_bearer_token_returns_401(
         json={
             "content": "hi",
             "context": "user_input",
-            "user_id": "u_claim",
         },
     )
 

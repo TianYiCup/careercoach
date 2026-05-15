@@ -36,6 +36,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SmsSendResponse'
+        '429':
+          description: Per-phone rate limit fired. `code` is `SMS_SEND_COOLDOWN` for the send-after-send
+            case and `SMS_VERIFY_LOCKED` for the 3-failure verify lock. The `Retry-After` header carries
+            the seconds the client must wait.
         '422':
           description: Validation Error
           content:
@@ -63,6 +67,10 @@ paths:
                 $ref: '#/components/schemas/SmsVerifyResponse'
         '400':
           description: Code expired, never sent, or does not match
+        '429':
+          description: Per-phone rate limit fired. `code` is `SMS_SEND_COOLDOWN` for the send-after-send
+            case and `SMS_VERIFY_LOCKED` for the 3-failure verify lock. The `Retry-After` header carries
+            the seconds the client must wait.
         '422':
           description: Validation Error
           content:
@@ -528,10 +536,6 @@ components:
           description: Where the content came from. Drives different sensitivity tables.
           examples:
           - user_input
-        user_id:
-          type: string
-          title: User Id
-          description: UUID of acting user (for ModerationEvent audit log).
         session_id:
           anyOf:
           - type: string
@@ -542,7 +546,6 @@ components:
       required:
       - content
       - context
-      - user_id
       title: ModerationCheckRequest
     ModerationCheckResponse:
       properties:

@@ -30,12 +30,18 @@ logger = structlog.get_logger(__name__)
 
 
 class ModerationEventSink(Protocol):
-    """Async sink that records one moderation decision."""
+    """Async sink that records one moderation decision.
+
+    `user_id` is a separate kwarg (not on `request`) — it's always the
+    JWT-derived acting user, never the payload's self-reported one. See
+    `app.schemas.moderation.ModerationCheckRequest` for the rationale.
+    """
 
     async def record(
         self,
         *,
         request: ModerationCheckRequest,
+        user_id: str,
         decision: Decision,
         backend_name: str,
         trace_id: str,
@@ -52,13 +58,14 @@ class DbEventSink:
         self,
         *,
         request: ModerationCheckRequest,
+        user_id: str,
         decision: Decision,
         backend_name: str,
         trace_id: str,
     ) -> None:
         event = ModerationEvent(
             id=uuid4(),
-            user_id=request.user_id,
+            user_id=user_id,
             session_id=request.session_id,
             content_hash=_hash_content(request.content),
             content_length=len(request.content),
@@ -87,6 +94,7 @@ class LogOnlyEventSink:
         self,
         *,
         request: ModerationCheckRequest,
+        user_id: str,
         decision: Decision,
         backend_name: str,
         trace_id: str,
@@ -101,7 +109,7 @@ class LogOnlyEventSink:
             content_hash=_hash_content(request.content),
             content_length=len(request.content),
             trace_id=trace_id,
-            user_id=request.user_id,
+            user_id=user_id,
             session_id=request.session_id,
         )
 
