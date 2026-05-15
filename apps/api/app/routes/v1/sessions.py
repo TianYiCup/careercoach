@@ -25,7 +25,7 @@ from app.schemas.sessions import (
     TurnRequest,
 )
 from app.schemas.sse import SseEventEnvelope
-from app.services.auth import get_current_user_id
+from app.services.auth import CurrentUser, get_current_user, get_current_user_id
 from app.services.sessions import (
     SessionAlreadyEndedError,
     SessionEndedForTurnError,
@@ -80,17 +80,24 @@ async def post_turn(
     request: Request,
     session_id: str = Path(..., description="Session id from POST /v1/sessions."),
     service: TurnService = Depends(get_turn_service),
-    user_id: str = Depends(get_current_user_id),
+    current: CurrentUser = Depends(get_current_user),
 ) -> StreamingResponse:
     """Validate-then-stream: typed 4xx errors come back as normal HTTP
     responses (so the client's fetch().catch() handler sees them); only
-    once validation passes do we open the SSE stream."""
+    once validation passes do we open the SSE stream.
+
+    `current.is_minor` flows into the turn's moderation check so the
+    strict tier (PRD §3.0.5 C) fires for under-18 users — `warn` from
+    the backend is elevated to a `block` verdict, which the route then
+    surfaces as USER_INPUT_BLOCKED instead of letting an edge-case
+    message through to the LLM."""
     trace_id = get_request_id(request)
     try:
         validated = await service.validate_turn_request(
             session_id=session_id,
             content=payload.content,
-            user_id=user_id,
+            user_id=current.user_id,
+            is_minor=current.is_minor,
             trace_id=trace_id,
         )
     except SessionNotFoundForTurnError as exc:
