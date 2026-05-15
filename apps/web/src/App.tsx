@@ -4,22 +4,37 @@ import {
   GlassCard,
   MascotReaction,
   HintCardV2,
-  StickerBadge,
   VibePill,
   StreakFire,
+  StickerBadge,
   WrappedCard,
 } from './components'
 
 import { useSandboxSession } from './features/sandbox/useSandboxSession'
+import { ScorePage } from './features/sandbox/ScorePage'
+import type { Score } from './api/v1/types'
+import type { MascotExpression } from './components/mascot/types'
 import { AuthProvider, LoginPage, useAuth } from './features/auth'
 
-type Page = 'home' | 'sandbox' | 'wrapped'
+type Page = 'home' | 'sandbox' | 'wrapped' | 'score'
+
+/** Narrow MascotExpression to the 3 expressions that make sense on the score page */
+function toScoreExpression(expr: MascotExpression): 'godlike' | 'crashed' | 'confident' {
+  if (expr === 'godlike' || expr === 'crashed' || expr === 'confident') return expr
+  return 'confident'
+}
 
 /**
  * 沙盘对练房 — design-spec §9.3
  * D6-B: SSE 流式交互 + 流式光标 + 自动滚动 + 回合计数器
  */
-function SandboxRoom({ onExit }: { onExit: () => void }) {
+function SandboxRoom({
+  onExit,
+  onScore,
+}: {
+  onExit: () => void
+  onScore: (score: Score, expression: 'godlike' | 'crashed' | 'confident') => void
+}) {
   const {
     state,
     startSession,
@@ -192,29 +207,17 @@ function SandboxRoom({ onExit }: { onExit: () => void }) {
           </div>
         )}
 
-        {/* Score result */}
+        {/* Score result → navigate to score page */}
         {state.score && (
-          <GlassCard glow className="text-center space-y-3">
-            <div className="flex justify-center">
-              <MascotReaction expression={state.mascotExpression} size="lg" showLabel />
-            </div>
-            <p className="text-2xl font-display italic text-gradient-vivid">
-              {state.score.score.result === 'shenfeng' && '封神！'}
-              {state.score.score.result === 'guolu' && '路过~'}
-              {state.score.score.result === 'fanche' && '翻车了...'}
-            </p>
-            <p className="text-sm text-ink-text-2">
-              综合评分: {Object.values(state.score.score)
-                .filter((v): v is number => typeof v === 'number')
-                .reduce((a, b) => a + b, 0)}
-            </p>
-            {state.score.score.highlights && (
-              <p className="text-sm text-tone-safe">{state.score.score.highlights}</p>
-            )}
-            {state.score.score.failures && (
-              <p className="text-sm text-tone-aggro">{state.score.score.failures}</p>
-            )}
-          </GlassCard>
+          <div className="flex justify-center mt-6">
+            <button
+              type="button"
+              onClick={() => onScore(state.score!.score, toScoreExpression(state.mascotExpression))}
+              className="px-6 py-3 rounded-radius-pill gradient-vivid text-white text-sm font-body font-medium hover:scale-105 transition-transform"
+            >
+              查看评分
+            </button>
+          </div>
         )}
 
         {/* End session button */}
@@ -227,19 +230,6 @@ function SandboxRoom({ onExit }: { onExit: () => void }) {
               className="px-5 py-2 rounded-radius-pill bg-ink-card/60 border border-ink-line text-ink-text-2 text-sm font-body hover:bg-ink-card transition-colors disabled:opacity-50"
             >
               结束对练
-            </button>
-          </div>
-        )}
-
-        {/* Score → back to home */}
-        {state.score && (
-          <div className="flex justify-center mt-4">
-            <button
-              type="button"
-              onClick={onExit}
-              className="px-5 py-2 rounded-radius-pill gradient-vivid text-white text-sm font-body font-medium hover:scale-105 transition-transform"
-            >
-              返回首页
             </button>
           </div>
         )}
@@ -450,12 +440,38 @@ function HomePage({
 function AppGate() {
   const { isAuthenticated } = useAuth()
   const [page, setPage] = useState<Page>('home')
+  const [scoreData, setScoreData] = useState<{
+    score: Score
+    expression: 'godlike' | 'crashed' | 'confident'
+  } | null>(null)
+
   if (!isAuthenticated) return <LoginPage />
+
+  const handleScore = (score: Score, expression: 'godlike' | 'crashed' | 'confident') => {
+    setScoreData({ score, expression })
+    setPage('score')
+  }
+
   return (
     <>
       {page === 'home' && <HomePage onNavigate={setPage} />}
-      {page === 'sandbox' && <SandboxRoom onExit={() => setPage('home')} />}
+      {page === 'sandbox' && (
+        <SandboxRoom
+          onExit={() => setPage('home')}
+          onScore={handleScore}
+        />
+      )}
       {page === 'wrapped' && <WrappedPage />}
+      {page === 'score' && scoreData && (
+        <ScorePage
+          score={scoreData.score}
+          mascotExpression={scoreData.expression}
+          onBack={() => {
+            setScoreData(null)
+            setPage('home')
+          }}
+        />
+      )}
     </>
   )
 }
