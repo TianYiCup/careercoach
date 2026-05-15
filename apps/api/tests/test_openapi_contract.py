@@ -25,6 +25,18 @@ REQUIRED_ENDPOINTS: set[tuple[str, str]] = {
     ("post", "/v1/sharecards/session/{session_id}"),
     ("post", "/v1/sharecards/weekly"),
     ("post", "/v1/sharecards/wrapped/year/{year}"),
+    ("post", "/v1/copilot/sessions"),
+    ("post", "/v1/review/uploads"),
+}
+
+# Endpoints intentionally shipped as 501 stubs so the compliance gates
+# (`require_adult` / `require_age_set`) attach to the route *before*
+# the business logic lands. Once the real handler ships, the
+# corresponding entry here must be removed alongside the 501 row in
+# `responses=`. See `docs/b-side-review-2026-05-15/`.
+STUB_ALLOWED_ENDPOINTS: set[tuple[str, str]] = {
+    ("post", "/v1/copilot/sessions"),
+    ("post", "/v1/review/uploads"),
 }
 
 
@@ -58,12 +70,10 @@ async def client() -> AsyncIterator[AsyncClient]:
         yield ac
 
 
-# NOTE: Every v0.1 endpoint listed in REQUIRED_ENDPOINTS now ships a
-# real handler — the 501 stub canary list is empty. If a future endpoint
-# needs to land as a stub first, add it here.
-async def test_v01_surface_has_no_remaining_501_stubs() -> None:
+async def test_v01_surface_has_no_unsanctioned_501_stubs() -> None:
     """Belt-and-braces — guards against re-introducing stub responses
-    silently. Each endpoint has its own positive-path test elsewhere."""
+    silently. The canary set is `STUB_ALLOWED_ENDPOINTS`; every other
+    v0.x endpoint must have a real handler with no 501 row."""
     spec = app.openapi()
     for path, methods in spec["paths"].items():
         if not (path == "/health" or path.startswith("/v1/")):
@@ -71,10 +81,29 @@ async def test_v01_surface_has_no_remaining_501_stubs() -> None:
         for method, op in methods.items():
             if method.lower() not in {"get", "post", "put", "patch", "delete"}:
                 continue
+            if (method.lower(), path) in STUB_ALLOWED_ENDPOINTS:
+                continue
             responses = op.get("responses", {})
             assert "501" not in responses, (
-                f"{method.upper()} {path} still ships the 501 stub response"
+                f"{method.upper()} {path} ships a 501 stub response but is not "
+                "in STUB_ALLOWED_ENDPOINTS — either remove the stub or add it "
+                "to the allowed list with a justification."
             )
+
+
+def test_stub_allowed_endpoints_actually_ship_501() -> None:
+    """The other half of the canary — every endpoint we *say* is a
+    stub must really be a stub. Catches the case where someone wires
+    a real handler but forgets to drop the entry from
+    `STUB_ALLOWED_ENDPOINTS`, which would silently keep the 501
+    row in the spec and confuse B's codegen."""
+    spec = app.openapi()
+    for method, path in STUB_ALLOWED_ENDPOINTS:
+        op = spec["paths"][path][method]
+        assert "501" in op.get("responses", {}), (
+            f"{method.upper()} {path} is listed as a stub but no longer "
+            "advertises 501 — drop it from STUB_ALLOWED_ENDPOINTS."
+        )
 
 
 async def test_validation_error_uses_standard_envelope(client: AsyncClient) -> None:
