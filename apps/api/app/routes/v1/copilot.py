@@ -5,10 +5,15 @@ A-15 replaced the 501 with the real handler that mints a copilot_id,
 persists a `pending` row, and returns the canonical WebSocket URL the
 client connects to.
 A-16 shipped the WS endpoint at that URL with an echo-loop scaffold.
-A-18 (this module) replaces the echo with the real audio bridge:
-bytes frames carry audio, the text control frame
-`{"type":"audio_end"}` terminates each utterance, and the server
-emits `asr_partial` / `asr_final` events back through `ASRProvider`.
+A-18 replaced the echo with the real audio bridge: bytes frames carry
+audio, the text control frame `{"type":"audio_end"}` terminates each
+utterance, and the server emits `asr_partial` / `asr_final` events
+back through `ASRProvider`.
+A-19 (this module) chains `ModerationService` after each `asr_final`:
+finalized transcripts go through the same cascading red-line scoring
+pipeline `POST /v1/moderation/check` uses, and a `moderation` event
+follows the `asr_final` so the client can react (and so any future
+Coach K wiring has a verdict to gate on before forwarding to the LLM).
 
 Compliance attach point (POST)
 ------------------------------
@@ -32,8 +37,8 @@ subprotocol once B's client is comfortable signing the WS upgrade.
 The 64 bits of entropy on `copilot_id` (16 hex chars) keeps brute-force
 mining of valid ids out of reach for v0.
 
-WS protocol — A-18 audio bridge
--------------------------------
+WS protocol — A-18 / A-19
+-------------------------
 Once connected, the client–server protocol is:
 
     Client → Server
@@ -46,16 +51,24 @@ Once connected, the client–server protocol is:
                       cumulative interim transcript, may revise
         text frame:   JSON envelope `{"type":"asr_final","text":...}`
                       exactly one per utterance, terminal transcript
+        text frame:   JSON envelope
+                      `{"type":"moderation","verdict":"allow"|"warn"|
+                       "redirect"|"block","categories":[...],
+                       "score":0..1,"redirect_resource":null|{...}}`
+                      follows asr_final when the final text is
+                      non-empty (an empty utterance has nothing to
+                      score, so the moderation event is omitted)
 
 Multiple utterances are supported per connection — the bridge loops
 after each `audio_end`. A future PR adds `{"type":"hint","text":...}`
-events from the Coach K agent alongside the ASR events.
+events from the Coach K agent alongside the ASR + moderation events.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import secrets
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -65,12 +78,14 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.asr import ASRProvider, get_asr_provider
 from app.schemas.copilot import CreateCopilotSessionRequest, CreateCopilotSessionResponse
+from app.schemas.moderation import ModerationCheckRequest
 from app.services.auth import CurrentUser, require_adult
 from app.services.copilot import CopilotService, get_copilot_service
 from app.services.copilot.service import (
     CopilotSessionNotFound,
     CopilotSessionUnavailable,
 )
+from app.services.moderation import ModerationService, get_moderation_service
 
 logger = structlog.get_logger(__name__)
 
@@ -109,9 +124,9 @@ async def create_copilot_session(
 
     No LLM call, no moderation in this handler — copilot is
     adult-only (gate-enforced) and the audio + transcript moderation
-    will live in the WS handler once the cascading-mod pass is wired
-    against the ASR final events. A-15 persists the session intent so
-    the WS endpoint can look it up on connect.
+    runs in the WS handler against each `asr_final` (A-19). A-15
+    persists the session intent so the WS endpoint can look it up
+    on connect.
     """
     result = await service.create_session(
         scenario_hint=payload.scenario_hint,
@@ -130,8 +145,9 @@ async def copilot_stream(
     copilot_id: str,
     service: CopilotService = Depends(get_copilot_service),
     asr_provider: ASRProvider = Depends(get_asr_provider),
+    moderation_service: ModerationService = Depends(get_moderation_service),
 ) -> None:
-    """Realtime copilot stream — A-18 audio bridge.
+    """Realtime copilot stream — A-18 audio bridge + A-19 moderation.
 
     Lifecycle
     ---------
@@ -140,22 +156,22 @@ async def copilot_stream(
        `403` that pre-accept rejection would yield. Clients then know
        how to map our 4xxx codes.
     2. `connect_session` flips the row to `connected` (or raises one
-       of the two error types below).
+       of the two error types below). The returned record carries the
+       JWT-derived `user_id` we need for moderation audit attribution.
     3. Multi-utterance loop: for each utterance, run the audio bridge
-       until `audio_end` or disconnect.
+       until `audio_end` or disconnect, then moderate the final text.
     4. Client disconnect (or any exception) runs `end_session` in
        `finally` — flips the row to `ended` and stamps `ended_at`.
 
-    The `connected` flag below is the gating signal for the cleanup:
-    we only call `end_session` if `connect_session` actually succeeded.
-    Otherwise an "unknown id" probe would prematurely end somebody
-    else's session (or a no-op write that clutters the audit log).
+    `end_session` is only reachable when `connect_session` succeeded:
+    the two `except` arms above `close()` and `return` early so an
+    unknown-id probe never falls through into the multi-utterance loop
+    and never triggers the cleanup `finally`.
     """
     await websocket.accept()
-    connected = False
+    record = None
     try:
-        await service.connect_session(copilot_id)
-        connected = True
+        record = await service.connect_session(copilot_id)
     except CopilotSessionNotFound:
         await websocket.close(
             code=_WS_UNKNOWN_COPILOT_CODE,
@@ -171,22 +187,31 @@ async def copilot_stream(
 
     try:
         while True:
-            await _run_one_utterance(websocket, asr_provider, copilot_id)
+            await _run_one_utterance(
+                websocket,
+                asr_provider=asr_provider,
+                moderation_service=moderation_service,
+                copilot_id=copilot_id,
+                user_id=record.user_id,
+            )
     except WebSocketDisconnect:
         logger.info("copilot_ws_disconnected", copilot_id=copilot_id)
     finally:
-        if connected:
-            await service.end_session(copilot_id)
+        await service.end_session(copilot_id)
 
 
 async def _run_one_utterance(
     websocket: WebSocket,
+    *,
     asr_provider: ASRProvider,
+    moderation_service: ModerationService,
     copilot_id: str,
+    user_id: str,
 ) -> None:
     """Receive audio bytes + an `audio_end` control frame, transcribe,
-    emit `asr_partial` / `asr_final` events back. Returns cleanly when
-    the utterance ends; raises `WebSocketDisconnect` if the client
+    emit `asr_partial` / `asr_final` events, then run moderation on
+    the finalized text and emit a `moderation` event. Returns cleanly
+    when the utterance ends; raises `WebSocketDisconnect` if the client
     disconnects mid-utterance.
 
     Concurrency: feeder and streamer run in parallel via
@@ -195,6 +220,13 @@ async def _run_one_utterance(
     stream, or partials would back up unbounded. `gather` cancels the
     other task on first exception, which is the right behavior for a
     `WebSocketDisconnect` from either side.
+
+    Moderation runs *after* the audio loop completes (serially, not in
+    parallel with the next utterance). For a real cloud backend this
+    can add ~100–800 ms of latency before the next utterance can be
+    received. v0 accepts this — the local-dict fallback is microseconds
+    and the cascading backend's 800 ms cloud budget puts a hard ceiling
+    on the worst case.
     """
     audio_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
 
@@ -207,7 +239,16 @@ async def _run_one_utterance(
 
     feeder = _feed_audio(websocket, audio_queue, copilot_id)
     streamer = _stream_asr_events(websocket, asr_provider, audio_iter(), copilot_id)
-    await asyncio.gather(feeder, streamer)
+    _, final_text = await asyncio.gather(feeder, streamer)
+
+    if final_text:
+        await _moderate_and_emit(
+            websocket,
+            moderation_service=moderation_service,
+            text=final_text,
+            copilot_id=copilot_id,
+            user_id=user_id,
+        )
 
 
 async def _feed_audio(
@@ -253,11 +294,16 @@ async def _stream_asr_events(
     asr_provider: ASRProvider,
     audio_chunks: AsyncIterator[bytes],
     copilot_id: str,
-) -> None:
-    """Consume the ASR provider's event stream and forward each event
-    as a typed WS envelope. The envelope shape mirrors the SSE
-    discriminator used by `/sessions/{id}/turns`: a top-level `type`
-    field that the client switches on."""
+) -> str:
+    """Consume the ASR provider's event stream, forward each event as
+    a typed WS envelope, and return the final transcript text so the
+    caller can run moderation on it.
+
+    The envelope shape mirrors the SSE discriminator used by
+    `/sessions/{id}/turns`: a top-level `type` field that the client
+    switches on.
+    """
+    final_text = ""
     async for event in asr_provider.transcribe_stream(audio_chunks):
         await websocket.send_json(
             {
@@ -265,11 +311,80 @@ async def _stream_asr_events(
                 "text": event.text,
             }
         )
+        if event.kind == "final":
+            final_text = event.text
     logger.info(
         "copilot_ws_utterance_complete",
         copilot_id=copilot_id,
         provider=asr_provider.name,
+        final_char_count=len(final_text),
     )
+    return final_text
+
+
+async def _moderate_and_emit(
+    websocket: WebSocket,
+    *,
+    moderation_service: ModerationService,
+    text: str,
+    copilot_id: str,
+    user_id: str,
+) -> None:
+    """Score the finalized transcript through the moderation pipeline
+    and emit a `moderation` event back to the client.
+
+    Strictness
+    ----------
+    `is_minor=False` is hardcoded because copilot is adult-only — the
+    POST handler's `require_adult` guarantees no minor JWT can mint a
+    pending session in the first place. If a future PR widens copilot
+    to teens (it shouldn't — R-15) this needs to plumb the flag from
+    the JWT through the session record.
+
+    Trace id
+    --------
+    Per-utterance random id so each audit row is uniquely correlatable
+    in logs and Langfuse. Not derived from `copilot_id` because one
+    session has many utterances and each gets its own audit row.
+
+    Failure mode
+    ------------
+    If the moderation backend raises, we log + skip emitting the
+    moderation event. The WS stays open so the user's session isn't
+    derailed by a transient infra failure. The cascading backend
+    already falls back from cloud to local on common failures, so the
+    only way to reach this `except` is a code bug or a local backend
+    error — both of which we want visible in logs but not user-visible.
+    """
+    trace_id = "cop_mod_" + secrets.token_hex(8)
+    request = ModerationCheckRequest(content=text, context="user_input")
+    try:
+        decision = await moderation_service.check(
+            request,
+            user_id=user_id,
+            is_minor=False,
+            trace_id=trace_id,
+        )
+    except Exception:
+        logger.exception(
+            "copilot_moderation_failed",
+            copilot_id=copilot_id,
+            trace_id=trace_id,
+        )
+        return
+
+    payload: dict[str, Any] = {
+        "type": "moderation",
+        "verdict": decision.verdict,
+        "categories": decision.categories,
+        "score": decision.score,
+        "redirect_resource": (
+            decision.redirect_resource.model_dump()
+            if decision.redirect_resource is not None
+            else None
+        ),
+    }
+    await websocket.send_json(payload)
 
 
 def _is_audio_end(raw: str) -> bool:
