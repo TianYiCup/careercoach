@@ -25,7 +25,14 @@ import pytest
 from app.llm import Message
 from app.llm.errors import LLMUpstreamError
 from app.main import app
+from app.schemas.moderation import ModerationContext
 from app.services.auth import mint_token
+from app.services.moderation import (
+    LogOnlyEventSink,
+    ModerationBackendError,
+    ModerationService,
+)
+from app.services.moderation.types import Decision
 from app.services.review import (
     InMemoryReviewRepository,
     ReviewService,
@@ -89,8 +96,57 @@ class _RaisingProvider:
         yield ""  # pragma: no cover — keeps function an async generator
 
 
-def _deterministic_service(provider: object) -> tuple[ReviewService, InMemoryReviewRepository]:
-    """Build a service with a deterministic id factory + clock so tests
+_ALLOW_DECISION = Decision(verdict="allow", score=0.05)
+
+
+class _FakeModBackend:
+    """Substring-keyed moderation backend.
+
+    Each test installs `{trigger_substring: Decision}`; the first
+    matching key wins. Anything that doesn't match returns
+    `_ALLOW_DECISION`. Used through a real `ModerationService` so the
+    minor-strictness post-processing path runs identically to prod.
+    """
+
+    name = "fake_mod"
+
+    def __init__(self, decisions: dict[str, Decision] | None = None) -> None:
+        self._decisions = decisions or {}
+        self.calls: list[tuple[str, ModerationContext]] = []
+
+    async def evaluate(self, content: str, context: ModerationContext) -> Decision:
+        self.calls.append((content, context))
+        for trigger, decision in self._decisions.items():
+            if trigger in content:
+                return decision
+        return _ALLOW_DECISION
+
+
+class _RaisingModBackend:
+    """Always raises `ModerationBackendError` — used to pin the
+    backend-outage paths separately for input vs output."""
+
+    name = "raising_mod"
+
+    async def evaluate(self, content: str, context: ModerationContext) -> Decision:
+        raise ModerationBackendError("backend exploded", backend=self.name)
+
+
+def _moderation(backend: object | None = None) -> ModerationService:
+    """Real `ModerationService` wrapping a fake backend so the
+    minor-strictness post-processor still runs."""
+    return ModerationService(
+        backend=backend or _FakeModBackend(),  # type: ignore[arg-type]
+        event_sink=LogOnlyEventSink(),
+    )
+
+
+def _deterministic_service(
+    provider: object,
+    *,
+    moderation: ModerationService | None = None,
+) -> tuple[ReviewService, InMemoryReviewRepository]:
+    """Build a service with deterministic id factory + clock so tests
     can assert on stable values without monkeypatching."""
     repo = InMemoryReviewRepository()
     counter = count(1)
@@ -98,6 +154,7 @@ def _deterministic_service(provider: object) -> tuple[ReviewService, InMemoryRev
     service = ReviewService(
         repo=repo,
         provider=provider,  # type: ignore[arg-type]  # _FakeProvider satisfies LLMProvider structurally
+        moderation=moderation or _moderation(),
         id_factory=lambda: f"up_test{next(counter):010d}",
         clock=lambda: datetime(2026, 5, 16, 10, next(clock_counter), tzinfo=UTC),
     )
@@ -408,3 +465,287 @@ async def test_get_age_unset_returns_403_age_required(client: AsyncClient) -> No
 
     assert resp.status_code == 403
     assert resp.json()["code"] == "AGE_REQUIRED"
+
+
+# --------------------------------------------------------------------- #
+# Moderation — input + output                                            #
+# --------------------------------------------------------------------- #
+
+
+async def test_input_block_returns_400_user_input_blocked(client: AsyncClient) -> None:
+    """Red-line content in the upload text → 400 USER_INPUT_BLOCKED.
+    The route surfaces categories so the frontend can render a
+    targeted warning."""
+    backend = _FakeModBackend(
+        {
+            "RED_LINE_TRIGGER": Decision(
+                verdict="block",
+                score=0.95,
+                categories=("self_harm",),
+            ),
+        }
+    )
+    provider = _FakeProvider(_REVIEWER_OUTPUT)
+    service, repo = _deterministic_service(provider, moderation=_moderation(backend))
+    app.dependency_overrides[get_review_service] = lambda: service
+    token = mint_token(
+        user_id="u_adult",
+        persona_type="intern",
+        is_minor=False,
+        age_set=True,
+    )
+
+    resp = await client.post(
+        "/v1/review/uploads",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"text": "this contains RED_LINE_TRIGGER content"},
+    )
+
+    assert resp.status_code == 400
+    body = resp.json()
+    assert body["code"] == "USER_INPUT_BLOCKED"
+    assert "self_harm" in body["message"]
+    # No upload row was written and the LLM was never called.
+    assert provider.call_count == 0
+    assert await repo.get("up_test0000000001") is None
+
+
+async def test_input_warn_proceeds_normally_for_adult(client: AsyncClient) -> None:
+    """`warn` is below the block threshold for adults — the upload
+    proceeds (mirrors `TurnService` behavior)."""
+    backend = _FakeModBackend(
+        {
+            "WARN_TRIGGER": Decision(
+                verdict="warn",
+                score=0.4,
+                categories=("harassment",),
+            ),
+        }
+    )
+    provider = _FakeProvider(_REVIEWER_OUTPUT)
+    service, _ = _deterministic_service(provider, moderation=_moderation(backend))
+    app.dependency_overrides[get_review_service] = lambda: service
+    token = mint_token(
+        user_id="u_adult",
+        persona_type="intern",
+        is_minor=False,
+        age_set=True,
+    )
+
+    resp = await client.post(
+        "/v1/review/uploads",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"text": "WARN_TRIGGER but should still be analysed"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "done"
+
+
+async def test_input_warn_for_minor_promotes_to_block(client: AsyncClient) -> None:
+    """PRD §3.0.5 C: minors get the strict tier — `warn` becomes `block`.
+    Verified through the input gate (no upload row, no LLM call)."""
+    backend = _FakeModBackend(
+        {
+            "WARN_TRIGGER": Decision(
+                verdict="warn",
+                score=0.4,
+                categories=("harassment",),
+            ),
+        }
+    )
+    provider = _FakeProvider(_REVIEWER_OUTPUT)
+    service, _ = _deterministic_service(provider, moderation=_moderation(backend))
+    app.dependency_overrides[get_review_service] = lambda: service
+    token = mint_token(
+        user_id="u_minor",
+        persona_type="in_school",
+        is_minor=True,
+        age_set=True,
+    )
+
+    resp = await client.post(
+        "/v1/review/uploads",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"text": "WARN_TRIGGER content from a minor"},
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "USER_INPUT_BLOCKED"
+    assert provider.call_count == 0
+
+
+async def test_output_block_flips_upload_to_failed(client: AsyncClient) -> None:
+    """The LLM `better` field contains a red-line phrase; output
+    moderation must drop the result and the upload status becomes
+    `failed`. The 200 envelope still returns so the client can show
+    a "couldn't analyse" UI."""
+    # Reviewer output where the BETTER text trips the substring trigger.
+    reviewer_with_red_line = (
+        "TURN 0 | VERDICT: neutral\n"
+        "TURN 1 | VERDICT: lose | REASON: too cold | BETTER: BAD_OUTPUT_PHRASE here\n"
+        "---\n"
+        "SCORE: 6.4\n"
+        "TOP_FAILURES: a\n"
+        "IMPROVEMENTS: b"
+    )
+    backend = _FakeModBackend(
+        {
+            "BAD_OUTPUT_PHRASE": Decision(
+                verdict="block",
+                score=0.92,
+                categories=("violence",),
+            ),
+        }
+    )
+    provider = _FakeProvider(reviewer_with_red_line)
+    service, _ = _deterministic_service(provider, moderation=_moderation(backend))
+    app.dependency_overrides[get_review_service] = lambda: service
+    token = mint_token(
+        user_id="u_adult",
+        persona_type="intern",
+        is_minor=False,
+        age_set=True,
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    post_resp = await client.post(
+        "/v1/review/uploads", headers=headers, json={"text": _SAMPLE_TEXT}
+    )
+
+    assert post_resp.status_code == 200
+    upload_id = post_resp.json()["upload_id"]
+    assert post_resp.json()["status"] == "failed"
+
+    # Detail GET also reports failed + null summary; the unsafe `better`
+    # text was never persisted (mark_failed leaves turns empty).
+    get_resp = await client.get(f"/v1/review/uploads/{upload_id}", headers=headers)
+    assert get_resp.status_code == 200
+    body = get_resp.json()
+    assert body["status"] == "failed"
+    assert body["summary"] is None
+    assert body["turns"] == []
+
+
+async def test_output_redirect_also_flips_to_failed(client: AsyncClient) -> None:
+    """`redirect` carries a crisis-line resource — for review output
+    that means "this conversation is not the right thing for us to
+    coach on". Drop the result, mark failed."""
+    reviewer_with_redirect = (
+        "TURN 0 | VERDICT: neutral\n"
+        "TURN 1 | VERDICT: lose | REASON: REDIRECT_PHRASE here | BETTER: x\n"
+        "---\n"
+        "SCORE: 5.0\n"
+        "TOP_FAILURES: a\n"
+        "IMPROVEMENTS: b"
+    )
+    backend = _FakeModBackend(
+        {
+            "REDIRECT_PHRASE": Decision(
+                verdict="redirect",
+                score=0.88,
+                categories=("self_harm",),
+                redirect_resource={
+                    "title": "心理援助 24h 热线",
+                    "url": "tel:010-82951332",
+                },  # type: ignore[arg-type]
+            ),
+        }
+    )
+    provider = _FakeProvider(reviewer_with_redirect)
+    service, _ = _deterministic_service(provider, moderation=_moderation(backend))
+    app.dependency_overrides[get_review_service] = lambda: service
+    token = mint_token(
+        user_id="u_adult",
+        persona_type="intern",
+        is_minor=False,
+        age_set=True,
+    )
+
+    resp = await client.post(
+        "/v1/review/uploads",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"text": _SAMPLE_TEXT},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "failed"
+
+
+async def test_output_moderation_backend_error_does_not_lose_analysis(
+    client: AsyncClient,
+) -> None:
+    """If the moderation backend errors during the OUTPUT pass, the
+    user's already-paid-for analysis must not be invalidated. Service
+    catches `ModerationBackendError` only on the output side and
+    treats it as `allow`. (Input-side backend errors stay uncaught
+    and would 5xx — verified by `test_input_moderation_backend_error_propagates`.)
+    """
+    backend = _RaisingModBackend()
+
+    # Use a moderation service that lets the input call through allow but
+    # raises on the output call. We need different behavior per call
+    # — use a backend that allows the input text and raises on the LLM
+    # output text. The simplest split is: substring-keyed allow on a
+    # known input, raise on anything else (i.e. the LLM output).
+    class _SplitBackend:
+        name = "split_mod"
+
+        async def evaluate(self, content: str, context: ModerationContext) -> Decision:
+            if context == "user_input":
+                return _ALLOW_DECISION
+            raise ModerationBackendError("output mod down", backend=self.name)
+
+    _ = backend  # silence unused
+    provider = _FakeProvider(_REVIEWER_OUTPUT)
+    service, _ = _deterministic_service(provider, moderation=_moderation(_SplitBackend()))
+    app.dependency_overrides[get_review_service] = lambda: service
+    token = mint_token(
+        user_id="u_adult",
+        persona_type="intern",
+        is_minor=False,
+        age_set=True,
+    )
+
+    resp = await client.post(
+        "/v1/review/uploads",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"text": _SAMPLE_TEXT},
+    )
+
+    # Output moderation outage is degraded gracefully — analysis lands.
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "done"
+
+
+async def test_input_moderation_backend_error_propagates(client: AsyncClient) -> None:
+    """If the moderation backend errors on the INPUT side, the
+    `ModerationBackendError` bubbles up unchanged — FastAPI returns 500
+    in production and ops gets paged. Critically, NO orphan upload row
+    is created (input mod runs before any persist) and the LLM is never
+    called. Mirrors `TurnService.validate_turn_request`'s decision to
+    fail loud instead of silently passing through unsafe content.
+
+    The httpx ASGI transport re-raises unhandled exceptions in tests
+    rather than mapping them to a 500 response, so we assert via
+    `pytest.raises` rather than `resp.status_code`."""
+    provider = _FakeProvider(_REVIEWER_OUTPUT)
+    service, repo = _deterministic_service(provider, moderation=_moderation(_RaisingModBackend()))
+    app.dependency_overrides[get_review_service] = lambda: service
+    token = mint_token(
+        user_id="u_adult",
+        persona_type="intern",
+        is_minor=False,
+        age_set=True,
+    )
+
+    with pytest.raises(ModerationBackendError):
+        await client.post(
+            "/v1/review/uploads",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"text": _SAMPLE_TEXT},
+        )
+
+    # No upload row leaked — input mod ran before persistence.
+    assert await repo.get("up_test0000000001") is None
+    assert provider.call_count == 0

@@ -15,6 +15,7 @@ import structlog
 from app.config import get_settings
 from app.db.session import async_session_factory
 from app.llm.factory import get_llm_router
+from app.services.moderation import get_moderation_service
 from app.services.review.repository import (
     InMemoryReviewRepository,
     PostgresReviewRepository,
@@ -25,7 +26,7 @@ from app.services.review.repository import (
     ReviewVerdict,
     Speaker,
 )
-from app.services.review.service import ReviewService
+from app.services.review.service import ReviewInputBlockedError, ReviewService
 
 logger = structlog.get_logger(__name__)
 
@@ -49,23 +50,26 @@ def get_review_service() -> ReviewService:
     """Default wiring for `POST /v1/review/uploads` + the GET detail route.
 
     Singleton so the route layer's `Depends(get_review_service)` reuses
-    the same repo + LLM router instance across requests — matches the
-    `get_session_service` precedent. Tests override via FastAPI's
-    `app.dependency_overrides[get_review_service] = ...`.
+    the same repo + LLM router + moderation singletons across requests
+    — matches the `get_session_service` precedent. Tests override via
+    FastAPI's `app.dependency_overrides[get_review_service] = ...`.
     """
     repo = get_review_repository()
     provider = get_llm_router()
+    moderation = get_moderation_service()
     logger.info(
         "review_service_wired",
         repo=repo.__class__.__name__,
         llm=provider.__class__.__name__,
+        moderation=moderation.__class__.__name__,
     )
-    return ReviewService(repo=repo, provider=provider)
+    return ReviewService(repo=repo, provider=provider, moderation=moderation)
 
 
 __all__ = [
     "InMemoryReviewRepository",
     "PostgresReviewRepository",
+    "ReviewInputBlockedError",
     "ReviewRepository",
     "ReviewService",
     "ReviewStatus",
