@@ -439,12 +439,17 @@ paths:
     post:
       tags:
       - copilot
-      summary: Create a realtime copilot session (stub — adult-only gate)
-      description: 'Validate body, run the adult-only gate, then 501 until the real
+      summary: Create a realtime copilot session
+      description: 'Mint a copilot session row and return the WebSocket URL.
 
-        realtime backend lands. The schema is honored so B can already
 
-        generate the client — the 501 just signals "wired but not built".'
+        No LLM call, no moderation in this handler — copilot is
+
+        adult-only (gate-enforced) and the audio + transcript moderation
+
+        lives in the WS handler (A-17+). A-15 just persists the session
+
+        intent so the WS endpoint can look it up on connect.'
       operationId: create_copilot_session_v1_copilot_sessions_post
       requestBody:
         content:
@@ -459,12 +464,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CreateCopilotSessionResponse'
-        '501':
-          description: Endpoint exists in v0.1 schema but the handler is not implemented.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: Missing or invalid bearer token.
         '403':
@@ -489,7 +488,18 @@ paths:
 
         detail route — keeps the POST envelope identical to the A-8 lock
 
-        so B''s generated client doesn''t churn.'
+        so B''s generated client doesn''t churn.
+
+
+        `current.is_minor` flows into the moderation cascade so the strict
+
+        tier (PRD §3.0.5 C) fires for under-18 users — `warn` from the
+
+        backend is elevated to a `block` verdict, which the route surfaces
+
+        as USER_INPUT_BLOCKED instead of letting an edge-case message
+
+        through to the LLM.'
       operationId: create_review_upload_v1_review_uploads_post
       requestBody:
         content:
@@ -504,6 +514,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CreateReviewUploadResponse'
+        '400':
+          description: '`USER_INPUT_BLOCKED` — moderation flagged the uploaded text as red-line content
+            (PRD §3.0.5). Body lists the categories.'
         '401':
           description: Missing or invalid bearer token.
         '403':
@@ -773,33 +786,6 @@ components:
       required:
       - score
       title: EndSessionResponse
-    ErrorResponse:
-      properties:
-        code:
-          type: string
-          title: Code
-          description: Stable machine-readable error code (e.g. RATE_LIMIT_EXCEEDED).
-          examples:
-          - NOT_IMPLEMENTED
-        message:
-          type: string
-          title: Message
-          description: Human-readable, user-safe message. Never leaks internal detail.
-          examples:
-          - this endpoint is not implemented in v0.1
-        trace_id:
-          type: string
-          title: Trace Id
-          description: Per-request id; surface in UI so users can quote it in support.
-          examples:
-          - a3f1c2e0-9b4d-4f1e-8c8b-1c0e7e2f6a01
-      type: object
-      required:
-      - code
-      - message
-      - trace_id
-      title: ErrorResponse
-      description: Standard error envelope returned for any non-2xx HTTP status.
     HTTPValidationError:
       properties:
         detail:

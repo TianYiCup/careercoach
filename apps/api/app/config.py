@@ -80,6 +80,25 @@ class Settings(BaseSettings):
     # reviewer chain and the GET route.
     review_repo_backend: Literal["memory", "postgres"] = Field(default="memory")
 
+    # Copilot (副驾) session persistence — same defaulting rule.
+    # A-15 ships the schema + repo + create_session route; A-17 will
+    # add the WS endpoint that flips status via mark_connected /
+    # mark_ended on this same repo.
+    copilot_repo_backend: Literal["memory", "postgres"] = Field(default="memory")
+
+    # Base URL the client uses to open the copilot WebSocket. The
+    # service appends `/v1/copilot/sessions/{copilot_id}/stream`. v0
+    # dev runs against `ws://localhost:8000`; production sets this to
+    # the realtime gateway hostname. A-15 ships the URL in the POST
+    # response; A-17 ships the actual endpoint at that path.
+    copilot_ws_base_url: str = Field(
+        default="ws://localhost:8000",
+        description=(
+            "Base URL for copilot WebSocket connections (no trailing slash). "
+            "Service appends /v1/copilot/sessions/{copilot_id}/stream."
+        ),
+    )
+
     # Auth user persistence — same defaulting rule.
     auth_repo_backend: Literal["memory", "postgres"] = Field(default="memory")
 

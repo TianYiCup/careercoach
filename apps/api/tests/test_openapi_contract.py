@@ -35,9 +35,12 @@ REQUIRED_ENDPOINTS: set[tuple[str, str]] = {
 # the business logic lands. Once the real handler ships, the
 # corresponding entry here must be removed alongside the 501 row in
 # `responses=`. See `docs/b-side-review-2026-05-15/`.
-STUB_ALLOWED_ENDPOINTS: set[tuple[str, str]] = {
-    ("post", "/v1/copilot/sessions"),
-}
+#
+# Empty as of A-15 — both copilot and review POST routes now ship
+# real handlers. The paired test
+# `test_stub_allowed_endpoints_actually_ship_501` accepts an empty
+# set as a no-op (its `for` loop simply doesn't iterate).
+STUB_ALLOWED_ENDPOINTS: set[tuple[str, str]] = set()
 
 
 def _spec_endpoints() -> set[tuple[str, str]]:
