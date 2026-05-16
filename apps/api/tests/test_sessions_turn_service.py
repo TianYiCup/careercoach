@@ -61,25 +61,41 @@ class _ScriptedProvider:
         raise AssertionError(f"unscripted system prompt: {system[:60]!r}")
 
 
-def _moderation(*, block: bool = False) -> ModerationService:
-    """`block=True` swaps NoopBackend for one that always blocks."""
-    if not block:
+def _moderation(
+    *,
+    block: bool = False,
+    verdict: str | None = None,
+) -> ModerationService:
+    """Default returns `allow`. `block=True` short-hand for `verdict='block'`.
+
+    `verdict='warn'` / `'redirect'` lets the A-26 tag tests assert that
+    non-allow input verdicts surface on the Langfuse trace tags.
+    """
+    if not block and verdict is None:
         return ModerationService(backend=NoopBackend(), event_sink=LogOnlyEventSink())
 
-    class _BlockingBackend:
-        name = "test_block"
+    effective_verdict = "block" if block else verdict
+    categories: tuple[str, ...] = ("other",) if effective_verdict != "allow" else ()
+
+    class _ScriptedBackend:
+        name = "test_scripted"
 
         async def evaluate(self, content: str, context: str) -> Decision:
             _ = (content, context)
-            return Decision(verdict="block", score=0.99, categories=("other",))
+            return Decision(
+                verdict=effective_verdict,  # type: ignore[arg-type]
+                score=0.99,
+                categories=categories,  # type: ignore[arg-type]
+            )
 
-    return ModerationService(backend=_BlockingBackend(), event_sink=LogOnlyEventSink())
+    return ModerationService(backend=_ScriptedBackend(), event_sink=LogOnlyEventSink())
 
 
 def _service(
     *,
     llm_provider: LLMProvider | None = None,
     block_moderation: bool = False,
+    moderation_verdict: str | None = None,
     langfuse_client: object | None = None,
 ) -> tuple[TurnService, InMemorySessionRepository, InMemoryTurnRepository]:
     if llm_provider is None:
@@ -92,10 +108,10 @@ def _service(
     turn_repo = InMemoryTurnRepository()
     svc = TurnService(
         llm=llm_provider,
-        moderation=_moderation(block=block_moderation),
+        moderation=_moderation(block=block_moderation, verdict=moderation_verdict),
         session_repo=session_repo,
         turn_repo=turn_repo,
-        langfuse_client=langfuse_client,  # type: ignore[arg-type]
+        langfuse_client=langfuse_client,
     )
     return svc, session_repo, turn_repo
 
@@ -362,6 +378,12 @@ async def test_stream_turn_emits_trace_with_three_generations() -> None:
     assert kwargs["metadata"]["user_id"] == "u_42"
     assert kwargs["metadata"]["trace_id"] == "trace-from-route"
     assert kwargs["metadata"]["scenario_id"] == "sc_001"
+    # A-26: sandbox baseline tags — adult user, allow verdict from NoopBackend.
+    assert kwargs["tags"] == [
+        "surface:sandbox",
+        "minor:false",
+        "verdict:allow",
+    ]
 
     # Three generations in order: roleplay → coach → judge.
     generation_names = [c.kwargs["name"] for c in inner_trace.generation.call_args_list]
@@ -421,3 +443,94 @@ async def test_stream_turn_marks_trace_error_when_llm_blows_up() -> None:
     fail_kwargs = inner_trace.update.call_args.kwargs
     assert fail_kwargs.get("level") == "ERROR"
     assert "scripted provider failure" in fail_kwargs.get("status_message", "")
+
+
+# --- A-26: minor + verdict trace tags ---
+
+
+async def test_stream_turn_tags_minor_true_when_user_is_under_18() -> None:
+    """`is_minor=True` from the JWT must surface as `minor:true` on the
+    sandbox trace so analysts can filter PRD §3.0.5 C strict-tier
+    traffic without grepping metadata."""
+    from unittest.mock import MagicMock
+
+    client = MagicMock(name="langfuse")
+    inner_trace = MagicMock(name="trace")
+    client.trace.return_value = inner_trace
+
+    svc, session_repo, _ = _service(langfuse_client=client)
+    await session_repo.save(_active_session())
+    validated = await svc.validate_turn_request(
+        session_id="ses_aaaa1111",
+        content="hi",
+        user_id="u_minor",
+        is_minor=True,
+        trace_id="t1",
+    )
+
+    await _collect(svc.stream_turn(validated))
+
+    _args, kwargs = client.trace.call_args
+    assert kwargs["tags"] == [
+        "surface:sandbox",
+        "minor:true",
+        "verdict:allow",
+    ]
+
+
+async def test_stream_turn_tags_verdict_warn_when_moderation_warns() -> None:
+    """`warn` is the most common non-allow verdict in production — the
+    user's text wasn't blocked but tripped the soft-notice tier. The
+    trace tag must reflect that so a `verdict:warn` Langfuse filter
+    surfaces these for review."""
+    from unittest.mock import MagicMock
+
+    client = MagicMock(name="langfuse")
+    inner_trace = MagicMock(name="trace")
+    client.trace.return_value = inner_trace
+
+    svc, session_repo, _ = _service(
+        langfuse_client=client,
+        moderation_verdict="warn",
+    )
+    await session_repo.save(_active_session())
+    validated = await svc.validate_turn_request(
+        session_id="ses_aaaa1111",
+        content="边缘内容",
+        user_id="anonymous",
+        trace_id="t1",
+    )
+
+    await _collect(svc.stream_turn(validated))
+
+    _args, kwargs = client.trace.call_args
+    assert kwargs["tags"] == [
+        "surface:sandbox",
+        "minor:false",
+        "verdict:warn",
+    ]
+
+
+async def test_validated_turn_carries_moderation_context() -> None:
+    """`validate_turn_request` must propagate is_minor + verdict onto
+    ValidatedTurn so any downstream consumer (not just stream_turn)
+    can use them without re-running moderation.
+
+    Uses adult + warn rather than minor + warn because the moderation
+    service's minor-strictness rule upgrades `warn` → `block` for
+    under-18s (PRD §3.0.5 C). The plumbing assertion is independent
+    of that gate — we just need a verdict that survives validation.
+    """
+    svc, session_repo, _ = _service(moderation_verdict="warn")
+    await session_repo.save(_active_session())
+
+    validated = await svc.validate_turn_request(
+        session_id="ses_aaaa1111",
+        content="边缘但不阻断的内容",
+        user_id="u_x",
+        is_minor=False,
+        trace_id="t1",
+    )
+
+    assert validated.is_minor is False
+    assert validated.input_verdict == "warn"
