@@ -13,11 +13,16 @@ A-19 chained `ModerationService` after each `asr_final` so finalized
 transcripts go through the same cascading red-line scoring
 `POST /v1/moderation/check` uses; a `moderation` event follows the
 `asr_final` so the client can react.
-A-20 (this module) wires `LLMRouter`. When the moderation verdict is
-`allow` or `warn`, a Coach K hint is generated in the background and
-streamed back as `hint_delta` / `hint_done` events. `redirect` and
-`block` verdicts gate the LLM call entirely — no tokens are spent on
+A-20 wired `LLMRouter`. When the moderation verdict is `allow` or
+`warn`, a Coach K hint is generated in the background and streamed
+back as `hint_delta` / `hint_done` events. `redirect` and `block`
+verdicts gate the LLM call entirely — no tokens are spent on
 content the platform won't surface.
+A-21 (this module) attaches a Langfuse trace per utterance:
+`copilot_utterance`-named, with `transcribe` / `moderate` /
+`coach_hint` child generations so analysts can see the full pipeline
+on the Langfuse UI. When LANGFUSE_PUBLIC_KEY/SECRET_KEY is unset the
+trace wrapper degrades to no-op so dev runs keep working.
 
 Compliance attach point (POST)
 ------------------------------
@@ -85,11 +90,17 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, WebSocket
+from langfuse import Langfuse
 from starlette.websockets import WebSocketDisconnect
 
 from app.asr import ASRProvider, get_asr_provider
 from app.llm import LLMError, LLMProvider, Message
 from app.llm.factory import get_llm_router
+from app.observability.langfuse import (
+    TurnTrace,
+    begin_copilot_trace,
+    get_langfuse_client,
+)
 from app.schemas.copilot import CreateCopilotSessionRequest, CreateCopilotSessionResponse
 from app.schemas.moderation import ModerationCheckRequest, ModerationVerdict
 from app.services.auth import CurrentUser, require_adult
@@ -100,6 +111,12 @@ from app.services.copilot.service import (
 )
 from app.services.moderation import ModerationService, get_moderation_service
 from app.services.moderation.types import Decision
+
+# Stable model labels surfaced on the Langfuse generation rows. The
+# moderation pipeline can swap backends per request (CascadingBackend
+# falls back local→cloud) so we use a fixed label rather than peeking
+# at `_backend.name`.
+_MOD_GENERATION_MODEL = "moderation_pipeline"
 
 logger = structlog.get_logger(__name__)
 
@@ -172,6 +189,7 @@ async def copilot_stream(
     asr_provider: ASRProvider = Depends(get_asr_provider),
     moderation_service: ModerationService = Depends(get_moderation_service),
     llm_router: LLMProvider = Depends(get_llm_router),
+    langfuse_client: Langfuse | None = Depends(get_langfuse_client),
 ) -> None:
     """Realtime copilot stream — audio bridge + moderation + Coach K hints.
 
@@ -217,12 +235,14 @@ async def copilot_stream(
     hint_tasks: set[asyncio.Task[None]] = set()
     try:
         while True:
-            result = await _run_one_utterance(
+            result, trace = await _run_one_utterance(
                 websocket,
                 asr_provider=asr_provider,
                 moderation_service=moderation_service,
                 copilot_id=copilot_id,
                 user_id=record.user_id,
+                scenario_hint=record.scenario_hint,
+                langfuse_client=langfuse_client,
             )
             if _should_spawn_hint(result):
                 task = asyncio.create_task(
@@ -232,6 +252,7 @@ async def copilot_stream(
                         scenario_hint=record.scenario_hint,
                         user_input=result.final_text,
                         copilot_id=copilot_id,
+                        trace=trace,
                     )
                 )
                 hint_tasks.add(task)
@@ -273,13 +294,18 @@ async def _run_one_utterance(
     moderation_service: ModerationService,
     copilot_id: str,
     user_id: str,
-) -> _UtteranceResult:
+    scenario_hint: str,
+    langfuse_client: Langfuse | None,
+) -> tuple[_UtteranceResult, TurnTrace]:
     """Receive audio bytes + an `audio_end` control frame, transcribe,
     emit `asr_partial` / `asr_final` events, then run moderation on
-    the finalized text and emit a `moderation` event. Returns the
-    final text + verdict so the caller can decide whether to spawn a
-    hint task. Raises `WebSocketDisconnect` if the client disconnects
-    mid-utterance.
+    the finalized text and emit a `moderation` event. Returns
+    `(_UtteranceResult, TurnTrace)`: the result so the caller can
+    decide whether to spawn a hint task, and the trace so the hint
+    task can record its generation under the same parent.
+
+    Raises `WebSocketDisconnect` if the client disconnects
+    mid-utterance (the trace is marked failed and re-raised).
 
     Concurrency: feeder and streamer run in parallel via
     `asyncio.gather` because `DummyASRProvider` (and any real vendor)
@@ -291,6 +317,10 @@ async def _run_one_utterance(
     Moderation runs serially after the audio loop completes. Hint
     generation (when applicable) is spawned by the caller as a
     background task, so a slow LLM doesn't block the next utterance.
+    The hint task records its own generation on the trace; the trace
+    output is set here based on the moderation outcome, and the hint
+    arrives later as an additional child span (Langfuse handles that
+    cleanly — `update(output=...)` doesn't close the trace).
     """
     audio_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
 
@@ -303,10 +333,27 @@ async def _run_one_utterance(
 
     feeder = _feed_audio(websocket, audio_queue, copilot_id)
     streamer = _stream_asr_events(websocket, asr_provider, audio_iter(), copilot_id)
+    # If the client disconnects mid-utterance, gather raises
+    # WebSocketDisconnect from the feeder; we do NOT mint a trace
+    # for that case — the outer handler logs the disconnect and
+    # an empty Langfuse trace would just be noise.
     _, final_text = await asyncio.gather(feeder, streamer)
 
+    trace = begin_copilot_trace(
+        langfuse_client,
+        input={"scenario_hint": scenario_hint},
+        metadata={"copilot_id": copilot_id, "user_id": user_id},
+    )
+    trace.record_generation(
+        name="transcribe",
+        model=asr_provider.name,
+        input={"copilot_id": copilot_id},
+        output={"text": final_text, "char_count": len(final_text)},
+    )
+
     if not final_text:
-        return _UtteranceResult(final_text="", verdict=None)
+        trace.finish(output={"final_text": "", "verdict": None})
+        return _UtteranceResult(final_text="", verdict=None), trace
 
     decision = await _moderate_and_emit(
         websocket,
@@ -315,10 +362,21 @@ async def _run_one_utterance(
         copilot_id=copilot_id,
         user_id=user_id,
     )
-    return _UtteranceResult(
-        final_text=final_text,
-        verdict=decision.verdict if decision is not None else None,
-    )
+    if decision is not None:
+        trace.record_generation(
+            name="moderate",
+            model=_MOD_GENERATION_MODEL,
+            input={"text": final_text},
+            output={
+                "verdict": decision.verdict,
+                "score": decision.score,
+                "categories": list(decision.categories),
+            },
+        )
+
+    verdict = decision.verdict if decision is not None else None
+    trace.finish(output={"final_text": final_text, "verdict": verdict})
+    return _UtteranceResult(final_text=final_text, verdict=verdict), trace
 
 
 async def _feed_audio(
@@ -450,6 +508,7 @@ async def _stream_coach_hint(
     scenario_hint: str,
     user_input: str,
     copilot_id: str,
+    trace: TurnTrace,
 ) -> None:
     """Generate a Coach K hint for one utterance and stream it back.
 
@@ -461,6 +520,12 @@ async def _stream_coach_hint(
     chunks (rare, but possible with a misbehaving prompt or upstream)
     converges on "no events" rather than an empty `hint_done` so the
     client's UI doesn't flash a blank tip card.
+
+    Records a `coach_hint` generation on the parent utterance trace
+    iff the call produced any text. LLM-error paths skip the
+    generation — the failure is captured by the structured log and
+    the `hint_error` event the user sees; an extra empty Langfuse
+    span would be noise.
 
     Failure modes
     -------------
@@ -499,6 +564,12 @@ async def _stream_coach_hint(
     full = "".join(parts)
     if not full:
         return
+    trace.record_generation(
+        name="coach_hint",
+        model=llm_router.name,
+        input={"scenario_hint": scenario_hint, "user_input": user_input},
+        output={"text": full},
+    )
     await _send_or_drop(
         websocket,
         {"type": "hint_done", "text": full},

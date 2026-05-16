@@ -284,3 +284,48 @@ def test_record_generation_swallows_underlying_failure() -> None:
 
     trace = begin_turn_trace(client, input={}, metadata={})
     trace.record_generation(name="g", model="m", input={}, output="ok")  # no raise
+
+
+# ---------------------------------------------------------------------
+# `begin_copilot_trace` — the WS-side wrapper used per utterance by
+# the copilot stream handler (A-21).
+# ---------------------------------------------------------------------
+
+
+def test_begin_copilot_trace_returns_noop_when_client_is_none() -> None:
+    """Same dev-no-op contract as the other entry points: no Langfuse
+    keys → every method on the returned wrapper short-circuits."""
+    from app.observability.langfuse import begin_copilot_trace
+
+    trace = begin_copilot_trace(
+        None,
+        input={"scenario_hint": "面试"},
+        metadata={"copilot_id": "cop_x"},
+    )
+
+    # No raises — every method is safe to call.
+    trace.record_generation(name="transcribe", model="dummy", input={}, output={})
+    trace.finish(output={"final_text": "", "verdict": None})
+    trace.fail(RuntimeError("boom"))
+
+
+def test_begin_copilot_trace_uses_copilot_utterance_name() -> None:
+    """Trace name is what analysts filter on in the Langfuse UI;
+    pin the literal value so a rename doesn't silently break the
+    saved-views layer."""
+    from app.observability.langfuse import begin_copilot_trace
+
+    client = MagicMock(name="langfuse")
+    client.trace.return_value = MagicMock(name="trace")
+
+    begin_copilot_trace(
+        client,
+        input={"scenario_hint": "interview"},
+        metadata={"copilot_id": "cop_x", "user_id": "u_1"},
+    )
+
+    client.trace.assert_called_once_with(
+        name="copilot_utterance",
+        input={"scenario_hint": "interview"},
+        metadata={"copilot_id": "cop_x", "user_id": "u_1"},
+    )
