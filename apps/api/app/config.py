@@ -75,6 +75,11 @@ class Settings(BaseSettings):
     # SQLAlchemy-backed impls; alembic must be `upgrade head` first.
     sessions_repo_backend: Literal["memory", "postgres"] = Field(default="memory")
 
+    # Review (复盘师) upload + turn persistence — same defaulting rule as
+    # sessions. A-9 ships the schema + repo; A-10/A-11 wire it to the
+    # reviewer chain and the GET route.
+    review_repo_backend: Literal["memory", "postgres"] = Field(default="memory")
+
     # Auth user persistence — same defaulting rule.
     auth_repo_backend: Literal["memory", "postgres"] = Field(default="memory")
 

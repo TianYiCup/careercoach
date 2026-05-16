@@ -4,6 +4,7 @@ alembic/env.py imports `app.models` so autogenerate sees all tables.
 """
 
 from app.models.moderation_event import ModerationEvent
+from app.models.review import ReviewTurn, ReviewUpload
 from app.models.scenario import Scenario
 from app.models.session import Session
 from app.models.session_score import SessionScore
@@ -14,6 +15,8 @@ from app.models.user import PersonaType, User
 __all__ = [
     "ModerationEvent",
     "PersonaType",
+    "ReviewTurn",
+    "ReviewUpload",
     "Scenario",
     "Session",
     "SessionScore",
