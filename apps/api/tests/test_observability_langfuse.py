@@ -329,3 +329,81 @@ def test_begin_copilot_trace_uses_copilot_utterance_name() -> None:
         input={"scenario_hint": "interview"},
         metadata={"copilot_id": "cop_x", "user_id": "u_1"},
     )
+
+
+# ---------------------------------------------------------------------
+# A-23 — `session_id` pass-through to the Langfuse top-level session
+# field so analysts can use the session-grouping UI.
+# ---------------------------------------------------------------------
+
+
+def test_session_id_pass_through_for_copilot_trace() -> None:
+    """A-23: `session_id` lifts copilot_id into Langfuse's top-level
+    session field. Confirms the kwarg actually reaches `client.trace`
+    (not just stuffed in metadata)."""
+    from app.observability.langfuse import begin_copilot_trace
+
+    client = MagicMock(name="langfuse")
+    client.trace.return_value = MagicMock(name="trace")
+
+    begin_copilot_trace(
+        client,
+        input={"scenario_hint": "interview"},
+        metadata={"user_id": "u_1"},
+        session_id="cop_x",
+    )
+
+    _, kwargs = client.trace.call_args
+    assert kwargs["session_id"] == "cop_x"
+
+
+def test_session_id_pass_through_for_turn_trace() -> None:
+    """Same pass-through for sandbox turns — session_id = sandbox session id."""
+    from app.observability.langfuse import begin_turn_trace
+
+    client = MagicMock(name="langfuse")
+    client.trace.return_value = MagicMock(name="trace")
+
+    begin_turn_trace(
+        client,
+        input={"session_id": "ses_x", "user_content": "hi"},
+        metadata={"user_id": "u_1"},
+        session_id="ses_x",
+    )
+
+    _, kwargs = client.trace.call_args
+    assert kwargs["session_id"] == "ses_x"
+
+
+def test_session_id_pass_through_for_review_trace() -> None:
+    """Review traces use upload_id as the session id so each upload
+    is one one-trace session in the grouping UI."""
+    from app.observability.langfuse import begin_review_trace
+
+    client = MagicMock(name="langfuse")
+    client.trace.return_value = MagicMock(name="trace")
+
+    begin_review_trace(
+        client,
+        input={"upload_id": "up_x"},
+        metadata={"user_id": "u_1"},
+        session_id="up_x",
+    )
+
+    _, kwargs = client.trace.call_args
+    assert kwargs["session_id"] == "up_x"
+
+
+def test_session_id_omitted_when_not_provided() -> None:
+    """No session_id arg → no `session_id` kwarg on the underlying
+    `client.trace(...)` call. Keeps legacy call sites' behavior
+    identical and avoids burning a None on every trace."""
+    from app.observability.langfuse import begin_turn_trace
+
+    client = MagicMock(name="langfuse")
+    client.trace.return_value = MagicMock(name="trace")
+
+    begin_turn_trace(client, input={"x": 1}, metadata={"y": 2})
+
+    _, kwargs = client.trace.call_args
+    assert "session_id" not in kwargs

@@ -381,7 +381,12 @@ async def _run_one_utterance(
     trace = begin_copilot_trace(
         langfuse_client,
         input={"scenario_hint": scenario_hint},
-        metadata={"copilot_id": copilot_id, "user_id": user_id},
+        # `copilot_id` is promoted to Langfuse's top-level session_id
+        # (A-23) so every utterance in one WS connection lands under
+        # the same Langfuse session. Keep `user_id` in metadata for
+        # cross-session filtering.
+        metadata={"user_id": user_id},
+        session_id=copilot_id,
     )
     trace.record_generation(
         name="transcribe",

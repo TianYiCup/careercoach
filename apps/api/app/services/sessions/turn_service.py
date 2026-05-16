@@ -220,15 +220,19 @@ class TurnService:
         trace = begin_turn_trace(
             self._langfuse_client,
             input={
-                "session_id": validated.session_id,
                 "user_content": validated.content,
                 "prior_turn_count": len(validated.prior_turns),
             },
+            # `session_id` is promoted to Langfuse's top-level session
+            # field (A-23) so every turn in a sandbox session lands
+            # under the same Langfuse row. `trace_id` stays in
+            # metadata as the per-request request-id correlator.
             metadata={
                 "user_id": validated.user_id,
                 "trace_id": validated.trace_id,
                 "scenario_id": session.scenario_id,
             },
+            session_id=validated.session_id,
         )
 
         try:

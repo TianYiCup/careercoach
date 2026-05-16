@@ -350,11 +350,13 @@ async def test_stream_turn_emits_trace_with_three_generations() -> None:
 
     await _collect(svc.stream_turn(validated))
 
-    # One top-level trace, with the input + metadata the route fed in.
+    # One top-level trace, with the input + metadata + session_id the
+    # route fed in. `session_id` is the Langfuse top-level grouping
+    # field (A-23) — used to be in `input`.
     client.trace.assert_called_once()
     _args, kwargs = client.trace.call_args
     assert kwargs["name"] == "session_turn"
-    assert kwargs["input"]["session_id"] == "ses_aaaa1111"
+    assert kwargs["session_id"] == "ses_aaaa1111"
     assert kwargs["input"]["user_content"] == "周末有事"
     assert kwargs["input"]["prior_turn_count"] == 0
     assert kwargs["metadata"]["user_id"] == "u_42"

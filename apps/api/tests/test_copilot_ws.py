@@ -652,9 +652,10 @@ def test_default_no_langfuse_client_is_noop(client: TestClient) -> None:
 
 
 def test_utterance_creates_named_trace_with_session_metadata(client: TestClient) -> None:
-    """One trace per utterance, named `copilot_utterance`, with
-    metadata carrying the copilot_id + user_id so analysts can join
-    Langfuse rows back to the source session."""
+    """One trace per utterance, named `copilot_utterance`. `copilot_id`
+    lifts to the Langfuse top-level `session_id` field (A-23) so every
+    utterance in one WS connection lands under the same session row;
+    `user_id` stays in metadata for cross-session filtering."""
     lf_client, _trace = _install_langfuse_mock()
     service, repo = _build_service()
     app.dependency_overrides[get_copilot_service] = lambda: service
@@ -669,8 +670,9 @@ def test_utterance_creates_named_trace_with_session_metadata(client: TestClient)
     lf_client.trace.assert_called_once()
     _, kwargs = lf_client.trace.call_args
     assert kwargs["name"] == "copilot_utterance"
-    assert kwargs["metadata"]["copilot_id"] == "cop_test0000000001"
+    assert kwargs["session_id"] == "cop_test0000000001"
     assert kwargs["metadata"]["user_id"] == "u_demo"
+    assert "copilot_id" not in kwargs["metadata"]
     assert kwargs["input"]["scenario_hint"] == "interview salary negotiation"
 
 
