@@ -1,4 +1,4 @@
-"""Langfuse trace emission for session turns.
+"""Langfuse trace emission for session turns and review uploads.
 
 Why not the langchain CallbackHandler?
 --------------------------------------
@@ -7,14 +7,19 @@ package (not just `langchain-core`, which we already get via
 LangGraph). That would add ~30MB of deps for surface we never use,
 so we wire the lower-level `Langfuse` client directly.
 
-Two entry points:
+Entry points:
   * `run_session_turn` wraps a LangGraph `ainvoke` (unused in
     production today — `/turns` drives the LLM directly — kept for
     the future cycle/checkpoint work).
-  * `TurnTrace` is the SSE-side wrapper. The `TurnService.stream_turn`
-    pipeline calls `begin_turn_trace(...)` once at the top, then
-    `trace.record_generation(...)` after each LLM call, and
-    `trace.finish(...)` / `trace.fail(...)` at the end.
+  * `TurnTrace` is the shared trace wrapper. Despite the name (kept
+    for backwards-compat across the existing `TurnService` import
+    site) it's generic: the class only wraps a trace handle and
+    exposes `record_generation` / `finish` / `fail`. A future cleanup
+    PR can rename it to `NullableTrace` or similar.
+  * `begin_turn_trace(...)` opens a `session_turn`-named trace; the
+    `/turns` SSE pipeline uses it.
+  * `begin_review_trace(...)` opens a `review_upload`-named trace;
+    the review-mode background worker (A-13) uses it.
 
 Dev no-op contract
 ------------------
@@ -174,22 +179,64 @@ def begin_turn_trace(
     Returns a `TurnTrace` whose methods are no-ops when `client` is
     `None`, so the caller doesn't need to branch on dev vs. prod.
     """
+    return _begin_named_trace(
+        client,
+        name="session_turn",
+        input=input,
+        metadata=metadata,
+    )
+
+
+def begin_review_trace(
+    client: Langfuse | None,
+    *,
+    input: dict[str, Any],
+    metadata: dict[str, Any] | None = None,
+) -> TurnTrace:
+    """Start a Langfuse trace for one review upload analysis.
+
+    Used by `ReviewService._process_upload` (A-14). Same no-op-on-None
+    contract as `begin_turn_trace`; the only difference is the trace
+    name surfaced on the Langfuse UI, which lets analysts filter
+    review traces away from sandbox `/turns` traces.
+    """
+    return _begin_named_trace(
+        client,
+        name="review_upload",
+        input=input,
+        metadata=metadata,
+    )
+
+
+def _begin_named_trace(
+    client: Langfuse | None,
+    *,
+    name: str,
+    input: dict[str, Any],
+    metadata: dict[str, Any] | None,
+) -> TurnTrace:
+    """Internal helper — the only difference between trace entry points
+    is the `name` field; everything else (null-client handling, error
+    swallowing, return shape) is identical. Keeping it in one place
+    means a future change to that contract (e.g. attaching tags,
+    propagating tenant ids) only touches one function."""
     if client is None:
         return TurnTrace(_trace=None)
     try:
         trace = client.trace(
-            name="session_turn",
+            name=name,
             input=input,
             metadata=metadata or {},
         )
     except Exception:
-        logger.exception("langfuse_trace_create_failed")
+        logger.exception("langfuse_trace_create_failed", trace_name=name)
         return TurnTrace(_trace=None)
     return TurnTrace(_trace=trace)
 
 
 __all__ = [
     "TurnTrace",
+    "begin_review_trace",
     "begin_turn_trace",
     "get_langfuse_client",
     "run_session_turn",

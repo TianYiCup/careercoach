@@ -205,6 +205,7 @@ def _deterministic_service(
     *,
     moderation: ModerationService | None = None,
     queue: ReviewWorkerQueue | None = None,
+    langfuse_client: object | None = None,
 ) -> tuple[ReviewService, InMemoryReviewRepository]:
     """Build a service with deterministic id factory + clock so tests
     can assert on stable values without monkeypatching.
@@ -213,6 +214,10 @@ def _deterministic_service(
     asserting on the final state directly. Tests that exercise the
     real async path override with `InProcessWorkerQueue()` or
     `_DeferredQueue()`.
+
+    Defaults `langfuse_client=None` so existing tests run with trace
+    instrumentation as a no-op — the Langfuse-aware tests below pass
+    a `MagicMock` shaped like `Langfuse` to verify the trace calls.
     """
     repo = InMemoryReviewRepository()
     counter = count(1)
@@ -222,6 +227,7 @@ def _deterministic_service(
         provider=provider,  # type: ignore[arg-type]  # _FakeProvider satisfies LLMProvider structurally
         moderation=moderation or _moderation(),
         queue=queue or _SyncWorkerQueue(),
+        langfuse_client=langfuse_client,
         id_factory=lambda: f"up_test{next(counter):010d}",
         clock=lambda: datetime(2026, 5, 16, 10, next(clock_counter), tzinfo=UTC),
     )
@@ -979,3 +985,199 @@ async def test_in_process_queue_swallows_unexpected_worker_exception(client: Asy
     get_resp = await client.get(f"/v1/review/uploads/{upload_id}", headers=headers)
     assert get_resp.status_code == 200
     assert get_resp.json()["status"] == "processing"
+
+
+# --------------------------------------------------------------------- #
+# Langfuse trace instrumentation (A-14)                                  #
+# --------------------------------------------------------------------- #
+
+
+def _mock_langfuse_client() -> tuple[object, object, object]:
+    """Build a `MagicMock`-shaped Langfuse client that records calls.
+
+    Mirrors the pattern in `test_sessions_turn_service.py` so the test
+    contract stays uniform across `/turns` and `/review` traces.
+    Returns (client, inner_trace, inner_generation) so callers can
+    assert on each level of the call tree.
+    """
+    from unittest.mock import MagicMock
+
+    client = MagicMock(name="langfuse")
+    inner_trace = MagicMock(name="trace")
+    inner_gen = MagicMock(name="generation")
+    inner_trace.generation.return_value = inner_gen
+    client.trace.return_value = inner_trace
+    return client, inner_trace, inner_gen
+
+
+async def test_review_emits_one_trace_per_upload_with_generation(
+    client: AsyncClient,
+) -> None:
+    """The happy path produces one `review_upload` trace with one
+    `analyze_review` generation, and the trace is finished with the
+    upload's final status. This is what an analyst sees on the
+    Langfuse UI."""
+    langfuse, inner_trace, inner_gen = _mock_langfuse_client()
+    provider = _FakeProvider(_REVIEWER_OUTPUT)
+    service, _ = _deterministic_service(provider, langfuse_client=langfuse)
+    app.dependency_overrides[get_review_service] = lambda: service
+    token = mint_token(
+        user_id="u_adult",
+        persona_type="intern",
+        is_minor=False,
+        age_set=True,
+    )
+
+    resp = await client.post(
+        "/v1/review/uploads",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"text": _SAMPLE_TEXT},
+    )
+    assert resp.status_code == 200
+    upload_id = resp.json()["upload_id"]
+
+    # One top-level trace, named `review_upload`, with input + metadata.
+    langfuse.trace.assert_called_once()  # type: ignore[attr-defined]
+    _trace_args, trace_kwargs = langfuse.trace.call_args  # type: ignore[attr-defined]
+    assert trace_kwargs["name"] == "review_upload"
+    assert trace_kwargs["input"]["upload_id"] == upload_id
+    assert trace_kwargs["input"]["text_len"] == len(_SAMPLE_TEXT)
+    assert trace_kwargs["metadata"]["user_id"] == "u_adult"
+    assert trace_kwargs["metadata"]["is_minor"] is False
+
+    # One generation under that trace — the analyze_review LLM call.
+    inner_trace.generation.assert_called_once()  # type: ignore[attr-defined]
+    _gen_args, gen_kwargs = inner_trace.generation.call_args  # type: ignore[attr-defined]
+    assert gen_kwargs["name"] == "analyze_review"
+    assert gen_kwargs["input"]["text_len"] == len(_SAMPLE_TEXT)
+
+    # The generation `end` carries the parsed-result summary, NOT the
+    # raw turn text (PII discipline — see `_summarize_result_for_trace`).
+    inner_gen.end.assert_called_once()  # type: ignore[attr-defined]
+    _end_args, end_kwargs = inner_gen.end.call_args  # type: ignore[attr-defined]
+    assert end_kwargs["output"]["parsed"] is True
+    assert end_kwargs["output"]["turn_count"] == 2
+    assert end_kwargs["output"]["summary_score"] == 6.4
+
+    # Trace finished with the final status payload.
+    # `update` is called via `finish` — pull the output kwarg from the
+    # last call (langfuse v2's StatefulTraceClient.update takes kwargs).
+    update_calls = inner_trace.update.call_args_list  # type: ignore[attr-defined]
+    assert update_calls, "trace.update was never called"
+    final_call = update_calls[-1]
+    assert final_call.kwargs["output"]["upload_id"] == upload_id
+    assert final_call.kwargs["output"]["status"] == "done"
+    assert final_call.kwargs["output"]["turn_count"] == 2
+
+
+async def test_review_trace_marks_error_when_worker_crashes(client: AsyncClient) -> None:
+    """An uncaught exception inside the worker (e.g. a moderation
+    backend raising something other than `ModerationBackendError`)
+    propagates through `_process_upload`'s outer try/except, which
+    calls `trace.fail(exc)` to mark the Langfuse trace as ERROR
+    before re-raising. The row stays in `processing`."""
+
+    class _UnexpectedlyExplodingBackend:
+        name = "exploding_output"
+
+        async def evaluate(self, content: str, context: ModerationContext) -> Decision:
+            if context == "user_input":
+                return _ALLOW_DECISION
+            raise RuntimeError("unexpected output-mod crash")
+
+    langfuse, inner_trace, _ = _mock_langfuse_client()
+    queue = InProcessWorkerQueue()
+    provider = _FakeProvider(_REVIEWER_OUTPUT)
+    service, _ = _deterministic_service(
+        provider,
+        queue=queue,
+        moderation=_moderation(_UnexpectedlyExplodingBackend()),
+        langfuse_client=langfuse,
+    )
+    app.dependency_overrides[get_review_service] = lambda: service
+    token = mint_token(
+        user_id="u_adult",
+        persona_type="intern",
+        is_minor=False,
+        age_set=True,
+    )
+
+    resp = await client.post(
+        "/v1/review/uploads",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"text": _SAMPLE_TEXT},
+    )
+    assert resp.json()["status"] == "processing"
+
+    # Worker runs in the background; await it before asserting.
+    await queue.wait_idle()
+
+    # Trace was opened and marked ERROR (via `trace.fail` → update).
+    langfuse.trace.assert_called_once()  # type: ignore[attr-defined]
+    update_calls = inner_trace.update.call_args_list  # type: ignore[attr-defined]
+    error_calls = [c for c in update_calls if c.kwargs.get("level") == "ERROR"]
+    assert error_calls, f"expected an update(level='ERROR'), got {update_calls!r}"
+    assert "unexpected output-mod crash" in error_calls[0].kwargs["status_message"]
+
+
+async def test_review_with_no_langfuse_client_works_unchanged(client: AsyncClient) -> None:
+    """Sanity: when LANGFUSE_* keys are unset the service runs the
+    full pipeline without touching anything trace-related. Existing
+    24 tests already verify this implicitly (they all pass
+    `langfuse_client=None`); this one makes the contract explicit."""
+    provider = _FakeProvider(_REVIEWER_OUTPUT)
+    service, _ = _deterministic_service(provider, langfuse_client=None)
+    app.dependency_overrides[get_review_service] = lambda: service
+    token = mint_token(
+        user_id="u_adult",
+        persona_type="intern",
+        is_minor=False,
+        age_set=True,
+    )
+
+    resp = await client.post(
+        "/v1/review/uploads",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"text": _SAMPLE_TEXT},
+    )
+
+    # No exceptions, full pipeline still ran (status flipped via the
+    # sync queue), upload exists with the canonical record.
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "done"
+
+
+async def test_review_trace_records_failed_generation_on_llm_error(client: AsyncClient) -> None:
+    """When `analyze_review` raises `LLMError`, the service catches it
+    and persists `failed`. The Langfuse generation still fires (so
+    operators can see the upload attempted an LLM call) but with the
+    `parsed: False` summary marker."""
+    langfuse, inner_trace, inner_gen = _mock_langfuse_client()
+    service, _ = _deterministic_service(_RaisingProvider(), langfuse_client=langfuse)
+    app.dependency_overrides[get_review_service] = lambda: service
+    token = mint_token(
+        user_id="u_adult",
+        persona_type="intern",
+        is_minor=False,
+        age_set=True,
+    )
+
+    resp = await client.post(
+        "/v1/review/uploads",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"text": _SAMPLE_TEXT},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "failed"
+
+    # Trace opened, generation recorded with `parsed=False` so the
+    # operator can see "yes the LLM was attempted, no it didn't yield
+    # a parseable result". Trace finished with `status: failed`.
+    inner_trace.generation.assert_called_once()  # type: ignore[attr-defined]
+    _gen_args, _gen_kwargs = inner_trace.generation.call_args  # type: ignore[attr-defined]
+    inner_gen.end.assert_called_once()  # type: ignore[attr-defined]
+    end_kwargs = inner_gen.end.call_args.kwargs  # type: ignore[attr-defined]
+    assert end_kwargs["output"]["parsed"] is False
+
+    final_call = inner_trace.update.call_args_list[-1]  # type: ignore[attr-defined]
+    assert final_call.kwargs["output"]["status"] == "failed"

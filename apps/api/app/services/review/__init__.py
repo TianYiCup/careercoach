@@ -17,6 +17,7 @@ import structlog
 from app.config import get_settings
 from app.db.session import async_session_factory
 from app.llm.factory import get_llm_router
+from app.observability.langfuse import get_langfuse_client
 from app.services.moderation import get_moderation_service
 from app.services.review.repository import (
     InMemoryReviewRepository,
@@ -78,18 +79,24 @@ def get_review_service() -> ReviewService:
     provider = get_llm_router()
     moderation = get_moderation_service()
     queue = get_review_worker_queue()
+    # `None` when LANGFUSE_* keys are unset — `begin_review_trace`
+    # short-circuits to a no-op `TurnTrace`. Dev without a local
+    # Langfuse instance works unchanged.
+    langfuse_client = get_langfuse_client()
     logger.info(
         "review_service_wired",
         repo=repo.__class__.__name__,
         llm=provider.__class__.__name__,
         moderation=moderation.__class__.__name__,
         queue=queue.name,
+        langfuse_enabled=langfuse_client is not None,
     )
     return ReviewService(
         repo=repo,
         provider=provider,
         moderation=moderation,
         queue=queue,
+        langfuse_client=langfuse_client,
     )
 
 
