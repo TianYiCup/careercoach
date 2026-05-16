@@ -1,23 +1,33 @@
 """HTTP-layer tests for the 复盘师 (review) routes — POST + GET.
 
-A-8 pinned the gate ladder while the handler was a 501 stub. A-11
-makes both routes real, so the tests now also exercise:
+Production flow is asynchronous (A-13): `POST /v1/review/uploads`
+returns immediately with `status="processing"` and a background
+worker (driven by `ReviewWorkerQueue`) flips the row to `done` /
+`failed` later. Clients poll `GET /v1/review/uploads/{id}`.
 
-  * sync end-to-end POST (fake provider returns the canned reviewer
-    contract; the route persists the result and returns `done`)
-  * GET happy path returning the full record + summary
-  * GET 404 for unknown ids and for cross-user reads (must not
-    distinguish — silently 404 in both cases per the route's
-    enumerate-resistant ownership pattern)
-  * sync POST with an LLM that errors → status flips to `failed`
-    rather than 5xx
-  * gate ladder still fires before the service is touched (no token
-    → 401, age unset → 403, body validation → 422)
+Test queue strategy
+-------------------
+Most tests inject `_SyncWorkerQueue` — it runs the work inline so the
+POST returns the final state, which keeps the assertions readable.
+That is *not lying* about production: the service code path is
+identical (same `_process_upload`, same fold logic), just collapsed
+into one event-loop tick.
+
+Two dedicated tests use the real `InProcessWorkerQueue` to pin the
+genuine async behavior:
+  * `test_post_returns_processing_with_async_queue` — POST returns
+    `processing` before the worker has even started
+  * `test_async_queue_eventually_flips_to_done` — drain queue, then
+    GET shows `done`
+
+A `_DeferredQueue` test impl captures the work without running it so
+the "processing" intermediate state can be asserted deterministically
+without timing.
 """
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
 from itertools import count
 
@@ -35,7 +45,9 @@ from app.services.moderation import (
 from app.services.moderation.types import Decision
 from app.services.review import (
     InMemoryReviewRepository,
+    InProcessWorkerQueue,
     ReviewService,
+    ReviewWorkerQueue,
     get_review_service,
 )
 from httpx import ASGITransport, AsyncClient
@@ -141,13 +153,67 @@ def _moderation(backend: object | None = None) -> ModerationService:
     )
 
 
+class _SyncWorkerQueue:
+    """Runs enqueued work inline so tests can assert on the final
+    persisted state without dealing with asyncio task scheduling.
+
+    Use this when the test cares about the *result* of the pipeline
+    (status flips, persisted turns, summary fields) — i.e. most of
+    them. Use `_DeferredQueue` when the test cares about the
+    intermediate `processing` state, and `InProcessWorkerQueue` for
+    the real production behavior end-to-end.
+    """
+
+    name = "sync"
+
+    async def enqueue(self, work: Callable[[], Awaitable[None]]) -> None:
+        await work()
+
+    async def wait_idle(self) -> None:
+        return None
+
+
+class _DeferredQueue:
+    """Captures enqueued work without running it.
+
+    Lets a test assert "POST returned processing because work hasn't
+    run yet" deterministically — no `asyncio.sleep`, no flake. The
+    test calls `await queue.run_pending()` to trigger the captured
+    work and then asserts on the final state.
+    """
+
+    name = "deferred"
+
+    def __init__(self) -> None:
+        self._pending: list[Callable[[], Awaitable[None]]] = []
+
+    async def enqueue(self, work: Callable[[], Awaitable[None]]) -> None:
+        self._pending.append(work)
+
+    async def wait_idle(self) -> None:
+        return None
+
+    async def run_pending(self) -> None:
+        pending = list(self._pending)
+        self._pending.clear()
+        for factory in pending:
+            await factory()
+
+
 def _deterministic_service(
     provider: object,
     *,
     moderation: ModerationService | None = None,
+    queue: ReviewWorkerQueue | None = None,
 ) -> tuple[ReviewService, InMemoryReviewRepository]:
     """Build a service with deterministic id factory + clock so tests
-    can assert on stable values without monkeypatching."""
+    can assert on stable values without monkeypatching.
+
+    Defaults `queue` to `_SyncWorkerQueue` so most tests can keep
+    asserting on the final state directly. Tests that exercise the
+    real async path override with `InProcessWorkerQueue()` or
+    `_DeferredQueue()`.
+    """
     repo = InMemoryReviewRepository()
     counter = count(1)
     clock_counter = count(0)
@@ -155,6 +221,7 @@ def _deterministic_service(
         repo=repo,
         provider=provider,  # type: ignore[arg-type]  # _FakeProvider satisfies LLMProvider structurally
         moderation=moderation or _moderation(),
+        queue=queue or _SyncWorkerQueue(),
         id_factory=lambda: f"up_test{next(counter):010d}",
         clock=lambda: datetime(2026, 5, 16, 10, next(clock_counter), tzinfo=UTC),
     )
@@ -749,3 +816,166 @@ async def test_input_moderation_backend_error_propagates(client: AsyncClient) ->
     # No upload row leaked — input mod ran before persistence.
     assert await repo.get("up_test0000000001") is None
     assert provider.call_count == 0
+
+
+# --------------------------------------------------------------------- #
+# Async queue — actual production behavior                               #
+# --------------------------------------------------------------------- #
+
+
+async def test_post_returns_processing_with_deferred_queue(client: AsyncClient) -> None:
+    """With a queue that hasn't run the work yet, POST returns the
+    row in its initial `processing` state — and the LLM has not been
+    called because the work was deferred.
+
+    This is the *whole point* of A-13: the route returns immediately
+    instead of blocking on the LLM round-trip + output moderation."""
+    queue = _DeferredQueue()
+    provider = _FakeProvider(_REVIEWER_OUTPUT)
+    service, repo = _deterministic_service(provider, queue=queue)
+    app.dependency_overrides[get_review_service] = lambda: service
+    token = mint_token(
+        user_id="u_adult",
+        persona_type="intern",
+        is_minor=False,
+        age_set=True,
+    )
+
+    post_resp = await client.post(
+        "/v1/review/uploads",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"text": _SAMPLE_TEXT},
+    )
+
+    assert post_resp.status_code == 200
+    body = post_resp.json()
+    assert body["status"] == "processing"
+    upload_id = body["upload_id"]
+
+    # The work was enqueued but not run yet. LLM untouched. Row exists
+    # in `processing` state.
+    assert provider.call_count == 0
+    record = await repo.get(upload_id)
+    assert record is not None
+    assert record.status == "processing"
+    assert record.turns == ()
+    assert record.summary_score is None
+
+
+async def test_deferred_queue_flips_status_to_done_when_drained(client: AsyncClient) -> None:
+    """The captured work, when run, drives the same `analyze_review`
+    → output mod → fold pipeline as the sync queue. After drain,
+    the GET reflects the final `done` state with the full record."""
+    queue = _DeferredQueue()
+    provider = _FakeProvider(_REVIEWER_OUTPUT)
+    service, _ = _deterministic_service(provider, queue=queue)
+    app.dependency_overrides[get_review_service] = lambda: service
+    token = mint_token(
+        user_id="u_adult",
+        persona_type="intern",
+        is_minor=False,
+        age_set=True,
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    post_resp = await client.post(
+        "/v1/review/uploads", headers=headers, json={"text": _SAMPLE_TEXT}
+    )
+    upload_id = post_resp.json()["upload_id"]
+    # Sanity: still processing before drain.
+    assert post_resp.json()["status"] == "processing"
+
+    await queue.run_pending()
+
+    get_resp = await client.get(f"/v1/review/uploads/{upload_id}", headers=headers)
+    assert get_resp.status_code == 200
+    body = get_resp.json()
+    assert body["status"] == "done"
+    assert body["summary"]["score"] == 6.4
+    assert len(body["turns"]) == 2
+
+
+async def test_in_process_queue_eventually_runs_work(client: AsyncClient) -> None:
+    """End-to-end with the real production queue: POST + wait_idle +
+    GET sees the final state. Verifies the asyncio.create_task wiring
+    actually runs the work — not just that the deferred-queue stand-in
+    works."""
+    queue = InProcessWorkerQueue()
+    provider = _FakeProvider(_REVIEWER_OUTPUT)
+    service, _ = _deterministic_service(provider, queue=queue)
+    app.dependency_overrides[get_review_service] = lambda: service
+    token = mint_token(
+        user_id="u_adult",
+        persona_type="intern",
+        is_minor=False,
+        age_set=True,
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    post_resp = await client.post(
+        "/v1/review/uploads", headers=headers, json={"text": _SAMPLE_TEXT}
+    )
+    upload_id = post_resp.json()["upload_id"]
+    assert post_resp.json()["status"] == "processing"
+
+    # Drain any in-flight background work spawned by the POST.
+    await queue.wait_idle()
+
+    get_resp = await client.get(f"/v1/review/uploads/{upload_id}", headers=headers)
+    assert get_resp.status_code == 200
+    assert get_resp.json()["status"] == "done"
+
+
+async def test_in_process_queue_swallows_unexpected_worker_exception(client: AsyncClient) -> None:
+    """If the worker crashes on something the service didn't catch
+    (e.g. a moderation backend raising during the OUTPUT pass —
+    actually we *do* catch that — so this test forces it via a backend
+    that raises a non-`ModerationBackendError` exception), the row
+    stays in `processing` and the asyncio task ends cleanly.
+
+    The user-facing impact: GET reports `processing` indefinitely.
+    The retry button on the frontend would let them try again — this
+    is the documented worst-case for the in-process queue (foundation
+    note: durability lands with the Redis migration in A-14+)."""
+
+    class _UnexpectedlyExplodingBackend:
+        name = "exploding_output"
+
+        async def evaluate(self, content: str, context: ModerationContext) -> Decision:
+            if context == "user_input":
+                return _ALLOW_DECISION
+            # Anything other than ModerationBackendError isn't caught
+            # by the service — simulates a programmer error / library
+            # crash in the moderation stack.
+            raise RuntimeError("unexpected output-mod crash")
+
+    queue = InProcessWorkerQueue()
+    provider = _FakeProvider(_REVIEWER_OUTPUT)
+    service, _ = _deterministic_service(
+        provider,
+        queue=queue,
+        moderation=_moderation(_UnexpectedlyExplodingBackend()),
+    )
+    app.dependency_overrides[get_review_service] = lambda: service
+    token = mint_token(
+        user_id="u_adult",
+        persona_type="intern",
+        is_minor=False,
+        age_set=True,
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    post_resp = await client.post(
+        "/v1/review/uploads", headers=headers, json={"text": _SAMPLE_TEXT}
+    )
+    assert post_resp.json()["status"] == "processing"
+    upload_id = post_resp.json()["upload_id"]
+
+    # `wait_idle` blocks until the task finishes — and it WILL finish
+    # cleanly because `_run_with_logging` catches all exceptions. The
+    # row remains in `processing`.
+    await queue.wait_idle()
+
+    get_resp = await client.get(f"/v1/review/uploads/{upload_id}", headers=headers)
+    assert get_resp.status_code == 200
+    assert get_resp.json()["status"] == "processing"

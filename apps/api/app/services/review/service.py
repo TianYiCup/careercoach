@@ -2,46 +2,46 @@
 
 Why this layer exists between the route and the repo
 -----------------------------------------------------
-A-9 landed the persistence shell, A-10 the LLM analyzer, A-11 the route
-shell. A-12 (this revision) adds the moderation cascade so PRD §3.0.5
-red-line content can't reach the LLM and any echo of it in the LLM
-output can't reach storage. The route stays HTTP plumbing; orchestration
-(id mint → input mod → persist → analyze → output mod → fold result →
-re-fetch) is one method here so future work (queue handoff, Langfuse
-trace, retry policy) only touches one file.
+A-9 landed the persistence shell, A-10 the LLM analyzer, A-11 the
+route shell, A-12 the moderation cascade, A-13 (this revision) the
+async queue. The route stays HTTP plumbing; orchestration (input mod
+→ persist → enqueue → return processing; worker runs analyze → output
+mod → fold result → status flip) is one place so future work
+(Langfuse trace, retry policy, Redis queue swap) only touches this
+file.
 
-Sync analysis for v0
---------------------
-v0 calls `analyze_review` synchronously inside `create_upload`. PRD
-§3.3 US-C1 L4 caps text at 5000 chars and budgets ≤ 2s end-to-end,
-which today's LLM round-trip just about fits. When the budget breaks
-(or we want retry / fan-out), the queue handoff lands in A-13+ and
-this method becomes "enqueue + return processing", with the worker
-calling `update_result` / `mark_failed` from the side. The repo
-contract is already idempotent (DELETE+INSERT on update), so the
-async migration is a strict superset of today's flow.
+Async flow (A-13)
+-----------------
+`create_upload` runs the input-side checks INLINE (input moderation
+must still gate before the row is created so a blocked upload leaves
+no orphan), persists the `processing` record, hands the rest off to
+`self._queue`, and returns the record with `status="processing"`.
 
-Moderation policy for review
-----------------------------
-INPUT moderation runs **before any persistence or LLM call** so a
-blocked upload leaves no orphan rows and burns no LLM budget. Verdict
-mapping mirrors `TurnService.validate_turn_request`:
+The worker side runs `_process_upload`, which:
+  1. calls `analyze_review` (LLM round-trip)
+  2. re-checks the LLM-generated coaching text against the moderation
+     backend (defence in depth)
+  3. folds the result via `update_result` OR drops it via `mark_failed`
+
+`UpdateResult` is idempotent (DELETE+INSERT on `review_turns`), so a
+crash mid-worker on a Redis-backed queue (A-14+) replays cleanly.
+
+Moderation policy for review (unchanged from A-12)
+--------------------------------------------------
+INPUT moderation runs **before any persistence**. Verdict mapping
+mirrors `TurnService.validate_turn_request`:
   * `block`    → raise `ReviewInputBlockedError` → route 400
-  * `warn`     → proceed (already promoted to `block` for minors via
-                 `_apply_minor_strictness`)
-  * `redirect` → proceed; the dedicated `/v1/moderation/check` endpoint
-                 is where the frontend renders the crisis-line resource
+  * `warn`     → proceed (minors had `warn` elevated to `block`
+                 inside the service via `_apply_minor_strictness`)
+  * `redirect` → proceed; `/v1/moderation/check` renders the resource
   * `allow`    → proceed
 
-OUTPUT moderation runs **after** the LLM call. The LLM could echo a
-red-line phrase from the user's text or generate one in `better`
-suggestions, so we re-check the concatenated reasons + better hints +
-summary lists. Verdict mapping is stricter — anything but `allow` /
-`warn` flips the upload to `failed` because we'd be storing harmful
-content otherwise. Backend errors during output moderation are caught
-and treated as "no signal, allow" so an Aliyun outage doesn't trash
-analyses the user already paid for; input-side backend errors stay
-uncaught (matches `TurnService` behavior — 5xx instead of silent pass).
+OUTPUT moderation runs inside the worker, on the concatenated
+LLM-generated coaching strings. Verdict mapping is stricter — anything
+but `allow` / `warn` flips the upload to `failed`. Output-side backend
+errors are caught and treated as "allow" so an Aliyun outage doesn't
+trash analyses the user already paid for; input-side backend errors
+stay uncaught (no orphan row exists yet — 5xx is the right signal).
 
 Ownership semantics for `get_upload`
 ------------------------------------
@@ -64,6 +64,7 @@ from app.schemas.moderation import ModerationCheckRequest
 from app.services.moderation.backend import ModerationBackendError
 from app.services.moderation.service import ModerationService
 from app.services.review.repository import ReviewRepository, ReviewUploadRecord
+from app.services.review.worker import ReviewWorkerQueue
 
 logger = structlog.get_logger(__name__)
 
@@ -103,8 +104,8 @@ class ReviewInputBlockedError(RuntimeError):
 
 class ReviewService:
     """Stateless helper — every request gets its own service call but
-    the underlying `repo`, `provider`, and `moderation` singletons are
-    shared."""
+    the underlying `repo`, `provider`, `moderation`, and `queue`
+    singletons are shared."""
 
     def __init__(
         self,
@@ -112,12 +113,14 @@ class ReviewService:
         repo: ReviewRepository,
         provider: LLMProvider,
         moderation: ModerationService,
+        queue: ReviewWorkerQueue,
         id_factory: _IdFactory | None = None,
         clock: _Clock | None = None,
     ) -> None:
         self._repo = repo
         self._provider = provider
         self._moderation = moderation
+        self._queue = queue
         self._id_factory: _IdFactory = id_factory or _default_id_factory
         self._clock: _Clock = clock or _default_clock
 
@@ -129,16 +132,19 @@ class ReviewService:
         is_minor: bool,
         trace_id: str,
     ) -> ReviewUploadRecord:
-        """Input moderation → mint id → persist `processing` → analyze →
-        output moderation → fold result → return canonical record.
+        """Input moderation → persist `processing` → enqueue worker → return record.
+
+        Returns the record in the `processing` state. The worker (run
+        by `self._queue`) flips it to `done` / `failed` afterwards.
+        Clients poll `GET /v1/review/uploads/{id}` to see the final
+        state.
 
         Raises `ReviewInputBlockedError` (route → 400) when input
-        moderation says block. LLM errors and output-moderation blocks
-        both flip the persisted upload to `status="failed"` and the
-        method still returns the record (route → 200).
+        moderation says block — no row is written and no LLM work is
+        scheduled.
         """
         # ---- INPUT MODERATION (pre-persist, pre-LLM) ----
-        # `block` short-circuits before any DB or LLM work. `warn` /
+        # `block` short-circuits before any DB or queue work. `warn` /
         # `redirect` proceed; minors had `warn` already elevated to
         # `block` inside the service via `_apply_minor_strictness`.
         input_decision = await self._moderation.check(
@@ -174,47 +180,25 @@ class ReviewService:
             )
         )
 
-        # ---- ANALYZE ----
-        try:
-            result = await analyze_review(self._provider, text=text)
-        except LLMError as exc:
-            logger.warning(
-                "review_llm_failed",
+        # ---- ENQUEUE the post-persist work ----
+        async def _do_analysis() -> None:
+            await self._process_upload(
                 upload_id=upload_id,
+                text=text,
+                user_id=user_id,
+                is_minor=is_minor,
                 trace_id=trace_id,
-                provider=getattr(self._provider, "name", "unknown"),
-                error=str(exc),
-            )
-            result = None
-
-        # ---- OUTPUT MODERATION (defence in depth) ----
-        if result is not None and not await self._output_passes_moderation(
-            result,
-            user_id=user_id,
-            is_minor=is_minor,
-            trace_id=trace_id,
-            upload_id=upload_id,
-        ):
-            result = None
-
-        # ---- FOLD result OR mark_failed ----
-        completed_at = self._clock()
-        if result is None:
-            await self._repo.mark_failed(upload_id, completed_at=completed_at)
-        else:
-            await self._repo.update_result(
-                upload_id,
-                turns=result.turns,
-                summary_score=result.summary_score,
-                summary_top_failures=result.summary_top_failures,
-                summary_improvements=result.summary_improvements,
-                completed_at=completed_at,
             )
 
+        await self._queue.enqueue(_do_analysis)
+
+        # Re-fetch so the route sees the canonical record. With the
+        # in-process queue the task hasn't started yet, so this returns
+        # the `processing` record we just wrote. (A `SyncWorkerQueue`
+        # test impl runs the work inline, in which case this returns
+        # the already-folded `done` / `failed` record — that's why the
+        # route's contract is "whatever status the record now has".)
         final = await self._repo.get(upload_id)
-        # We just wrote it, and `get` returns the same record we mutated.
-        # Defensive: if the repo somehow lost it, surface as a clean 5xx
-        # rather than handing the route a None and letting it silently 404.
         if final is None:
             raise RuntimeError(f"review repo lost upload_id {upload_id!r} immediately after write")
         return final
@@ -235,6 +219,58 @@ class ReviewService:
         if record is None or record.user_id != user_id:
             return None
         return record
+
+    async def _process_upload(
+        self,
+        *,
+        upload_id: str,
+        text: str,
+        user_id: str,
+        is_minor: bool,
+        trace_id: str,
+    ) -> None:
+        """Worker body — runs out-of-band on the queue.
+
+        Drives `analyze_review`, runs output moderation, folds the
+        result back via `update_result` OR drops it via `mark_failed`.
+        Any uncaught exception bubbles to `worker._run_with_logging`,
+        which logs and lets the task end with the row still in
+        `processing` — a polling client surfaces this as "still
+        analyzing" until the user retries.
+        """
+        try:
+            result: ReviewerResult | None = await analyze_review(self._provider, text=text)
+        except LLMError as exc:
+            logger.warning(
+                "review_llm_failed",
+                upload_id=upload_id,
+                trace_id=trace_id,
+                provider=getattr(self._provider, "name", "unknown"),
+                error=str(exc),
+            )
+            result = None
+
+        if result is not None and not await self._output_passes_moderation(
+            result,
+            user_id=user_id,
+            is_minor=is_minor,
+            trace_id=trace_id,
+            upload_id=upload_id,
+        ):
+            result = None
+
+        completed_at = self._clock()
+        if result is None:
+            await self._repo.mark_failed(upload_id, completed_at=completed_at)
+        else:
+            await self._repo.update_result(
+                upload_id,
+                turns=result.turns,
+                summary_score=result.summary_score,
+                summary_top_failures=result.summary_top_failures,
+                summary_improvements=result.summary_improvements,
+                completed_at=completed_at,
+            )
 
     async def _output_passes_moderation(
         self,
