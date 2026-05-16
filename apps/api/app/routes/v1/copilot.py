@@ -247,6 +247,7 @@ async def copilot_stream(
                 copilot_id=copilot_id,
                 user_id=record.user_id,
                 scenario_hint=record.scenario_hint,
+                privacy_level=record.privacy_level,
                 langfuse_client=langfuse_client,
             )
             # The user has moved on to a new utterance; any prior
@@ -334,6 +335,7 @@ async def _run_one_utterance(
     copilot_id: str,
     user_id: str,
     scenario_hint: str,
+    privacy_level: str,
     langfuse_client: Langfuse | None,
 ) -> tuple[_UtteranceResult, TurnTrace]:
     """Receive audio bytes + an `audio_end` control frame, transcribe,
@@ -387,6 +389,14 @@ async def _run_one_utterance(
         # cross-session filtering.
         metadata={"user_id": user_id},
         session_id=copilot_id,
+        # A-24: surface + privacy tags at creation. Verdict tag is
+        # added after moderation runs (below). `minor:false` is
+        # implicit and intentionally NOT tagged — copilot is
+        # adult-only by R-15.
+        tags=[
+            "surface:copilot",
+            f"privacy:{privacy_level}",
+        ],
     )
     trace.record_generation(
         name="transcribe",
@@ -417,6 +427,10 @@ async def _run_one_utterance(
                 "categories": list(decision.categories),
             },
         )
+        # A-24: verdict tag added now that moderation has run. Lets
+        # analysts filter for traces that hit a particular outcome
+        # (e.g. all `verdict:redirect` for crisis-line escalations).
+        trace.add_tags([f"verdict:{decision.verdict}"])
 
     verdict = decision.verdict if decision is not None else None
     trace.finish(output={"final_text": final_text, "verdict": verdict})

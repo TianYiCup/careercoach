@@ -407,3 +407,123 @@ def test_session_id_omitted_when_not_provided() -> None:
 
     _, kwargs = client.trace.call_args
     assert "session_id" not in kwargs
+
+
+# ---------------------------------------------------------------------
+# A-24 — `tags` pass-through + `add_tags` mid-trace mutation.
+# ---------------------------------------------------------------------
+
+
+def test_initial_tags_passed_to_client_trace() -> None:
+    """A-24: initial tags reach the underlying client.trace call so
+    they're visible in the Langfuse UI from trace creation onward."""
+    from app.observability.langfuse import begin_copilot_trace
+
+    client = MagicMock(name="langfuse")
+    client.trace.return_value = MagicMock(name="trace")
+
+    begin_copilot_trace(
+        client,
+        input={"x": 1},
+        metadata={"y": 2},
+        tags=["surface:copilot", "privacy:high"],
+    )
+
+    _, kwargs = client.trace.call_args
+    assert kwargs["tags"] == ["surface:copilot", "privacy:high"]
+
+
+def test_tags_omitted_when_empty() -> None:
+    """No `tags=` arg → no `tags` kwarg on the underlying call so
+    legacy call sites stay byte-identical."""
+    from app.observability.langfuse import begin_turn_trace
+
+    client = MagicMock(name="langfuse")
+    client.trace.return_value = MagicMock(name="trace")
+
+    begin_turn_trace(client, input={"x": 1}, metadata={"y": 2})
+
+    _, kwargs = client.trace.call_args
+    assert "tags" not in kwargs
+
+
+def test_add_tags_extends_and_resends_full_union() -> None:
+    """Langfuse v2's `update(tags=...)` REPLACES — so to "add" a tag
+    mid-trace we re-send the full union. `add_tags` keeps the wrapper's
+    internal list and calls `_trace.update(tags=...)` with the
+    extended set."""
+    from app.observability.langfuse import begin_turn_trace
+
+    client = MagicMock(name="langfuse")
+    inner_trace = MagicMock(name="trace")
+    client.trace.return_value = inner_trace
+
+    trace = begin_turn_trace(client, input={}, metadata={}, tags=["surface:sandbox"])
+    trace.add_tags(["verdict:allow"])
+
+    inner_trace.update.assert_called_once_with(tags=["surface:sandbox", "verdict:allow"])
+
+
+def test_add_tags_dedupes_duplicate_inserts() -> None:
+    """Calling `add_tags` with a tag that's already on the trace must
+    not double-list it (the Langfuse UI would show duplicates and
+    saved filters would break). Insertion order preserved."""
+    from app.observability.langfuse import begin_turn_trace
+
+    client = MagicMock(name="langfuse")
+    inner_trace = MagicMock(name="trace")
+    client.trace.return_value = inner_trace
+
+    trace = begin_turn_trace(
+        client,
+        input={},
+        metadata={},
+        tags=["surface:sandbox", "minor:false"],
+    )
+    trace.add_tags(["surface:sandbox", "verdict:allow"])
+
+    # Only the new tag was added; the duplicate was ignored.
+    inner_trace.update.assert_called_once_with(
+        tags=["surface:sandbox", "minor:false", "verdict:allow"]
+    )
+
+
+def test_add_tags_noop_when_client_is_none() -> None:
+    """No-op no-langfuse contract: `add_tags` on a no-op TurnTrace
+    must not raise. Otherwise dev-without-Langfuse runs would crash
+    on the first verdict-tag call."""
+    from app.observability.langfuse import begin_turn_trace
+
+    trace = begin_turn_trace(None, input={}, metadata={}, tags=["surface:sandbox"])
+
+    trace.add_tags(["verdict:allow"])  # No raise; nothing to send.
+
+
+def test_add_tags_noop_on_empty_input() -> None:
+    """`add_tags([])` is a no-op — avoids a useless re-send of the
+    existing tag list."""
+    from app.observability.langfuse import begin_turn_trace
+
+    client = MagicMock(name="langfuse")
+    inner_trace = MagicMock(name="trace")
+    client.trace.return_value = inner_trace
+
+    trace = begin_turn_trace(client, input={}, metadata={}, tags=["surface:sandbox"])
+    trace.add_tags([])
+
+    inner_trace.update.assert_not_called()
+
+
+def test_add_tags_swallows_underlying_failure() -> None:
+    """Same fail-open story as `record_generation` / `finish` —
+    observability errors must never propagate out and abort the
+    user-facing pipeline."""
+    from app.observability.langfuse import begin_turn_trace
+
+    client = MagicMock(name="langfuse")
+    inner_trace = MagicMock(name="trace")
+    inner_trace.update.side_effect = RuntimeError("flush failed")
+    client.trace.return_value = inner_trace
+
+    trace = begin_turn_trace(client, input={}, metadata={}, tags=["surface:sandbox"])
+    trace.add_tags(["verdict:allow"])  # No raise.

@@ -269,6 +269,14 @@ class ReviewService:
                 "is_minor": is_minor,
             },
             session_id=upload_id,
+            # A-24: surface + minor tags for cross-cutting Langfuse
+            # filtering. `minor:true` is the load-bearing one — it
+            # lets analysts isolate moderation behaviors that only
+            # fire for under-18 callers (PRD §3.0.5 C).
+            tags=[
+                "surface:review",
+                f"minor:{'true' if is_minor else 'false'}",
+            ],
         )
 
         try:
