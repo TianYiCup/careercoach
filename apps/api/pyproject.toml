@@ -112,6 +112,9 @@ ignore = [
 # transcribe loop.
 "app/asr/**/*.py" = ["ASYNC109"]
 "tests/test_asr_*.py" = ["ASYNC109"]
+# Copilot WS tests speak Chinese in coach-prompt fixtures and stub
+# LLMProvider with the contract-required `timeout=` parameter.
+"tests/test_copilot_*.py" = ["RUF001", "RUF002", "RUF003", "ASYNC109"]
 
 [tool.ruff.format]
 quote-style = "double"
