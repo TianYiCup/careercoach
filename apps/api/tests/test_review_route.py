@@ -1038,7 +1038,8 @@ async def test_review_emits_one_trace_per_upload_with_generation(
 
     # One top-level trace, named `review_upload`. `upload_id` lifts to
     # the Langfuse top-level `session_id` field (A-23) — used to be
-    # in `input`.
+    # in `input`. Initial tags are surface + minor (A-24) +
+    # verdict_input (A-25).
     langfuse.trace.assert_called_once()  # type: ignore[attr-defined]
     _trace_args, trace_kwargs = langfuse.trace.call_args  # type: ignore[attr-defined]
     assert trace_kwargs["name"] == "review_upload"
@@ -1046,6 +1047,11 @@ async def test_review_emits_one_trace_per_upload_with_generation(
     assert trace_kwargs["input"]["text_len"] == len(_SAMPLE_TEXT)
     assert trace_kwargs["metadata"]["user_id"] == "u_adult"
     assert trace_kwargs["metadata"]["is_minor"] is False
+    assert trace_kwargs["tags"] == [
+        "surface:review",
+        "minor:false",
+        "verdict_input:allow",
+    ]
 
     # One generation under that trace — the analyze_review LLM call.
     inner_trace.generation.assert_called_once()  # type: ignore[attr-defined]
@@ -1070,6 +1076,167 @@ async def test_review_emits_one_trace_per_upload_with_generation(
     assert final_call.kwargs["output"]["upload_id"] == upload_id
     assert final_call.kwargs["output"]["status"] == "done"
     assert final_call.kwargs["output"]["turn_count"] == 2
+
+
+async def test_input_warn_verdict_tagged_on_trace(client: AsyncClient) -> None:
+    """A-25: when input moderation returns `warn` (adult passes through),
+    the trace's initial tags include `verdict_input:warn` so analysts
+    can filter for the soft-flag uploads without joining the DB."""
+    backend = _FakeModBackend(
+        {
+            "WARN_TRIGGER": Decision(
+                verdict="warn",
+                score=0.4,
+                categories=("harassment",),
+            ),
+        }
+    )
+    langfuse, _trace, _gen = _mock_langfuse_client()
+    provider = _FakeProvider(_REVIEWER_OUTPUT)
+    service, _ = _deterministic_service(
+        provider,
+        moderation=_moderation(backend),
+        langfuse_client=langfuse,
+    )
+    app.dependency_overrides[get_review_service] = lambda: service
+    token = mint_token(
+        user_id="u_adult",
+        persona_type="intern",
+        is_minor=False,
+        age_set=True,
+    )
+
+    resp = await client.post(
+        "/v1/review/uploads",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"text": "WARN_TRIGGER but should still be analysed"},
+    )
+
+    assert resp.status_code == 200
+    _, trace_kwargs = langfuse.trace.call_args  # type: ignore[attr-defined]
+    assert "verdict_input:warn" in trace_kwargs["tags"]
+
+
+async def test_output_block_adds_verdict_output_tag(client: AsyncClient) -> None:
+    """A-25: when output moderation blocks the LLM-produced text,
+    `verdict_output:block` is appended via add_tags so analysts can
+    spot the rare "LLM said something bad" cases without joining
+    against the review audit table."""
+    # Reviewer output mirrors `test_output_block_flips_upload_to_failed`
+    # so any parser quirk doesn't bleed in.
+    reviewer_with_red_line = (
+        "TURN 0 | VERDICT: neutral\n"
+        "TURN 1 | VERDICT: lose | REASON: too cold | BETTER: BAD_OUTPUT_PHRASE here\n"
+        "---\n"
+        "SCORE: 6.4\n"
+        "TOP_FAILURES: a\n"
+        "IMPROVEMENTS: b"
+    )
+    backend = _FakeModBackend(
+        {
+            "BAD_OUTPUT_PHRASE": Decision(
+                verdict="block",
+                score=0.92,
+                categories=("violence",),
+            ),
+        }
+    )
+    langfuse, inner_trace, _ = _mock_langfuse_client()
+    provider = _FakeProvider(reviewer_with_red_line)
+    service, _ = _deterministic_service(
+        provider,
+        moderation=_moderation(backend),
+        langfuse_client=langfuse,
+    )
+    app.dependency_overrides[get_review_service] = lambda: service
+    token = mint_token(
+        user_id="u_adult",
+        persona_type="intern",
+        is_minor=False,
+        age_set=True,
+    )
+
+    # Use _SAMPLE_TEXT (2 turns) so the reviewer parser keeps the
+    # synthetic TURN 1 line — otherwise turn-count mismatch drops it
+    # and BAD_OUTPUT_PHRASE never reaches the moderation flatten.
+    resp = await client.post(
+        "/v1/review/uploads",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"text": _SAMPLE_TEXT},
+    )
+
+    # Upload completes with failed status (output dropped).
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "failed"
+
+    # The trace got a `verdict_output:block` tag via add_tags. Find
+    # the tags= update call; the value re-sends the full union so
+    # initial tags are still there.
+    tag_calls = [
+        c
+        for c in inner_trace.update.call_args_list  # type: ignore[attr-defined]
+        if "tags" in c.kwargs
+    ]
+    assert tag_calls, "expected at least one tags= update for the output verdict"
+    final_tags = tag_calls[-1].kwargs["tags"]
+    assert "verdict_output:block" in final_tags
+    # Initial tags survive the union — A-24's merge semantics.
+    assert "surface:review" in final_tags
+    assert "verdict_input:allow" in final_tags
+
+
+async def test_no_output_verdict_tag_when_backend_fails(client: AsyncClient) -> None:
+    """A-25: when the output moderation backend itself raises, we
+    treat-as-allow but explicitly DON'T tag `verdict_output:allow`
+    — that would be misleading. The trace just shows the input tag
+    and no output tag."""
+
+    class _OutputOnlyRaisingBackend:
+        name = "output_raising"
+
+        async def evaluate(self, content: str, context: ModerationContext) -> Decision:
+            if context == "user_input":
+                return _ALLOW_DECISION
+            raise ModerationBackendError("output mod down", backend=self.name)
+
+    langfuse, inner_trace, _ = _mock_langfuse_client()
+    provider = _FakeProvider(_REVIEWER_OUTPUT)
+    service, _ = _deterministic_service(
+        provider,
+        moderation=_moderation(_OutputOnlyRaisingBackend()),
+        langfuse_client=langfuse,
+    )
+    app.dependency_overrides[get_review_service] = lambda: service
+    token = mint_token(
+        user_id="u_adult",
+        persona_type="intern",
+        is_minor=False,
+        age_set=True,
+    )
+
+    resp = await client.post(
+        "/v1/review/uploads",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"text": _SAMPLE_TEXT},
+    )
+
+    # Output survives despite backend failure (treat-as-allow).
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "done"
+
+    # But no verdict_output tag — backend never produced a decision.
+    tag_calls = [
+        c
+        for c in inner_trace.update.call_args_list  # type: ignore[attr-defined]
+        if "tags" in c.kwargs
+    ]
+    # Either no tag updates at all, or any that happened don't carry
+    # a verdict_output: prefix.
+    for call in tag_calls:
+        for tag in call.kwargs["tags"]:
+            assert not tag.startswith("verdict_output:"), (
+                f"unexpected verdict_output tag when backend failed: {tag}"
+            )
 
 
 async def test_review_trace_marks_error_when_worker_crashes(client: AsyncClient) -> None:

@@ -189,6 +189,12 @@ class ReviewService:
         )
 
         # ---- ENQUEUE the post-persist work ----
+        # `input_verdict` rides through to `_process_upload` so the
+        # Langfuse trace can tag it (A-25). `block` already early-
+        # returned above, so this is always `allow` / `warn` /
+        # `redirect` — meaningful enough for analysts to filter on.
+        input_verdict = input_decision.verdict
+
         async def _do_analysis() -> None:
             await self._process_upload(
                 upload_id=upload_id,
@@ -196,6 +202,7 @@ class ReviewService:
                 user_id=user_id,
                 is_minor=is_minor,
                 trace_id=trace_id,
+                input_verdict=input_verdict,
             )
 
         await self._queue.enqueue(_do_analysis)
@@ -236,6 +243,7 @@ class ReviewService:
         user_id: str,
         is_minor: bool,
         trace_id: str,
+        input_verdict: str,
     ) -> None:
         """Worker body — runs out-of-band on the queue.
 
@@ -273,9 +281,14 @@ class ReviewService:
             # filtering. `minor:true` is the load-bearing one — it
             # lets analysts isolate moderation behaviors that only
             # fire for under-18 callers (PRD §3.0.5 C).
+            # A-25: input verdict tag (`allow` / `warn` / `redirect`;
+            # `block` early-returned before this trace exists). The
+            # output verdict from the post-analysis re-check is added
+            # later via `add_tags` once `_run_analysis_traced` knows it.
             tags=[
                 "surface:review",
                 f"minor:{'true' if is_minor else 'false'}",
+                f"verdict_input:{input_verdict}",
             ],
         )
 
@@ -331,14 +344,25 @@ class ReviewService:
             output=_summarize_result_for_trace(result),
         )
 
-        if result is not None and not await self._output_passes_moderation(
-            result,
-            user_id=user_id,
-            is_minor=is_minor,
-            trace_id=trace_id,
-            upload_id=upload_id,
-        ):
-            result = None
+        if result is not None:
+            output_passed, output_verdict = await self._output_passes_moderation(
+                result,
+                user_id=user_id,
+                is_minor=is_minor,
+                trace_id=trace_id,
+                upload_id=upload_id,
+            )
+            # A-25: tag the output-side verdict so analysts can
+            # filter for traces where the LLM's coaching text itself
+            # tripped a red-line (rare but operationally interesting).
+            # `output_verdict is None` when there was no LLM text to
+            # check (every turn neutral) OR when the moderation
+            # backend itself failed — in both cases we treat-as-allow
+            # so no tag is added.
+            if output_verdict is not None:
+                trace.add_tags([f"verdict_output:{output_verdict}"])
+            if not output_passed:
+                result = None
 
         completed_at = self._clock()
         final_status: str
@@ -373,8 +397,19 @@ class ReviewService:
         is_minor: bool,
         trace_id: str,
         upload_id: str,
-    ) -> bool:
+    ) -> tuple[bool, str | None]:
         """Re-check LLM-generated coaching text against the red-line list.
+
+        Returns `(passes, verdict)`:
+          * `passes`: True when the output is safe to surface;
+                     False on `block` / `redirect`.
+          * `verdict`: the literal moderation verdict for trace
+                     tagging (A-25). None when there's nothing to
+                     check (empty coaching text) or the backend
+                     itself failed — both cases convert to "allow"
+                     from the caller's perspective but we want
+                     Langfuse to NOT show a false `verdict_output:allow`
+                     tag for them, hence None.
 
         The user-uploaded text already passed input moderation, but the
         LLM's `reason` / `better` suggestions could echo or rephrase
@@ -392,7 +427,7 @@ class ReviewService:
         if not text:
             # No coaching text was generated (all turns neutral / win
             # with no extra commentary). Nothing to re-check.
-            return True
+            return True, None
 
         try:
             decision = await self._moderation.check(
@@ -408,7 +443,7 @@ class ReviewService:
                 trace_id=trace_id,
                 error=str(exc),
             )
-            return True
+            return True, None
 
         if decision.verdict in ("block", "redirect"):
             logger.warning(
@@ -418,8 +453,8 @@ class ReviewService:
                 verdict=decision.verdict,
                 categories=list(decision.categories),
             )
-            return False
-        return True
+            return False, decision.verdict
+        return True, decision.verdict
 
 
 def _summarize_result_for_trace(result: ReviewerResult | None) -> dict[str, object]:
