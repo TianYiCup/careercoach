@@ -25,7 +25,7 @@ that the future `GET /v1/copilot/sessions/{copilot_id}` will use.
 from __future__ import annotations
 
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Protocol
 
@@ -36,6 +36,19 @@ from app.services.copilot.repository import (
     CopilotSessionRecord,
     PrivacyLevel,
 )
+
+
+class CopilotSessionNotFound(Exception):
+    """Raised by `connect_session` when the copilot_id is unknown.
+    The WS layer maps this to close code 4404."""
+
+
+class CopilotSessionUnavailable(Exception):
+    """Raised by `connect_session` when the row exists but is not in
+    `pending` state — already-connected or already-ended. v0 has no
+    reconnect; a dropped WS forces a fresh POST. The WS layer maps
+    this to close code 4409."""
+
 
 logger = structlog.get_logger(__name__)
 
@@ -123,3 +136,55 @@ class CopilotService:
             privacy_level=privacy_level,
         )
         return CreateSessionResult(record=record, ws_url=ws_url)
+
+    async def connect_session(self, copilot_id: str) -> CopilotSessionRecord:
+        """Flip a pending row to `connected` and return the updated record.
+
+        Used by the WS handler on accept. Raises:
+          * `CopilotSessionNotFound` — id was never POSTed (or the row
+            was purged); WS closes 4404.
+          * `CopilotSessionUnavailable` — row exists but already
+            connected or ended; WS closes 4409.
+
+        The fetch + transition is *not* atomic against a concurrent
+        second connect — the in-memory repo is single-threaded per
+        worker, and the postgres impl serializes via row-level lock on
+        the next call to `mark_connected`. A concurrent double-connect
+        in postgres can race; we accept that for v0 because the
+        copilot_id has 64 bits of entropy and the only legitimate
+        client is the one that just got the POST response.
+        """
+        record = await self._repo.get(copilot_id)
+        if record is None:
+            logger.info("copilot_connect_unknown", copilot_id=copilot_id)
+            raise CopilotSessionNotFound(copilot_id)
+        if record.status != "pending":
+            logger.info(
+                "copilot_connect_unavailable",
+                copilot_id=copilot_id,
+                current_status=record.status,
+            )
+            raise CopilotSessionUnavailable(copilot_id, record.status)
+        connected_at = self._clock()
+        await self._repo.mark_connected(copilot_id, connected_at=connected_at)
+        logger.info(
+            "copilot_session_connected",
+            copilot_id=copilot_id,
+            user_id=record.user_id,
+        )
+        return replace(record, status="connected", connected_at=connected_at)
+
+    async def end_session(self, copilot_id: str) -> None:
+        """Flip a connected row to `ended`. Idempotent — calling it on
+        an already-ended row is a no-op (the repo's mark_ended is a
+        silent no-op on missing rows; on present rows it just
+        overwrites status + ended_at, so a duplicate end is harmless).
+
+        Called from the WS handler's `finally` so a normal close, an
+        unexpected exception, or a transport drop all converge on the
+        same persistence outcome. The handler only invokes this if
+        `connect_session` succeeded — see the route for the gating.
+        """
+        ended_at = self._clock()
+        await self._repo.mark_ended(copilot_id, ended_at=ended_at)
+        logger.info("copilot_session_ended", copilot_id=copilot_id)
