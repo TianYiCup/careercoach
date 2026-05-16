@@ -34,7 +34,7 @@ started Langfuse locally still has a working app.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
 import structlog
@@ -109,16 +109,23 @@ class TurnTrace:
     """Wrapper around a Langfuse trace handle (or `None` for no-op mode).
 
     The wrapper exists so `TurnService.stream_turn` can call
-    `record_generation` / `finish` / `fail` unconditionally — null
-    checks live here once, not at every LLM call site. When the
+    `record_generation` / `finish` / `fail` / `add_tags` unconditionally
+    — null checks live here once, not at every LLM call site. When the
     underlying `_trace` is `None`, every method short-circuits.
 
     `_trace` is typed `Any` because langfuse v2's `StatefulTraceClient`
     isn't part of its public namespace; tests patch in a `MagicMock`
     of the same shape.
+
+    `_tags` is the cumulative tag list (A-24). Stored in the wrapper
+    because Langfuse v2's `trace.update(tags=...)` REPLACES rather
+    than appends, so to add a tag mid-trace we have to re-send the
+    full union. `field(default_factory=list)` keeps the dataclass
+    frozen while still allowing the *contents* of the list to mutate.
     """
 
     _trace: Any | None
+    _tags: list[str] = field(default_factory=list)
 
     def record_generation(
         self,
@@ -170,6 +177,28 @@ class TurnTrace:
         except Exception:
             logger.exception("langfuse_trace_fail_failed")
 
+    def add_tags(self, tags: list[str]) -> None:
+        """Append `tags` to the trace's tag list (A-24).
+
+        Langfuse v2's `update(tags=...)` REPLACES — so we keep the
+        cumulative list in `_tags` and re-send the full union on each
+        add. Duplicates are de-duped while preserving insertion order
+        (Python 3.7+ dict ordering) so the Langfuse UI shows a stable
+        tag list even when callers double-tag (e.g. a verdict-tag added
+        twice after a re-moderation).
+
+        No-op when `_trace` is None or `tags` is empty.
+        """
+        if self._trace is None or not tags:
+            return
+        for tag in tags:
+            if tag not in self._tags:
+                self._tags.append(tag)
+        try:
+            self._trace.update(tags=list(self._tags))
+        except Exception:
+            logger.exception("langfuse_trace_tag_update_failed", tag_count=len(tags))
+
 
 def begin_turn_trace(
     client: Langfuse | None,
@@ -177,6 +206,7 @@ def begin_turn_trace(
     input: dict[str, Any],
     metadata: dict[str, Any] | None = None,
     session_id: str | None = None,
+    tags: list[str] | None = None,
 ) -> TurnTrace:
     """Start a Langfuse trace for one `/turns` SSE call.
 
@@ -184,6 +214,11 @@ def begin_turn_trace(
     (A-23) so analysts can use Langfuse's session-grouping UI to see
     all traces for a given sandbox session. Callers should pass the
     sandbox `session_id`. None disables grouping.
+
+    `tags` is the initial tag set (A-24) for cross-cutting filtering
+    on the Langfuse UI (e.g. `surface:sandbox`, `minor:true`). Tags
+    can be added mid-trace via `TurnTrace.add_tags` once outcomes
+    like moderation verdict are known.
 
     Returns a `TurnTrace` whose methods are no-ops when `client` is
     `None`, so the caller doesn't need to branch on dev vs. prod.
@@ -194,6 +229,7 @@ def begin_turn_trace(
         input=input,
         metadata=metadata,
         session_id=session_id,
+        tags=tags,
     )
 
 
@@ -203,6 +239,7 @@ def begin_review_trace(
     input: dict[str, Any],
     metadata: dict[str, Any] | None = None,
     session_id: str | None = None,
+    tags: list[str] | None = None,
 ) -> TurnTrace:
     """Start a Langfuse trace for one review upload analysis.
 
@@ -222,6 +259,7 @@ def begin_review_trace(
         input=input,
         metadata=metadata,
         session_id=session_id,
+        tags=tags,
     )
 
 
@@ -231,6 +269,7 @@ def begin_copilot_trace(
     input: dict[str, Any],
     metadata: dict[str, Any] | None = None,
     session_id: str | None = None,
+    tags: list[str] | None = None,
 ) -> TurnTrace:
     """Start a Langfuse trace for one copilot WS utterance.
 
@@ -254,6 +293,7 @@ def begin_copilot_trace(
         input=input,
         metadata=metadata,
         session_id=session_id,
+        tags=tags,
     )
 
 
@@ -264,20 +304,25 @@ def _begin_named_trace(
     input: dict[str, Any],
     metadata: dict[str, Any] | None,
     session_id: str | None = None,
+    tags: list[str] | None = None,
 ) -> TurnTrace:
     """Internal helper — the only difference between trace entry points
     is the `name` field; everything else (null-client handling, error
-    swallowing, return shape, session_id pass-through) is identical.
-    Keeping it in one place means a future change to that contract
-    (e.g. attaching tags, propagating tenant ids) only touches one
-    function.
+    swallowing, return shape, session_id / tags pass-through) is
+    identical. Keeping it in one place means a future change to that
+    contract (e.g. attaching tenant ids) only touches one function.
 
-    `session_id` is omitted from the underlying `client.trace(...)`
-    call when None so we don't burn a positional kwarg slot on every
-    legacy call site that doesn't have a session to group by.
+    `session_id` and `tags` are omitted from the underlying
+    `client.trace(...)` call when None / empty so we don't burn kwarg
+    slots on every legacy call site that doesn't need them.
+
+    Initial tags are also stored on the `TurnTrace` wrapper so a
+    later `add_tags` call can re-send the full union (Langfuse v2's
+    `update(tags=...)` REPLACES rather than appends).
     """
     if client is None:
         return TurnTrace(_trace=None)
+    initial_tags = list(tags) if tags else []
     try:
         trace_kwargs: dict[str, Any] = {
             "name": name,
@@ -286,11 +331,18 @@ def _begin_named_trace(
         }
         if session_id is not None:
             trace_kwargs["session_id"] = session_id
+        if initial_tags:
+            # Pass a copy so later `add_tags` mutations don't appear
+            # retroactively in `client.trace`'s recorded kwargs (matters
+            # for MagicMock-based tests + for the SDK's own argument
+            # snapshot semantics — Langfuse v2 doesn't deep-copy
+            # incoming lists in every code path).
+            trace_kwargs["tags"] = list(initial_tags)
         trace = client.trace(**trace_kwargs)
     except Exception:
         logger.exception("langfuse_trace_create_failed", trace_name=name)
         return TurnTrace(_trace=None)
-    return TurnTrace(_trace=trace)
+    return TurnTrace(_trace=trace, _tags=initial_tags)
 
 
 __all__ = [

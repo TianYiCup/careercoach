@@ -797,6 +797,93 @@ def test_multi_utterance_creates_one_trace_per_utterance(client: TestClient) -> 
     assert lf_client.trace.call_count == 2
 
 
+def test_initial_tags_include_surface_and_privacy(client: TestClient) -> None:
+    """A-24: trace creation gets `surface:copilot` + `privacy:standard`
+    as initial tags so analysts can filter the Langfuse session UI
+    without parsing trace names."""
+    lf_client, _trace = _install_langfuse_mock()
+    service, repo = _build_service()
+    app.dependency_overrides[get_copilot_service] = lambda: service
+    _seed_pending(repo, "cop_test0000000001")  # default privacy=standard
+
+    with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
+        ws.send_bytes(b"hi")
+        ws.send_text(_AUDIO_END_FRAME)
+        for _ in range(3):
+            ws.receive_json()
+
+    _, kwargs = lf_client.trace.call_args
+    assert kwargs["tags"] == ["surface:copilot", "privacy:standard"]
+
+
+def test_initial_tags_reflect_high_privacy_level(client: TestClient) -> None:
+    """A-24: `privacy:high` rides through from the persisted record.
+    Important because the future on-device-ASR path (US-B3) flips
+    behavior on this — analysts need to spot it on the trace UI."""
+    lf_client, _trace = _install_langfuse_mock()
+    service, repo = _build_service()
+    app.dependency_overrides[get_copilot_service] = lambda: service
+    _seed_pending(repo, "cop_test0000000001", privacy_level="high")
+
+    with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
+        ws.send_bytes(b"hi")
+        ws.send_text(_AUDIO_END_FRAME)
+        for _ in range(3):
+            ws.receive_json()
+
+    _, kwargs = lf_client.trace.call_args
+    assert kwargs["tags"] == ["surface:copilot", "privacy:high"]
+
+
+def test_verdict_tag_added_after_moderation_runs(client: TestClient) -> None:
+    """A-24: once moderation produces a verdict, `verdict:xxx` is
+    appended to the trace's tag list via `add_tags`. Lets analysts
+    filter for all `verdict:redirect` (crisis-line escalations) etc.
+    without joining against the DB."""
+    _install_moderation(with_dict=True)
+    _lf_client, trace = _install_langfuse_mock()
+    service, repo = _build_service()
+    app.dependency_overrides[get_copilot_service] = lambda: service
+    _seed_pending(repo, "cop_test0000000001")
+
+    with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
+        ws.send_bytes("我想死".encode())  # self_harm → verdict:redirect
+        ws.send_text(_AUDIO_END_FRAME)
+        for _ in range(3):
+            ws.receive_json()
+
+    # The trace's update was called at least twice: once for tag
+    # extension (with verdict:redirect appended) and once for finish
+    # (output payload). Find the tag-update call.
+    tag_calls = [c for c in trace.update.call_args_list if "tags" in c.kwargs]
+    assert tag_calls, "expected at least one tags= update for the verdict tag"
+    final_tag_call = tag_calls[-1]
+    assert final_tag_call.kwargs["tags"] == [
+        "surface:copilot",
+        "privacy:standard",
+        "verdict:redirect",
+    ]
+
+
+def test_no_verdict_tag_when_utterance_is_empty(client: TestClient) -> None:
+    """Empty utterance skips moderation entirely; therefore no
+    `verdict:xxx` tag is added. The initial tags stay as-is."""
+    lf_client, trace = _install_langfuse_mock()
+    service, repo = _build_service()
+    app.dependency_overrides[get_copilot_service] = lambda: service
+    _seed_pending(repo, "cop_test0000000001")
+
+    with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
+        ws.send_text(_AUDIO_END_FRAME)
+        ws.receive_json()  # asr_final empty
+
+    # Trace was created with the initial tags...
+    _, kwargs = lf_client.trace.call_args
+    assert kwargs["tags"] == ["surface:copilot", "privacy:standard"]
+    # ...and never updated with a verdict tag (no tags= call).
+    assert not any("tags" in c.kwargs for c in trace.update.call_args_list)
+
+
 # --------------------------------------------------------------------- #
 # Error paths — close-code contract                                      #
 # --------------------------------------------------------------------- #

@@ -233,6 +233,10 @@ class TurnService:
                 "scenario_id": session.scenario_id,
             },
             session_id=validated.session_id,
+            # A-24: surface tag for cross-cutting Langfuse filtering.
+            # Verdict + minor tags are deferred until ValidatedTurn
+            # carries the moderation context out of validate_turn_request.
+            tags=["surface:sandbox"],
         )
 
         try:
