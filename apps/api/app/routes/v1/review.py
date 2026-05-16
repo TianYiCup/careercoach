@@ -21,8 +21,9 @@ by status code.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 
+from app.middleware import get_request_id
 from app.schemas.review import (
     CreateReviewUploadRequest,
     CreateReviewUploadResponse,
@@ -32,6 +33,7 @@ from app.schemas.review import (
 )
 from app.services.auth import CurrentUser, require_age_set
 from app.services.review import (
+    ReviewInputBlockedError,
     ReviewService,
     ReviewUploadRecord,
     get_review_service,
@@ -45,6 +47,12 @@ router = APIRouter(prefix="/review", tags=["review"])
     response_model=CreateReviewUploadResponse,
     summary="Upload a conversation transcript for review (sync analysis, text-only)",
     responses={
+        400: {
+            "description": (
+                "`USER_INPUT_BLOCKED` — moderation flagged the uploaded text "
+                "as red-line content (PRD §3.0.5). Body lists the categories."
+            ),
+        },
         401: {"description": "Missing or invalid bearer token."},
         403: {
             "description": "`AGE_REQUIRED` if the JWT lacks `age_set=true` (PRD §1.5).",
@@ -53,14 +61,38 @@ router = APIRouter(prefix="/review", tags=["review"])
 )
 async def create_review_upload(
     payload: CreateReviewUploadRequest,
+    request: Request,
     current: CurrentUser = Depends(require_age_set),
     service: ReviewService = Depends(get_review_service),
 ) -> CreateReviewUploadResponse:
     """Sync today: analyzes the transcript inside the request and
     returns `done` / `failed`. Full turns + summary live on the GET
     detail route — keeps the POST envelope identical to the A-8 lock
-    so B's generated client doesn't churn."""
-    record = await service.create_upload(text=payload.text, user_id=current.user_id)
+    so B's generated client doesn't churn.
+
+    `current.is_minor` flows into the moderation cascade so the strict
+    tier (PRD §3.0.5 C) fires for under-18 users — `warn` from the
+    backend is elevated to a `block` verdict, which the route surfaces
+    as USER_INPUT_BLOCKED instead of letting an edge-case message
+    through to the LLM."""
+    try:
+        record = await service.create_upload(
+            text=payload.text,
+            user_id=current.user_id,
+            is_minor=current.is_minor,
+            trace_id=get_request_id(request),
+        )
+    except ReviewInputBlockedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "USER_INPUT_BLOCKED",
+                "message": (
+                    "review input blocked by content moderation "
+                    f"({', '.join(exc.categories) or 'unknown'})"
+                ),
+            },
+        ) from exc
     return CreateReviewUploadResponse(upload_id=record.upload_id, status=record.status)
 
 
