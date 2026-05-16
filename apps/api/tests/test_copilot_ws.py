@@ -1,27 +1,31 @@
-"""WebSocket scaffold tests for `/v1/copilot/sessions/{copilot_id}/stream`.
+"""WebSocket audio-bridge tests for `/v1/copilot/sessions/{copilot_id}/stream`.
 
-A-16 wires the WS endpoint that pairs with A-15's POST + persistence.
-This is a SCAFFOLD: the only "logic" inside the connection is an echo
-loop. A later PR replaces the echo with real ASR + LLM-hint streaming
-(the package was originally penciled in as A-17 — order flipped so the
-ASR adapter can land after we know the WS handshake shape).
+A-16 shipped the scaffold with an echo loop. A-18 replaces the echo
+with the real audio bridge: bytes frames carry audio, a text control
+frame `{"type":"audio_end"}` terminates each utterance, and the server
+emits `asr_partial` / `asr_final` events back to the client.
 
 What's locked here (do not regress)
 -----------------------------------
-    happy path        → mark_connected on accept, echo loop, mark_ended on close
+    handshake          → mark_connected (status flips, connected_at populated)
+    audio bytes        → DummyASR emits a partial per chunk
+    audio_end frame    → DummyASR emits exactly one final
+    multi-utterance    → second audio_end starts the next utterance
+    client disconnect  → mark_ended (status flips, ended_at populated)
     unknown copilot_id → WS close 4404 (UNKNOWN_COPILOT)
     already-used id    → WS close 4409 (SESSION_ALREADY_USED)
-    user_id attribution stays the JWT-derived value from the POST
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from itertools import count
 
 import pytest
+from app.asr import get_asr_provider
 from app.main import app
 from app.services.copilot import (
     CopilotService,
@@ -34,6 +38,7 @@ from starlette.websockets import WebSocketDisconnect
 
 _WS_BASE_URL = "ws://test.local"
 _SEED_CREATED_AT = datetime(2026, 5, 16, 11, 59, tzinfo=UTC)
+_AUDIO_END_FRAME = json.dumps({"type": "audio_end"})
 
 
 def _build_service() -> tuple[CopilotService, InMemoryCopilotRepository]:
@@ -79,9 +84,13 @@ def client() -> Iterator[TestClient]:
     """Sync TestClient — WS support is sync-only in starlette. The
     async `httpx` fixture used by the POST tests can't speak the WS
     handshake protocol, so we keep this fixture parallel-but-separate."""
+    # ASR factory is process-wide cached; clear so a stale dummy from
+    # an earlier test doesn't leak into the next.
+    get_asr_provider.cache_clear()
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
+    get_asr_provider.cache_clear()
 
 
 # --------------------------------------------------------------------- #
@@ -109,37 +118,111 @@ def test_handshake_flips_status_to_connected(client: TestClient) -> None:
         assert mid.ended_at is None
 
 
-def test_echo_loop_round_trips_text(client: TestClient) -> None:
-    """The scaffold echoes whatever the client sends, wrapped in a
-    typed envelope. A-16's contract is `{"type": "echo", "text": ...}`
-    so the future real-hint payloads can keep the same envelope and
-    just add new `type` values without breaking the client."""
+def test_single_utterance_emits_partial_then_final(client: TestClient) -> None:
+    """Send two audio chunks then `audio_end`; expect two partials
+    (cumulative transcript) followed by exactly one final. This is
+    the contract a future real ASR vendor will match — DummyASR is
+    just the in-process echo for tests + dev runs."""
     service, repo = _build_service()
     app.dependency_overrides[get_copilot_service] = lambda: service
     _seed_pending(repo, "cop_test0000000001")
 
     with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
-        ws.send_text("hello K")
-        msg = ws.receive_json()
+        ws.send_bytes(b"hello ")
+        ws.send_bytes(b"world")
+        ws.send_text(_AUDIO_END_FRAME)
+        events = [ws.receive_json() for _ in range(3)]
 
-    assert msg == {"type": "echo", "text": "hello K"}
+    assert events == [
+        {"type": "asr_partial", "text": "hello "},
+        {"type": "asr_partial", "text": "hello world"},
+        {"type": "asr_final", "text": "hello world"},
+    ]
 
 
-def test_multiple_messages_all_echoed_in_order(client: TestClient) -> None:
-    """The receive→send loop runs forever until disconnect. Three
-    messages in, three echoes out, in order."""
+def test_single_chunk_utterance(client: TestClient) -> None:
+    """One chunk + audio_end → one partial + one final. The minimum
+    viable utterance the bridge must handle."""
     service, repo = _build_service()
     app.dependency_overrides[get_copilot_service] = lambda: service
     _seed_pending(repo, "cop_test0000000001")
 
-    sent = ["one", "two", "three"]
-    received: list[dict[str, str]] = []
     with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
-        for text in sent:
-            ws.send_text(text)
-            received.append(ws.receive_json())
+        ws.send_bytes(b"hi")
+        ws.send_text(_AUDIO_END_FRAME)
+        events = [ws.receive_json() for _ in range(2)]
 
-    assert received == [{"type": "echo", "text": t} for t in sent]
+    assert events == [
+        {"type": "asr_partial", "text": "hi"},
+        {"type": "asr_final", "text": "hi"},
+    ]
+
+
+def test_empty_utterance_emits_only_final(client: TestClient) -> None:
+    """`audio_end` with zero bytes between → exactly one final with
+    empty text. Real ASR vendors emit the same shape (silence still
+    finalizes); the bridge must not collapse the event."""
+    service, repo = _build_service()
+    app.dependency_overrides[get_copilot_service] = lambda: service
+    _seed_pending(repo, "cop_test0000000001")
+
+    with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
+        ws.send_text(_AUDIO_END_FRAME)
+        event = ws.receive_json()
+
+    assert event == {"type": "asr_final", "text": ""}
+
+
+def test_multi_utterance_in_one_connection(client: TestClient) -> None:
+    """Two utterances in one connection — the bridge loops cleanly
+    after each `audio_end`. This is the steady-state usage pattern
+    for the copilot session: many short utterances, one WS upgrade."""
+    service, repo = _build_service()
+    app.dependency_overrides[get_copilot_service] = lambda: service
+    _seed_pending(repo, "cop_test0000000001")
+
+    with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
+        # Utterance 1
+        ws.send_bytes(b"first")
+        ws.send_text(_AUDIO_END_FRAME)
+        first = [ws.receive_json() for _ in range(2)]
+
+        # Utterance 2
+        ws.send_bytes(b"second")
+        ws.send_text(_AUDIO_END_FRAME)
+        second = [ws.receive_json() for _ in range(2)]
+
+    assert first == [
+        {"type": "asr_partial", "text": "first"},
+        {"type": "asr_final", "text": "first"},
+    ]
+    assert second == [
+        {"type": "asr_partial", "text": "second"},
+        {"type": "asr_final", "text": "second"},
+    ]
+
+
+def test_unknown_text_frames_are_ignored(client: TestClient) -> None:
+    """A text frame that isn't `audio_end` (and isn't valid JSON, or
+    is JSON with an unknown `type`) must be silently dropped. The
+    bridge doesn't error on garbage from the client — it just keeps
+    accumulating audio. Tightening to "raise on unknown" later is
+    easy; loosening from "raise" to "ignore" later breaks clients."""
+    service, repo = _build_service()
+    app.dependency_overrides[get_copilot_service] = lambda: service
+    _seed_pending(repo, "cop_test0000000001")
+
+    with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
+        ws.send_text("not even json")
+        ws.send_text(json.dumps({"type": "something_else"}))
+        ws.send_bytes(b"ok")
+        ws.send_text(_AUDIO_END_FRAME)
+        events = [ws.receive_json() for _ in range(2)]
+
+    assert events == [
+        {"type": "asr_partial", "text": "ok"},
+        {"type": "asr_final", "text": "ok"},
+    ]
 
 
 def test_client_disconnect_flips_status_to_ended(client: TestClient) -> None:
@@ -152,7 +235,11 @@ def test_client_disconnect_flips_status_to_ended(client: TestClient) -> None:
     _seed_pending(repo, "cop_test0000000001")
 
     with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
-        ws.send_text("noop")
+        # Send + receive at least one utterance so we exercise the
+        # multi-utterance loop path before disconnect.
+        ws.send_bytes(b"noop")
+        ws.send_text(_AUDIO_END_FRAME)
+        ws.receive_json()
         ws.receive_json()
     # Context exit closes the WS — server's finally block flips status.
 
@@ -161,9 +248,25 @@ def test_client_disconnect_flips_status_to_ended(client: TestClient) -> None:
     assert final.status == "ended"
     assert final.connected_at is not None
     assert final.ended_at is not None
-    # ended_at strictly after connected_at because each clock() call
-    # advances the deterministic counter.
     assert final.ended_at > final.connected_at
+
+
+def test_disconnect_mid_utterance_still_flips_ended(client: TestClient) -> None:
+    """Client disconnects without sending audio_end — server still
+    runs mark_ended. The half-finished utterance is dropped (we don't
+    finalize on disconnect, only on audio_end). Future ASR vendors
+    that emit on silence will get the same handling."""
+    service, repo = _build_service()
+    app.dependency_overrides[get_copilot_service] = lambda: service
+    _seed_pending(repo, "cop_test0000000001")
+
+    with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
+        ws.send_bytes(b"partial")
+        # No audio_end — just close.
+
+    final = asyncio.run(repo.get("cop_test0000000001"))
+    assert final is not None
+    assert final.status == "ended"
 
 
 # --------------------------------------------------------------------- #
