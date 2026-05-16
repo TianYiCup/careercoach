@@ -164,11 +164,12 @@ def _install_llm(
     *,
     chunks: tuple[str, ...] = (),
     raises: Exception | None = None,
-) -> None:
+) -> _StubLLMRouter:
     """Install a stub LLMRouter. Defaults to no-chunks so audio-bridge
     tests don't see hint events."""
     stub = _StubLLMRouter(chunks=chunks, raises=raises)
     app.dependency_overrides[get_llm_router] = lambda: stub
+    return stub
 
 
 def _install_langfuse_mock() -> tuple[MagicMock, MagicMock]:
@@ -521,6 +522,76 @@ def test_llm_failure_emits_hint_error(client: TestClient) -> None:
 
     assert events[3] == {"type": "hint_error", "message": "hint unavailable"}
     assert next_partial == {"type": "asr_partial", "text": "again"}
+
+
+async def test_cancel_in_flight_hints_cancels_pending_and_swallows_errors() -> None:
+    """A-22: `_cancel_in_flight_hints` cancels every not-yet-done
+    task in the set and awaits them all (swallowing CancelledError /
+    any other late-arriving exception). Direct unit test of the
+    helper so we don't have to thread cancellation timing through
+    the WS TestClient portal."""
+    from app.routes.v1.copilot import _cancel_in_flight_hints
+
+    cancelled_seen: list[bool] = []
+
+    async def slow_task() -> None:
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            cancelled_seen.append(True)
+            raise
+
+    async def fast_task() -> None:
+        # Already done by the time we call cancel — must be skipped
+        # from the pending list.
+        return
+
+    tasks: set[asyncio.Task[None]] = {asyncio.create_task(slow_task()) for _ in range(3)}
+    done_task = asyncio.create_task(fast_task())
+    await done_task
+    tasks.add(done_task)
+
+    await _cancel_in_flight_hints(tasks, copilot_id="cop_unit")
+
+    # All three slow tasks observed CancelledError. The fast (already
+    # done) task contributed nothing.
+    assert cancelled_seen == [True, True, True]
+    # No exception leaked despite the CancelledError storm.
+
+
+async def test_cancel_in_flight_hints_no_op_on_empty_set() -> None:
+    """The set may be empty if no hints were ever spawned (every
+    utterance was empty / blocked). Helper must short-circuit cleanly."""
+    from app.routes.v1.copilot import _cancel_in_flight_hints
+
+    await _cancel_in_flight_hints(set(), copilot_id="cop_unit")
+
+
+def test_multi_utterance_hint_does_not_leak_into_next_utterance(
+    client: TestClient,
+) -> None:
+    """End-to-end sanity that the cancel-between-utterances behavior
+    keeps utterance N+1's event stream clean. Uses the default
+    no-chunks LLM stub so we exercise the multi-utterance flow
+    without long-running tasks confusing the TestClient portal — the
+    cancel helper is unit-tested above for the actual cancellation
+    semantics."""
+    service, repo = _build_service()
+    app.dependency_overrides[get_copilot_service] = lambda: service
+    _seed_pending(repo, "cop_test0000000001")
+
+    with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
+        ws.send_bytes(b"first")
+        ws.send_text(_AUDIO_END_FRAME)
+        u1 = [ws.receive_json() for _ in range(3)]
+        ws.send_bytes(b"second")
+        ws.send_text(_AUDIO_END_FRAME)
+        u2 = [ws.receive_json() for _ in range(3)]
+
+    # No hint events leaked between utterances. Each utterance's
+    # event stream is partial → final → moderation, full stop.
+    assert [e["type"] for e in u1] == ["asr_partial", "asr_final", "moderation"]
+    assert [e["type"] for e in u2] == ["asr_partial", "asr_final", "moderation"]
 
 
 def test_empty_llm_stream_emits_no_hint_events(client: TestClient) -> None:

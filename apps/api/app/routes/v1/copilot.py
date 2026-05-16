@@ -206,7 +206,12 @@ async def copilot_stream(
     3. Multi-utterance loop: for each utterance, run the audio bridge
        until `audio_end` or disconnect, moderate the final text, and
        (if verdict allows) spawn a background hint task.
-    4. Client disconnect (or any exception) drains in-flight hint
+    4. When the NEXT utterance completes, any still-in-flight hints
+       from prior utterances are cancelled (A-22) — they're no
+       longer relevant once the user has moved on. Tokens already
+       streamed to the client stay visible; the missing `hint_done`
+       is the client's signal that the prior hint was superseded.
+    5. Client disconnect (or any exception) drains in-flight hint
        tasks, then runs `end_session` — flips the row to `ended` and
        stamps `ended_at`.
 
@@ -244,6 +249,12 @@ async def copilot_stream(
                 scenario_hint=record.scenario_hint,
                 langfuse_client=langfuse_client,
             )
+            # The user has moved on to a new utterance; any prior
+            # hint that hasn't finished is now stale. Cancel here so
+            # the LLM stream stops billing tokens and no further
+            # `hint_delta` / `hint_done` events arrive for content
+            # the user no longer cares about.
+            await _cancel_in_flight_hints(hint_tasks, copilot_id=copilot_id)
             if _should_spawn_hint(result):
                 task = asyncio.create_task(
                     _stream_coach_hint(
@@ -260,13 +271,41 @@ async def copilot_stream(
     except WebSocketDisconnect:
         logger.info("copilot_ws_disconnected", copilot_id=copilot_id)
     finally:
-        # Drain in-flight hints so the LLM call completes (or fails)
-        # before we declare the session ended. Errors are swallowed —
-        # the hint task already logged + emitted hint_error if it
-        # could; nothing actionable left at this point.
-        if hint_tasks:
-            await asyncio.gather(*hint_tasks, return_exceptions=True)
+        # Final drain — at session end, prefer cancelling the
+        # in-flight LLM call over waiting for it to complete: the user
+        # is gone, the WS is closing, no one will see the tokens.
+        await _cancel_in_flight_hints(hint_tasks, copilot_id=copilot_id)
         await service.end_session(copilot_id)
+
+
+async def _cancel_in_flight_hints(
+    hint_tasks: set[asyncio.Task[None]],
+    *,
+    copilot_id: str,
+) -> None:
+    """Cancel and drain all not-yet-done hint tasks.
+
+    Called between utterances (the new audio supersedes the prior
+    hint) and once more in the outer `finally` (session is ending).
+    Done tasks are skipped — `task.cancel()` on a finished task is
+    a no-op, but `gather` would still re-raise their stored
+    exceptions; filtering keeps the gather call clean.
+
+    Errors from cancelled tasks are swallowed: `CancelledError` is
+    expected, and any other late-arriving exception was already
+    logged by `_stream_coach_hint`'s own try/except.
+    """
+    pending = [t for t in hint_tasks if not t.done()]
+    if not pending:
+        return
+    for task in pending:
+        task.cancel()
+    logger.info(
+        "copilot_hint_tasks_cancelled",
+        copilot_id=copilot_id,
+        count=len(pending),
+    )
+    await asyncio.gather(*pending, return_exceptions=True)
 
 
 @dataclass(frozen=True)
