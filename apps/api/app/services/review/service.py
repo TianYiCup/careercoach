@@ -57,9 +57,11 @@ from datetime import UTC, datetime
 from typing import Protocol
 
 import structlog
+from langfuse import Langfuse
 
 from app.agents.reviewer import ReviewerResult, analyze_review
 from app.llm import LLMError, LLMProvider
+from app.observability.langfuse import TurnTrace, begin_review_trace
 from app.schemas.moderation import ModerationCheckRequest
 from app.services.moderation.backend import ModerationBackendError
 from app.services.moderation.service import ModerationService
@@ -114,6 +116,7 @@ class ReviewService:
         provider: LLMProvider,
         moderation: ModerationService,
         queue: ReviewWorkerQueue,
+        langfuse_client: Langfuse | None = None,
         id_factory: _IdFactory | None = None,
         clock: _Clock | None = None,
     ) -> None:
@@ -121,6 +124,11 @@ class ReviewService:
         self._provider = provider
         self._moderation = moderation
         self._queue = queue
+        # `None` is a real, supported value — when LANGFUSE_* keys
+        # aren't configured `get_langfuse_client` returns None and
+        # `begin_review_trace` degrades to a no-op `TurnTrace`. Dev
+        # runs without a Langfuse instance work unchanged.
+        self._langfuse_client = langfuse_client
         self._id_factory: _IdFactory = id_factory or _default_id_factory
         self._clock: _Clock = clock or _default_clock
 
@@ -237,7 +245,57 @@ class ReviewService:
         which logs and lets the task end with the row still in
         `processing` — a polling client surfaces this as "still
         analyzing" until the user retries.
+
+        Wrapped in a Langfuse `review_upload` trace so the LLM call
+        shows up alongside `/turns` traces in the Langfuse UI. The
+        trace's `record_generation` span captures the analyze_review
+        round-trip; the trace's final `output` carries upload_id +
+        status so analysts can filter `failed` runs without joining
+        against the DB. When `LANGFUSE_*` keys aren't configured the
+        trace is a no-op (`begin_review_trace` returns a no-op
+        `TurnTrace`) so dev runs aren't slowed down.
         """
+        trace = begin_review_trace(
+            self._langfuse_client,
+            input={
+                "upload_id": upload_id,
+                "text_len": len(text),
+            },
+            metadata={
+                "user_id": user_id,
+                "trace_id": trace_id,
+                "is_minor": is_minor,
+            },
+        )
+
+        try:
+            await self._run_analysis_traced(
+                upload_id=upload_id,
+                text=text,
+                user_id=user_id,
+                is_minor=is_minor,
+                trace_id=trace_id,
+                trace=trace,
+            )
+        except Exception as exc:
+            # `_run_with_logging` (in `worker.py`) is what eventually
+            # catches + logs this; calling `trace.fail` here makes the
+            # Langfuse UI show the trace as ERROR before the worker
+            # wrapper logs the structured event. The exception then
+            # re-raises so the wrapper's `logger.exception` path runs.
+            trace.fail(exc)
+            raise
+
+    async def _run_analysis_traced(
+        self,
+        *,
+        upload_id: str,
+        text: str,
+        user_id: str,
+        is_minor: bool,
+        trace_id: str,
+        trace: TurnTrace,
+    ) -> None:
         try:
             result: ReviewerResult | None = await analyze_review(self._provider, text=text)
         except LLMError as exc:
@@ -250,6 +308,18 @@ class ReviewService:
             )
             result = None
 
+        # Record the analyze_review LLM call as one generation under
+        # this trace. We record even on `None` so failed analyses show
+        # up on the Langfuse UI with empty output — otherwise an
+        # operator looking at a `failed` upload would see the trace
+        # but no generation span, which is harder to debug.
+        trace.record_generation(
+            name="analyze_review",
+            model=getattr(self._provider, "name", "unknown"),
+            input={"text_len": len(text)},
+            output=_summarize_result_for_trace(result),
+        )
+
         if result is not None and not await self._output_passes_moderation(
             result,
             user_id=user_id,
@@ -260,8 +330,10 @@ class ReviewService:
             result = None
 
         completed_at = self._clock()
+        final_status: str
         if result is None:
             await self._repo.mark_failed(upload_id, completed_at=completed_at)
+            final_status = "failed"
         else:
             await self._repo.update_result(
                 upload_id,
@@ -271,6 +343,16 @@ class ReviewService:
                 summary_improvements=result.summary_improvements,
                 completed_at=completed_at,
             )
+            final_status = "done"
+
+        trace.finish(
+            output={
+                "upload_id": upload_id,
+                "status": final_status,
+                "summary_score": result.summary_score if result is not None else None,
+                "turn_count": len(result.turns) if result is not None else 0,
+            }
+        )
 
     async def _output_passes_moderation(
         self,
@@ -327,6 +409,24 @@ class ReviewService:
             )
             return False
         return True
+
+
+def _summarize_result_for_trace(result: ReviewerResult | None) -> dict[str, object]:
+    """Compress a `ReviewerResult` into a small dict for the Langfuse
+    `generation.output` field. We never log the raw `text` (PII risk)
+    or the full `better` suggestions (verbose, and the persisted row
+    has them anyway). The summary makes the Langfuse UI useful for
+    "did the LLM produce anything reasonable" inspection without
+    being a privacy hazard."""
+    if result is None:
+        return {"parsed": False}
+    return {
+        "parsed": True,
+        "turn_count": len(result.turns),
+        "summary_score": result.summary_score,
+        "top_failure_count": len(result.summary_top_failures),
+        "improvement_count": len(result.summary_improvements),
+    }
 
 
 def _flatten_for_moderation(result: ReviewerResult) -> str:
