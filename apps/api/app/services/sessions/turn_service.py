@@ -113,7 +113,15 @@ class ValidatedTurn:
     SSE error frames, which clients handle inconsistently.
     """
 
-    __slots__ = ("content", "prior_turns", "session_id", "trace_id", "user_id")
+    __slots__ = (
+        "content",
+        "input_verdict",
+        "is_minor",
+        "prior_turns",
+        "session_id",
+        "trace_id",
+        "user_id",
+    )
 
     def __init__(
         self,
@@ -123,12 +131,20 @@ class ValidatedTurn:
         user_id: str,
         trace_id: str,
         prior_turns: list[TurnRecord],
+        is_minor: bool = False,
+        input_verdict: str = "allow",
     ) -> None:
         self.session_id = session_id
         self.content = content
         self.user_id = user_id
         self.trace_id = trace_id
         self.prior_turns = prior_turns
+        # A-26: carried out of validate_turn_request so stream_turn can
+        # tag the Langfuse trace without re-running moderation. Default
+        # values keep older test harnesses that build ValidatedTurn
+        # directly from passing.
+        self.is_minor = is_minor
+        self.input_verdict = input_verdict
 
 
 class TurnService:
@@ -201,6 +217,8 @@ class TurnService:
             user_id=user_id,
             trace_id=trace_id,
             prior_turns=prior_turns,
+            is_minor=is_minor,
+            input_verdict=decision.verdict,
         )
 
     async def stream_turn(self, validated: ValidatedTurn) -> AsyncIterator[SseFrame]:
@@ -233,10 +251,23 @@ class TurnService:
                 "scenario_id": session.scenario_id,
             },
             session_id=validated.session_id,
-            # A-24: surface tag for cross-cutting Langfuse filtering.
-            # Verdict + minor tags are deferred until ValidatedTurn
-            # carries the moderation context out of validate_turn_request.
-            tags=["surface:sandbox"],
+            # A-24/A-26: cross-cutting Langfuse filter tags.
+            #   surface:sandbox  — which of the three surfaces this is
+            #   minor:{t|f}      — strict-tier moderation was applied
+            #   verdict:{...}    — moderation decision on user input
+            #
+            # Sandbox uses a single `verdict:` key (matching copilot)
+            # because only the user input is moderated. Review uses
+            # `verdict_input:` + `verdict_output:` because it moderates
+            # both. Mixing the keys would let an analyst filter
+            # `verdict:block` and see review traces where the LLM
+            # output was bad mixed with sandbox traces where the
+            # user text was bad.
+            tags=[
+                "surface:sandbox",
+                f"minor:{'true' if validated.is_minor else 'false'}",
+                f"verdict:{validated.input_verdict}",
+            ],
         )
 
         try:
