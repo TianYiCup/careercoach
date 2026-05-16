@@ -1,32 +1,36 @@
 """Realtime copilot endpoints — PRD §7.5.
 
-This module exists *primarily as a compliance attach point* — see
-`docs/b-side-review-2026-05-15/` and the risk register entry R-15
-("未成年人误用副驾产生录音合规问题"). The 副驾 flow involves voice
-recording and is explicitly forbidden for minors by PRD §1.5 / §3.0.5
-C and the algorithm filing commitment. By landing the route shell
-*before* any ASR / WebSocket / hint pipeline arrives, the
-`require_adult` gate is guaranteed to fire on day one of the eventual
-business logic — there is no "we forgot to add the dependency"
-failure mode possible.
+A-8 wired the POST stub with the `require_adult` compliance gate.
+A-15 (this module) replaces the 501 with the real handler that mints
+a copilot_id, persists a `pending` row, and returns the canonical
+WebSocket URL the client connects to.
 
-v0.1 contract:
+A-15 does NOT ship the WebSocket endpoint itself — that's A-17. The
+`ws_url` returned here points at the future endpoint; the client can
+prepare its connection state ahead of time. (Frontend must handle
+"WS handshake failed" gracefully anyway for network drops, so this
+is no new behavior — the URL just isn't connectable yet.)
+
+Compliance attach point
+-----------------------
+`require_adult` chains through `require_age_set`, so the failure
+ladder is:
   * No token                  → 401 UNAUTHORIZED
-  * Token, age_set=False      → 403 AGE_REQUIRED   (chained via require_adult → require_age_set)
+  * Token, age_set=False      → 403 AGE_REQUIRED
   * Token, is_minor=True      → 403 MINOR_FORBIDDEN
-  * Token, adult, age set     → 501 NOT_IMPLEMENTED
+  * Token, adult, age set     → 200 (real handler runs)
 
-When the real handler lands, replace `not_implemented(...)` with the
-business logic — the dependency chain stays as-is.
+R-15 in PRD §11.2 (未成年人误用副驾) is the load-bearing constraint
+that makes the minor gate non-negotiable.
 """
 
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from app.routes.v1._stub import STUB_RESPONSES, not_implemented
 from app.schemas.copilot import CreateCopilotSessionRequest, CreateCopilotSessionResponse
 from app.services.auth import CurrentUser, require_adult
+from app.services.copilot import CopilotService, get_copilot_service
 
 router = APIRouter(prefix="/copilot", tags=["copilot"])
 
@@ -34,9 +38,8 @@ router = APIRouter(prefix="/copilot", tags=["copilot"])
 @router.post(
     "/sessions",
     response_model=CreateCopilotSessionResponse,
-    summary="Create a realtime copilot session (stub — adult-only gate)",
+    summary="Create a realtime copilot session",
     responses={
-        **STUB_RESPONSES,
         401: {"description": "Missing or invalid bearer token."},
         403: {
             "description": (
@@ -49,10 +52,21 @@ router = APIRouter(prefix="/copilot", tags=["copilot"])
 async def create_copilot_session(
     payload: CreateCopilotSessionRequest,
     current: CurrentUser = Depends(require_adult),
+    service: CopilotService = Depends(get_copilot_service),
 ) -> CreateCopilotSessionResponse:
-    """Validate body, run the adult-only gate, then 501 until the real
-    realtime backend lands. The schema is honored so B can already
-    generate the client — the 501 just signals "wired but not built"."""
-    _ = payload  # validated via Pydantic; no-op in v0.1
-    _ = current  # gate consumed via Depends; no-op in v0.1
-    raise not_implemented("POST /v1/copilot/sessions")
+    """Mint a copilot session row and return the WebSocket URL.
+
+    No LLM call, no moderation in this handler — copilot is
+    adult-only (gate-enforced) and the audio + transcript moderation
+    lives in the WS handler (A-17+). A-15 just persists the session
+    intent so the WS endpoint can look it up on connect.
+    """
+    result = await service.create_session(
+        scenario_hint=payload.scenario_hint,
+        privacy_level=payload.privacy_level,
+        user_id=current.user_id,
+    )
+    return CreateCopilotSessionResponse(
+        copilot_id=result.record.copilot_id,
+        ws_url=result.ws_url,
+    )
