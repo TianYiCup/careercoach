@@ -81,8 +81,8 @@ class Settings(BaseSettings):
     review_repo_backend: Literal["memory", "postgres"] = Field(default="memory")
 
     # Copilot (副驾) session persistence — same defaulting rule.
-    # A-15 ships the schema + repo + create_session route; A-17 will
-    # add the WS endpoint that flips status via mark_connected /
+    # A-15 shipped the schema + repo + create_session route; A-16
+    # shipped the WS endpoint that flips status via mark_connected /
     # mark_ended on this same repo.
     copilot_repo_backend: Literal["memory", "postgres"] = Field(default="memory")
 
@@ -90,12 +90,23 @@ class Settings(BaseSettings):
     # service appends `/v1/copilot/sessions/{copilot_id}/stream`. v0
     # dev runs against `ws://localhost:8000`; production sets this to
     # the realtime gateway hostname. A-15 ships the URL in the POST
-    # response; A-17 ships the actual endpoint at that path.
+    # response; A-16 shipped the actual endpoint at that path.
     copilot_ws_base_url: str = Field(
         default="ws://localhost:8000",
         description=(
             "Base URL for copilot WebSocket connections (no trailing slash). "
             "Service appends /v1/copilot/sessions/{copilot_id}/stream."
+        ),
+    )
+
+    # ASR backend selection — A-17 ships only `dummy` (UTF-8 echo for
+    # tests + dev). A future PR widens this Literal with `aliyun`
+    # and/or `tencent` and flips the production default. The Literal
+    # type guarantees an unsupported value fails at config load.
+    asr_backend: Literal["dummy"] = Field(
+        default="dummy",
+        description=(
+            "ASR provider backend. v0.17 only supports `dummy`; real vendors land in a follow-up."
         ),
     )
 

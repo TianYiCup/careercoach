@@ -107,6 +107,11 @@ ignore = [
 "app/llm/**/*.py" = ["ASYNC109"]
 "tests/test_llm_*.py" = ["ASYNC109"]
 "tests/test_agents_*.py" = ["ASYNC109"]
+# Same rationale for ASR — `timeout=` is part of the ASRProvider
+# contract so adapters can apply it end-to-end across the streaming
+# transcribe loop.
+"app/asr/**/*.py" = ["ASYNC109"]
+"tests/test_asr_*.py" = ["ASYNC109"]
 
 [tool.ruff.format]
 quote-style = "double"
