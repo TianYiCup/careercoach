@@ -20,6 +20,9 @@ Entry points:
     `/turns` SSE pipeline uses it.
   * `begin_review_trace(...)` opens a `review_upload`-named trace;
     the review-mode background worker (A-13) uses it.
+  * `begin_copilot_trace(...)` opens a `copilot_utterance`-named
+    trace; the copilot WS handler (A-21) opens one per utterance and
+    attaches `transcribe` / `moderate` / `coach_hint` generations.
 
 Dev no-op contract
 ------------------
@@ -208,6 +211,29 @@ def begin_review_trace(
     )
 
 
+def begin_copilot_trace(
+    client: Langfuse | None,
+    *,
+    input: dict[str, Any],
+    metadata: dict[str, Any] | None = None,
+) -> TurnTrace:
+    """Start a Langfuse trace for one copilot WS utterance.
+
+    Used by the copilot WS handler (A-21). The handler opens one trace
+    per `audio_end` and attaches `transcribe` / `moderate` /
+    `coach_hint` generations as the utterance progresses. A unique
+    trace per utterance (rather than per WS connection) keeps the
+    Langfuse timeline readable even for long sessions and lets
+    analysts filter on individual problematic moments.
+    """
+    return _begin_named_trace(
+        client,
+        name="copilot_utterance",
+        input=input,
+        metadata=metadata,
+    )
+
+
 def _begin_named_trace(
     client: Langfuse | None,
     *,
@@ -236,6 +262,7 @@ def _begin_named_trace(
 
 __all__ = [
     "TurnTrace",
+    "begin_copilot_trace",
     "begin_review_trace",
     "begin_turn_trace",
     "get_langfuse_client",

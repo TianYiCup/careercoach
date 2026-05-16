@@ -29,6 +29,7 @@ import json
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime
 from itertools import count
+from unittest.mock import MagicMock
 
 import pytest
 from app.asr import get_asr_provider
@@ -36,6 +37,7 @@ from app.llm import LLMAuthError, Message
 from app.llm.factory import get_llm_router
 from app.llm.provider import DEFAULT_TEMPERATURE, DEFAULT_TIMEOUT_SECONDS
 from app.main import app
+from app.observability.langfuse import get_langfuse_client
 from app.services.copilot import (
     CopilotService,
     CopilotSessionRecord,
@@ -167,6 +169,18 @@ def _install_llm(
     tests don't see hint events."""
     stub = _StubLLMRouter(chunks=chunks, raises=raises)
     app.dependency_overrides[get_llm_router] = lambda: stub
+
+
+def _install_langfuse_mock() -> tuple[MagicMock, MagicMock]:
+    """Install a MagicMock Langfuse client so trace integration tests
+    can assert on the calls our code makes. Returns (client, trace)
+    so tests can drill into both."""
+    client = MagicMock(name="langfuse_client")
+    trace = MagicMock(name="trace")
+    trace.generation.return_value = MagicMock(name="generation")
+    client.trace.return_value = trace
+    app.dependency_overrides[get_langfuse_client] = lambda: client
+    return client, trace
 
 
 @pytest.fixture
@@ -531,6 +545,183 @@ def test_empty_llm_stream_emits_no_hint_events(client: TestClient) -> None:
         next_event = ws.receive_json()
 
     assert next_event == {"type": "asr_partial", "text": "again"}
+
+
+# --------------------------------------------------------------------- #
+# Langfuse trace integration                                             #
+# --------------------------------------------------------------------- #
+
+
+def _generation_call_names(trace: MagicMock) -> list[str]:
+    """Helper — extract the `name=` kwarg from each `trace.generation`
+    invocation so tests can assert on the ordered list of generation
+    names without coupling to the rest of the kwargs."""
+    return [call.kwargs["name"] for call in trace.generation.call_args_list]
+
+
+def test_default_no_langfuse_client_is_noop(client: TestClient) -> None:
+    """When `get_langfuse_client()` returns None (no LANGFUSE_*
+    env vars), the WS handler still runs the full pipeline — the
+    trace wrapper short-circuits every method internally. This test
+    is the safety net for dev-without-Langfuse runs."""
+    # Default fixture leaves get_langfuse_client unmocked → real call
+    # returns None because no env var was set.
+    service, repo = _build_service()
+    app.dependency_overrides[get_copilot_service] = lambda: service
+    _seed_pending(repo, "cop_test0000000001")
+
+    with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
+        ws.send_bytes(b"hi")
+        ws.send_text(_AUDIO_END_FRAME)
+        events = [ws.receive_json() for _ in range(3)]
+
+    # Pipeline produced the expected events; no exception bubbled from
+    # the no-op trace calls.
+    assert [e["type"] for e in events] == ["asr_partial", "asr_final", "moderation"]
+
+
+def test_utterance_creates_named_trace_with_session_metadata(client: TestClient) -> None:
+    """One trace per utterance, named `copilot_utterance`, with
+    metadata carrying the copilot_id + user_id so analysts can join
+    Langfuse rows back to the source session."""
+    lf_client, _trace = _install_langfuse_mock()
+    service, repo = _build_service()
+    app.dependency_overrides[get_copilot_service] = lambda: service
+    _seed_pending(repo, "cop_test0000000001")
+
+    with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
+        ws.send_bytes(b"hi")
+        ws.send_text(_AUDIO_END_FRAME)
+        for _ in range(3):
+            ws.receive_json()
+
+    lf_client.trace.assert_called_once()
+    _, kwargs = lf_client.trace.call_args
+    assert kwargs["name"] == "copilot_utterance"
+    assert kwargs["metadata"]["copilot_id"] == "cop_test0000000001"
+    assert kwargs["metadata"]["user_id"] == "u_demo"
+    assert kwargs["input"]["scenario_hint"] == "interview salary negotiation"
+
+
+def test_utterance_records_transcribe_and_moderate_generations(
+    client: TestClient,
+) -> None:
+    """The trace gets a `transcribe` generation (model=ASR provider)
+    plus a `moderate` generation (model=moderation_pipeline). Hint
+    isn't expected here — default LLM stub yields no chunks.
+
+    `output` ends up on the chained `.end()` call, not the
+    `generation()` constructor (see TurnTrace.record_generation), so
+    we look at both call sites to assert end-to-end content.
+    """
+    _lf_client, trace = _install_langfuse_mock()
+    service, repo = _build_service()
+    app.dependency_overrides[get_copilot_service] = lambda: service
+    _seed_pending(repo, "cop_test0000000001")
+
+    with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
+        ws.send_bytes(b"hi")
+        ws.send_text(_AUDIO_END_FRAME)
+        for _ in range(3):
+            ws.receive_json()
+
+    assert _generation_call_names(trace) == ["transcribe", "moderate"]
+    transcribe_call = trace.generation.call_args_list[0]
+    assert transcribe_call.kwargs["model"] == "dummy"
+    # `.end()` collects the output payload after `.generation()` returns.
+    end_calls = trace.generation.return_value.end.call_args_list
+    assert end_calls[0].kwargs["output"] == {"text": "hi", "char_count": 2}
+
+
+def test_hint_records_coach_hint_generation_after_text(
+    client: TestClient,
+) -> None:
+    """When the LLM router yields chunks, a `coach_hint` generation
+    is added to the trace with the joined text. The order is
+    transcribe → moderate → coach_hint (hint runs in the background
+    but completes before the WS context exits because we drain on
+    finally)."""
+    _install_llm(chunks=("先回应", "对方观点。"))
+    _lf_client, trace = _install_langfuse_mock()
+    service, repo = _build_service()
+    app.dependency_overrides[get_copilot_service] = lambda: service
+    _seed_pending(repo, "cop_test0000000001")
+
+    with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
+        ws.send_bytes(b"hi")
+        ws.send_text(_AUDIO_END_FRAME)
+        # 5 events: partial, final, moderation, hint_delta x2, hint_done
+        for _ in range(6):
+            ws.receive_json()
+
+    names = _generation_call_names(trace)
+    assert "coach_hint" in names
+    coach_index = names.index("coach_hint")
+    coach_call = trace.generation.call_args_list[coach_index]
+    assert coach_call.kwargs["model"] == "stub"
+    # `.end()` calls are recorded in the same order as `.generation()`
+    # calls (each generation immediately ends in `record_generation`).
+    end_calls = trace.generation.return_value.end.call_args_list
+    assert end_calls[coach_index].kwargs["output"] == {"text": "先回应对方观点。"}
+
+
+def test_blocked_verdict_skips_coach_hint_generation(client: TestClient) -> None:
+    """When moderation blocks, no LLM call → no `coach_hint`
+    generation. The trace still has transcribe + moderate."""
+    _install_moderation(with_dict=True)
+    _install_llm(chunks=("never reached",))
+    _lf_client, trace = _install_langfuse_mock()
+    service, repo = _build_service()
+    app.dependency_overrides[get_copilot_service] = lambda: service
+    _seed_pending(repo, "cop_test0000000001")
+
+    with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
+        ws.send_bytes("校园暴力".encode())
+        ws.send_text(_AUDIO_END_FRAME)
+        for _ in range(3):
+            ws.receive_json()
+
+    assert _generation_call_names(trace) == ["transcribe", "moderate"]
+
+
+def test_empty_utterance_records_only_transcribe(client: TestClient) -> None:
+    """Empty `audio_end` → transcribe generation runs (with empty
+    text) but moderate + coach_hint are skipped. The trace still
+    finishes with output={final_text:'', verdict:None} so analysts
+    see the empty utterance on the timeline."""
+    _lf_client, trace = _install_langfuse_mock()
+    service, repo = _build_service()
+    app.dependency_overrides[get_copilot_service] = lambda: service
+    _seed_pending(repo, "cop_test0000000001")
+
+    with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
+        ws.send_text(_AUDIO_END_FRAME)
+        ws.receive_json()  # asr_final empty
+
+    assert _generation_call_names(trace) == ["transcribe"]
+    # Trace output reflects the empty outcome.
+    trace.update.assert_any_call(output={"final_text": "", "verdict": None})
+
+
+def test_multi_utterance_creates_one_trace_per_utterance(client: TestClient) -> None:
+    """Per-utterance traces, not per-connection. Two utterances → two
+    `client.trace(...)` calls."""
+    lf_client, _trace = _install_langfuse_mock()
+    service, repo = _build_service()
+    app.dependency_overrides[get_copilot_service] = lambda: service
+    _seed_pending(repo, "cop_test0000000001")
+
+    with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
+        ws.send_bytes(b"first")
+        ws.send_text(_AUDIO_END_FRAME)
+        for _ in range(3):
+            ws.receive_json()
+        ws.send_bytes(b"second")
+        ws.send_text(_AUDIO_END_FRAME)
+        for _ in range(3):
+            ws.receive_json()
+
+    assert lf_client.trace.call_count == 2
 
 
 # --------------------------------------------------------------------- #
