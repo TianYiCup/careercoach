@@ -7,17 +7,17 @@ matching the `sessions_repo_backend` precedent.
 
 Why this layer is separate from the route + service layers
 ----------------------------------------------------------
-A-15 lands persistence + create_session *before* the ASR adapter
-(A-16) and the WS endpoint (A-17). Splitting them keeps each PR
-under the soft 800-LoC line and lets the WS handler import a stable
-repository surface (`mark_connected` + `mark_ended` are here today,
-even though only `create` / `get` get exercised by A-15's tests).
+A-15 landed persistence + create_session before the WS endpoint so
+each PR stayed under the soft 800-LoC line and the WS handler (A-16)
+could import a stable repository surface (`mark_connected` +
+`mark_ended` were already here, exercised by repo tests but only
+*called* once A-16 wired the WS handler).
 
 Read pattern
 ------------
-A-15 only reads via `get(copilot_id)` for the future detail-fetch
-route. A-17's WS endpoint will use it to load the session row on
-handshake and check it's still `pending` / `connected`.
+`get(copilot_id)` is hit on every WS upgrade so the handler can
+verify the session is still `pending` before flipping it to
+`connected`. The future detail-fetch route will share the same call.
 """
 
 from __future__ import annotations

@@ -1,18 +1,19 @@
 """Copilot (副驾 / live-coaching) service package — PRD §7.5.
 
-Public surface (A-15 — persistence + create_session):
+Public surface (A-15 + A-16):
   * `CopilotSessionRecord` immutable record
   * `CopilotRepository` Protocol + `InMemoryCopilotRepository` +
     `PostgresCopilotRepository`
   * `CopilotStatus` / `PrivacyLevel` Literal types
-  * `CopilotService.create_session` orchestrator
+  * `CopilotService` — `create_session` (A-15) + `connect_session` /
+    `end_session` (A-16, called by the WS handler)
+  * `CopilotSessionNotFound` / `CopilotSessionUnavailable` — error
+    types the WS layer maps to close codes 4404 / 4409
   * `get_copilot_repository()` + `get_copilot_service()` factory
     singletons
 
-A-16 will add the ASR adapter abstraction next to this package.
-A-17 adds the WebSocket endpoint + status-transition methods on the
-repo (`mark_connected` / `mark_ended` already shipped here so the
-WS layer just calls them).
+A future PR will add the ASR adapter abstraction next to this package
+and replace the A-16 echo loop with real audio + LLM-hint streaming.
 """
 
 from functools import lru_cache
@@ -29,7 +30,11 @@ from app.services.copilot.repository import (
     PostgresCopilotRepository,
     PrivacyLevel,
 )
-from app.services.copilot.service import CopilotService
+from app.services.copilot.service import (
+    CopilotService,
+    CopilotSessionNotFound,
+    CopilotSessionUnavailable,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -68,7 +73,9 @@ def get_copilot_service() -> CopilotService:
 __all__ = [
     "CopilotRepository",
     "CopilotService",
+    "CopilotSessionNotFound",
     "CopilotSessionRecord",
+    "CopilotSessionUnavailable",
     "CopilotStatus",
     "InMemoryCopilotRepository",
     "PostgresCopilotRepository",
