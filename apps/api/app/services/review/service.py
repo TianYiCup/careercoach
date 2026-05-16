@@ -257,15 +257,18 @@ class ReviewService:
         """
         trace = begin_review_trace(
             self._langfuse_client,
-            input={
-                "upload_id": upload_id,
-                "text_len": len(text),
-            },
+            input={"text_len": len(text)},
+            # `upload_id` is promoted to Langfuse's top-level session
+            # field (A-23). Review is single-shot today so each upload
+            # is its own one-trace session; once a re-analysis path
+            # lands those subsequent traces will land under the same
+            # session row.
             metadata={
                 "user_id": user_id,
                 "trace_id": trace_id,
                 "is_minor": is_minor,
             },
+            session_id=upload_id,
         )
 
         try:

@@ -176,8 +176,14 @@ def begin_turn_trace(
     *,
     input: dict[str, Any],
     metadata: dict[str, Any] | None = None,
+    session_id: str | None = None,
 ) -> TurnTrace:
     """Start a Langfuse trace for one `/turns` SSE call.
+
+    `session_id` is promoted to Langfuse's top-level session field
+    (A-23) so analysts can use Langfuse's session-grouping UI to see
+    all traces for a given sandbox session. Callers should pass the
+    sandbox `session_id`. None disables grouping.
 
     Returns a `TurnTrace` whose methods are no-ops when `client` is
     `None`, so the caller doesn't need to branch on dev vs. prod.
@@ -187,6 +193,7 @@ def begin_turn_trace(
         name="session_turn",
         input=input,
         metadata=metadata,
+        session_id=session_id,
     )
 
 
@@ -195,8 +202,14 @@ def begin_review_trace(
     *,
     input: dict[str, Any],
     metadata: dict[str, Any] | None = None,
+    session_id: str | None = None,
 ) -> TurnTrace:
     """Start a Langfuse trace for one review upload analysis.
+
+    `session_id` is promoted to Langfuse's top-level session field
+    (A-23). For review, callers should pass the `upload_id` so each
+    upload is its own one-trace session — that keeps the grouping UI
+    useful even though review is currently single-shot.
 
     Used by `ReviewService._process_upload` (A-14). Same no-op-on-None
     contract as `begin_turn_trace`; the only difference is the trace
@@ -208,6 +221,7 @@ def begin_review_trace(
         name="review_upload",
         input=input,
         metadata=metadata,
+        session_id=session_id,
     )
 
 
@@ -216,8 +230,16 @@ def begin_copilot_trace(
     *,
     input: dict[str, Any],
     metadata: dict[str, Any] | None = None,
+    session_id: str | None = None,
 ) -> TurnTrace:
     """Start a Langfuse trace for one copilot WS utterance.
+
+    `session_id` is promoted to Langfuse's top-level session field
+    (A-23). Callers should pass the `copilot_id` so every utterance
+    in one WS connection lands under the same Langfuse session row,
+    which is the primary win — analysts can scroll through a single
+    user's full live-coaching arc instead of stitching utterances
+    together by metadata filtering.
 
     Used by the copilot WS handler (A-21). The handler opens one trace
     per `audio_end` and attaches `transcribe` / `moderate` /
@@ -231,6 +253,7 @@ def begin_copilot_trace(
         name="copilot_utterance",
         input=input,
         metadata=metadata,
+        session_id=session_id,
     )
 
 
@@ -240,20 +263,30 @@ def _begin_named_trace(
     name: str,
     input: dict[str, Any],
     metadata: dict[str, Any] | None,
+    session_id: str | None = None,
 ) -> TurnTrace:
     """Internal helper — the only difference between trace entry points
     is the `name` field; everything else (null-client handling, error
-    swallowing, return shape) is identical. Keeping it in one place
-    means a future change to that contract (e.g. attaching tags,
-    propagating tenant ids) only touches one function."""
+    swallowing, return shape, session_id pass-through) is identical.
+    Keeping it in one place means a future change to that contract
+    (e.g. attaching tags, propagating tenant ids) only touches one
+    function.
+
+    `session_id` is omitted from the underlying `client.trace(...)`
+    call when None so we don't burn a positional kwarg slot on every
+    legacy call site that doesn't have a session to group by.
+    """
     if client is None:
         return TurnTrace(_trace=None)
     try:
-        trace = client.trace(
-            name=name,
-            input=input,
-            metadata=metadata or {},
-        )
+        trace_kwargs: dict[str, Any] = {
+            "name": name,
+            "input": input,
+            "metadata": metadata or {},
+        }
+        if session_id is not None:
+            trace_kwargs["session_id"] = session_id
+        trace = client.trace(**trace_kwargs)
     except Exception:
         logger.exception("langfuse_trace_create_failed", trace_name=name)
         return TurnTrace(_trace=None)

@@ -1036,11 +1036,13 @@ async def test_review_emits_one_trace_per_upload_with_generation(
     assert resp.status_code == 200
     upload_id = resp.json()["upload_id"]
 
-    # One top-level trace, named `review_upload`, with input + metadata.
+    # One top-level trace, named `review_upload`. `upload_id` lifts to
+    # the Langfuse top-level `session_id` field (A-23) — used to be
+    # in `input`.
     langfuse.trace.assert_called_once()  # type: ignore[attr-defined]
     _trace_args, trace_kwargs = langfuse.trace.call_args  # type: ignore[attr-defined]
     assert trace_kwargs["name"] == "review_upload"
-    assert trace_kwargs["input"]["upload_id"] == upload_id
+    assert trace_kwargs["session_id"] == upload_id
     assert trace_kwargs["input"]["text_len"] == len(_SAMPLE_TEXT)
     assert trace_kwargs["metadata"]["user_id"] == "u_adult"
     assert trace_kwargs["metadata"]["is_minor"] is False
