@@ -27,6 +27,7 @@ REQUIRED_ENDPOINTS: set[tuple[str, str]] = {
     ("post", "/v1/sharecards/wrapped/year/{year}"),
     ("post", "/v1/copilot/sessions"),
     ("post", "/v1/review/uploads"),
+    ("get", "/v1/review/uploads/{upload_id}"),
 }
 
 # Endpoints intentionally shipped as 501 stubs so the compliance gates
@@ -36,7 +37,6 @@ REQUIRED_ENDPOINTS: set[tuple[str, str]] = {
 # `responses=`. See `docs/b-side-review-2026-05-15/`.
 STUB_ALLOWED_ENDPOINTS: set[tuple[str, str]] = {
     ("post", "/v1/copilot/sessions"),
-    ("post", "/v1/review/uploads"),
 }
 
 

@@ -482,10 +482,14 @@ paths:
     post:
       tags:
       - review
-      summary: Upload a conversation transcript for review (stub — text-only)
-      description: 'v0.1 only accepts JSON text bodies — image / audio multipart is v2.
+      summary: Upload a conversation transcript for review (sync analysis, text-only)
+      description: 'Sync today: analyzes the transcript inside the request and
 
-        See `apps/api/app/schemas/review.py` for the rationale.'
+        returns `done` / `failed`. Full turns + summary live on the GET
+
+        detail route — keeps the POST envelope identical to the A-8 lock
+
+        so B''s generated client doesn''t churn.'
       operationId: create_review_upload_v1_review_uploads_post
       requestBody:
         content:
@@ -500,12 +504,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CreateReviewUploadResponse'
-        '501':
-          description: Endpoint exists in v0.1 schema but the handler is not implemented.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: Missing or invalid bearer token.
         '403':
@@ -518,6 +516,47 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
       security:
       - JWT: []
+  /v1/review/uploads/{upload_id}:
+    get:
+      tags:
+      - review
+      summary: Fetch the analysed review (turns + summary)
+      description: 'Returns the canonical record. Cross-user access is silently
+
+        folded into 404 — a probing client cannot tell "exists but not
+
+        yours" apart from "does not exist".'
+      operationId: get_review_upload_v1_review_uploads__upload_id__get
+      security:
+      - JWT: []
+      parameters:
+      - name: upload_id
+        in: path
+        required: true
+        schema:
+          type: string
+          description: Upload id from POST /v1/review/uploads.
+          title: Upload Id
+        description: Upload id from POST /v1/review/uploads.
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewUploadResponse'
+        '401':
+          description: Missing or invalid bearer token.
+        '403':
+          description: '`AGE_REQUIRED` if the JWT lacks `age_set=true`.'
+        '404':
+          description: Upload does not exist or belongs to a different user.
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
     CoachHintEvent:
@@ -643,16 +682,30 @@ components:
           - up_018f3a8b1c2d7e3a
         status:
           type: string
-          title: Status
-          description: Processing state. v1 starts as `processing` and flips via GET.
-          examples:
+          enum:
           - processing
+          - done
+          - failed
+          title: Status
+          description: Analysis state. Today's sync flow returns `done` or `failed` directly. `processing`
+            is reserved for the future async path.
+          examples:
+          - done
       type: object
       required:
       - upload_id
       - status
       title: CreateReviewUploadResponse
-      description: Placeholder — see copilot.CreateCopilotSessionResponse for why.
+      description: 'POST response — minimal envelope; full record lives on the GET route.
+
+
+        `status` reflects the synchronous analysis outcome (v0 today blocks
+
+        on the LLM call). When the queue handoff lands (A-13+), this will
+
+        return `processing` immediately and the client polls the GET route.
+
+        The shape stays identical so B''s client doesn''t churn.'
     CreateSessionRequest:
       properties:
         mode:
@@ -918,6 +971,158 @@ components:
       - url
       title: RedirectResource
       description: Crisis-line / help resource surfaced when verdict == 'redirect' (PRD §3.0.5 A).
+    ReviewSummaryResponse:
+      properties:
+        score:
+          type: number
+          maximum: 10.0
+          minimum: 0.0
+          title: Score
+          examples:
+          - 6.4
+        top_failures:
+          items:
+            type: string
+          type: array
+          title: Top Failures
+          description: At most 3 failure points distilled from the conversation.
+          examples:
+          - - 语气过冷
+            - 未追问
+        improvements:
+          items:
+            type: string
+          type: array
+          title: Improvements
+          description: At most 3 actionable next-time-do-this suggestions.
+          examples:
+          - - 先认可再拒绝
+            - 给一个替代时间
+      type: object
+      required:
+      - score
+      - top_failures
+      - improvements
+      title: ReviewSummaryResponse
+      description: 'Whole-conversation summary. Null while `status == "processing"` and
+
+        on `failed` uploads.'
+    ReviewTurnResponse:
+      properties:
+        turn_idx:
+          type: integer
+          minimum: 0.0
+          title: Turn Idx
+          examples:
+          - 0
+        speaker:
+          type: string
+          enum:
+          - user
+          - opponent
+          title: Speaker
+          examples:
+          - user
+        content:
+          type: string
+          title: Content
+          examples:
+          - 有事，下次约。
+        verdict:
+          type: string
+          enum:
+          - win
+          - neutral
+          - lose
+          title: Verdict
+          examples:
+          - lose
+        reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reason
+          description: Why this user turn lost — populated on `lose` user turns only.
+          examples:
+          - 语气过冷，没有缓冲
+        better:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Better
+          description: Suggested rewrite — populated on `lose` user turns only.
+          examples:
+          - 这周末确实排满了，下周二约可以吗？
+      type: object
+      required:
+      - turn_idx
+      - speaker
+      - content
+      - verdict
+      title: ReviewTurnResponse
+      description: 'One analysed turn — `reason` + `better` only on user `lose` turns
+
+        per PRD §3.3 US-C2.'
+    ReviewUploadResponse:
+      properties:
+        upload_id:
+          type: string
+          title: Upload Id
+          examples:
+          - up_018f3a8b1c2d7e3a
+        status:
+          type: string
+          enum:
+          - processing
+          - done
+          - failed
+          title: Status
+          examples:
+          - done
+        turns:
+          items:
+            $ref: '#/components/schemas/ReviewTurnResponse'
+          type: array
+          title: Turns
+          description: Empty until analysis runs; on `failed` may also be empty.
+        summary:
+          anyOf:
+          - $ref: '#/components/schemas/ReviewSummaryResponse'
+          - type: 'null'
+          description: Populated on `status == 'done'`; null otherwise.
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+          examples:
+          - '2026-05-16T10:00:00Z'
+        completed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Completed At
+          description: UTC timestamp when analysis finished; null while processing.
+          examples:
+          - '2026-05-16T10:00:02Z'
+      type: object
+      required:
+      - upload_id
+      - status
+      - created_at
+      title: ReviewUploadResponse
+      description: '`GET /v1/review/uploads/{upload_id}` payload — full analysed record.
+
+
+        `summary` is `null` when the upload is still processing OR the
+
+        analysis failed. Frontend should always render the turn list (which
+
+        is present even on failure as the parsed input lines, with all
+
+        verdicts defaulting to neutral) and only render the summary card
+
+        when `summary` is non-null.'
     ScenarioListResponse:
       properties:
         items:
