@@ -94,6 +94,13 @@ class Settings(BaseSettings):
     # when the backend has no history.
     llm_calls_repo_backend: Literal["memory", "postgres"] = Field(default="memory")
 
+    # Static bearer-style token the `/v1/ops/*` endpoints check via
+    # `X-Ops-Token` header. Empty (the default) means ops endpoints
+    # are DISABLED in this deployment — the dep returns 503 rather
+    # than allowing open access, so a forgotten env var fails closed.
+    # A-41 ships only the dep; A-42 attaches it to the cost rollup.
+    ops_api_token: SecretStr = Field(default=SecretStr(""))
+
     # Base URL the client uses to open the copilot WebSocket. The
     # service appends `/v1/copilot/sessions/{copilot_id}/stream`. v0
     # dev runs against `ws://localhost:8000`; production sets this to
