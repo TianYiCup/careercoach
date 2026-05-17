@@ -30,7 +30,12 @@ from datetime import UTC, datetime
 import httpx
 import structlog
 
-from app.asr.errors import ASRAuthError, ASRTimeoutError, ASRUpstreamError
+from app.asr.errors import (
+    ASRAuthError,
+    ASRMalformedResponseError,
+    ASRTimeoutError,
+    ASRUpstreamError,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -203,8 +208,11 @@ def _parse_token_response(payload: object) -> AccessToken:
         {"Token": {"Id": "...", "ExpireTime": 1234567890, "UserId": "..."},
          "NlsRequestId": "...", "ErrMsg": ""}
     """
+    # A-38: shape mismatches go through ASRMalformedResponseError so
+    # ops can distinguish "vendor changed their API on us" from
+    # "vendor server is down" when triaging via Langfuse tags.
     if not isinstance(payload, dict):
-        raise ASRUpstreamError(
+        raise ASRMalformedResponseError(
             "aliyun ASR token response was not a JSON object",
             provider=PROVIDER_NAME,
         )
@@ -213,21 +221,21 @@ def _parse_token_response(payload: object) -> AccessToken:
         # Surface the upstream's error message when present — easier
         # debugging than "unexpected shape".
         err = payload.get("ErrMsg") or payload.get("Message") or "no Token block"
-        raise ASRUpstreamError(
+        raise ASRMalformedResponseError(
             f"aliyun ASR token response missing Token: {err!r}",
             provider=PROVIDER_NAME,
         )
     token_id = token_block.get("Id")
     expire_time = token_block.get("ExpireTime")
     if not isinstance(token_id, str) or not token_id:
-        raise ASRUpstreamError(
+        raise ASRMalformedResponseError(
             "aliyun ASR token Id missing or non-string",
             provider=PROVIDER_NAME,
         )
     try:
         expires_at = float(expire_time)  # type: ignore[arg-type]
     except (TypeError, ValueError) as exc:
-        raise ASRUpstreamError(
+        raise ASRMalformedResponseError(
             f"aliyun ASR token ExpireTime not numeric: {expire_time!r}",
             provider=PROVIDER_NAME,
         ) from exc

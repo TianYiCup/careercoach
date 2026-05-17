@@ -21,7 +21,12 @@ from app.asr._aliyun_token import (
     _sign_pop_query,
     fetch_access_token,
 )
-from app.asr.errors import ASRAuthError, ASRTimeoutError, ASRUpstreamError
+from app.asr.errors import (
+    ASRAuthError,
+    ASRMalformedResponseError,
+    ASRTimeoutError,
+    ASRUpstreamError,
+)
 
 # --- signing primitives ---
 
@@ -162,12 +167,18 @@ async def test_fetch_token_raises_timeout_on_httpx_timeout() -> None:
 
 
 async def test_fetch_token_raises_when_response_missing_token_block() -> None:
+    """A-38: shape-mismatch raises the more specific
+    `ASRMalformedResponseError` so the copilot WS handler can tag
+    the trace with `asr_error:upstream_malformed` (vs a real
+    `upstream_5xx` from `test_fetch_token_raises_upstream_error_on_500`).
+    Distinct ops responses — vendor API drift vs vendor outage."""
+
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"ErrMsg": "no token for you"})
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     try:
-        with pytest.raises(ASRUpstreamError, match="missing Token"):
+        with pytest.raises(ASRMalformedResponseError, match="missing Token"):
             await fetch_access_token(
                 access_key_id="ak",
                 access_key_secret="secret",
@@ -197,7 +208,8 @@ async def test_fetch_token_raises_when_expire_time_not_numeric() -> None:
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     try:
-        with pytest.raises(ASRUpstreamError, match="ExpireTime"):
+        # A-38: non-numeric ExpireTime is a parse failure, not a 5xx.
+        with pytest.raises(ASRMalformedResponseError, match="ExpireTime"):
             await fetch_access_token(
                 access_key_id="ak",
                 access_key_secret="secret",

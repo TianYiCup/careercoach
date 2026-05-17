@@ -36,6 +36,7 @@ from app.asr import (
     ASRAuthError,
     ASRError,
     ASREvent,
+    ASRMalformedResponseError,
     ASRTimeoutError,
     ASRUpstreamError,
     get_asr_provider,
@@ -1229,13 +1230,48 @@ def test_asr_status_ok_tag_added_on_successful_utterance(client: TestClient) -> 
     ("error", "expected_class"),
     [
         (ASRAuthError("token revoked", provider="aliyun"), "auth"),
+        (ASRTimeoutError("vendor slow", provider="aliyun"), "timeout"),
+        # A-38: upstream bucket subdivided. Each variant exercises a
+        # different triage path in ops.
         (
             ASRUpstreamError("upstream 502", provider="aliyun", status_code=502),
-            "upstream",
+            "upstream_5xx",
         ),
-        (ASRTimeoutError("vendor slow", provider="aliyun"), "timeout"),
+        (
+            ASRUpstreamError("upstream 503", provider="aliyun", status_code=503),
+            "upstream_5xx",
+        ),
+        (
+            ASRUpstreamError("upstream 429", provider="aliyun", status_code=429),
+            "upstream_4xx",
+        ),
+        (
+            ASRUpstreamError("upstream 400", provider="aliyun", status_code=400),
+            "upstream_4xx",
+        ),
+        # No HTTP status — covers ws connect abort, DNS, etc.
+        (
+            ASRUpstreamError("connection reset", provider="aliyun"),
+            "upstream_unknown",
+        ),
+        (
+            ASRMalformedResponseError(
+                "token response missing Token block",
+                provider="aliyun",
+            ),
+            "upstream_malformed",
+        ),
     ],
-    ids=["auth", "upstream", "timeout"],
+    ids=[
+        "auth",
+        "timeout",
+        "upstream_5xx_502",
+        "upstream_5xx_503",
+        "upstream_4xx_429",
+        "upstream_4xx_400",
+        "upstream_unknown",
+        "upstream_malformed",
+    ],
 )
 def test_asr_failure_tags_status_failed_plus_error_class(
     client: TestClient,
@@ -1245,7 +1281,15 @@ def test_asr_failure_tags_status_failed_plus_error_class(
     """One ASR failure variant per row. Each must produce both
     `asr_status:failed` AND `asr_error:{class}` so an analyst can
     filter the Langfuse UI for `asr_error:auth` to surface only
-    the cred-rotation incidents, etc."""
+    the cred-rotation incidents, etc.
+
+    A-38 subdivided `upstream` into 5xx/4xx/malformed/unknown so
+    parametrize rows now exercise each. The bare `upstream` tag
+    no longer exists — searching for it MUST return zero results
+    after this change (verified implicitly: any test row that
+    mismatches the new label would fail the expected_class
+    assertion below).
+    """
     _lf_client, trace = _install_langfuse_mock()
     service, repo = _build_service()
     app.dependency_overrides[get_copilot_service] = lambda: service

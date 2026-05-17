@@ -21,6 +21,7 @@ from app.asr.dummy import DummyASRProvider
 from app.asr.errors import (
     ASRAuthError,
     ASRError,
+    ASRMalformedResponseError,
     ASRTimeoutError,
     ASRUpstreamError,
 )
@@ -38,6 +39,7 @@ __all__ = [
     "ASRError",
     "ASREvent",
     "ASREventKind",
+    "ASRMalformedResponseError",
     "ASRProvider",
     "ASRTimeoutError",
     "ASRUpstreamError",

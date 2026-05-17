@@ -96,6 +96,7 @@ from starlette.websockets import WebSocketDisconnect
 from app.asr import (
     ASRAuthError,
     ASRError,
+    ASRMalformedResponseError,
     ASRProvider,
     ASRTimeoutError,
     ASRUpstreamError,
@@ -555,24 +556,43 @@ async def _stream_asr_events(
 def _classify_asr_error(exc: ASRError) -> str:
     """Map a typed `ASRError` to the short label used in trace tags.
 
-    Three buckets analysts care about when triaging an outage:
+    A-31 introduced three buckets: `auth` / `timeout` / `upstream`.
+    A-38 subdivides the `upstream` bucket so analysts can split
+    triage paths that need different responses:
 
-      * `auth`     — token expired/revoked, AK/secret wrong, IAM denied
-      * `timeout`  — vendor took longer than our budget
-      * `upstream` — everything else (5xx, malformed response,
-                     unrecognised `ASRError` subclass)
+      * `auth`               — token expired/revoked, AK/secret wrong, IAM denied
+      * `timeout`            — vendor took longer than our budget
+      * `upstream_malformed` — vendor returned 200 but body shape wrong
+                               (usually a vendor SDK / API drift; tell vendor)
+      * `upstream_5xx`       — vendor returned 5xx (vendor is down; retry policy)
+      * `upstream_4xx`       — vendor returned 4xx (our request is wrong;
+                               fix our request, retry won't help)
+      * `upstream_unknown`   — no HTTP status_code captured (transport-level
+                               error like WS connection abort, DNS failure)
 
-    Order matters: both `ASRAuthError` and `ASRTimeoutError` subclass
-    the base `ASRError`, so the isinstance ladder checks
+    Order matters — `ASRMalformedResponseError` subclasses
+    `ASRUpstreamError`, and both `ASRAuthError`/`ASRTimeoutError`
+    subclass the base `ASRError`. The isinstance ladder checks
     most-specific-first.
+
+    Breaking change vs A-31: the bare `upstream` tag no longer
+    exists; analyst dashboards filtering `asr_error:upstream`
+    must move to `asr_error:upstream_*` (prefix match).
     """
     if isinstance(exc, ASRAuthError):
         return "auth"
     if isinstance(exc, ASRTimeoutError):
         return "timeout"
+    if isinstance(exc, ASRMalformedResponseError):
+        return "upstream_malformed"
     if isinstance(exc, ASRUpstreamError):
-        return "upstream"
-    return "upstream"
+        if exc.status_code is not None:
+            if 500 <= exc.status_code < 600:
+                return "upstream_5xx"
+            if 400 <= exc.status_code < 500:
+                return "upstream_4xx"
+        return "upstream_unknown"
+    return "upstream_unknown"
 
 
 async def _moderate_and_emit(
