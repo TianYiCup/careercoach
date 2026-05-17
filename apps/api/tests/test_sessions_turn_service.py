@@ -66,27 +66,62 @@ def _moderation(
     *,
     block: bool = False,
     verdict: str | None = None,
+    output_verdict: str | None = None,
+    output_backend_fails: bool = False,
 ) -> ModerationService:
     """Default returns `allow`. `block=True` short-hand for `verdict='block'`.
 
     `verdict='warn'` / `'redirect'` lets the A-26 tag tests assert that
     non-allow input verdicts surface on the Langfuse trace tags.
+
+    A-29 adds two output-side options for the same backend:
+      * `output_verdict` — override the verdict returned for the
+        `ai_output` context (used to test post-roleplay mod gating)
+      * `output_backend_fails` — raise ModerationBackendError on the
+        `ai_output` call so the silent-allow-but-no-tag path is
+        exercised. The input call still succeeds with the normal
+        `verdict` so we don't accidentally fail the precheck.
     """
-    if not block and verdict is None:
+    if not block and verdict is None and output_verdict is None and not output_backend_fails:
         return ModerationService(backend=NoopBackend(), event_sink=LogOnlyEventSink())
 
-    effective_verdict = "block" if block else verdict
-    categories: tuple[str, ...] = ("other",) if effective_verdict != "allow" else ()
+    input_verdict = "block" if block else (verdict or "allow")
+    out_verdict = output_verdict if output_verdict is not None else input_verdict
 
     class _ScriptedBackend:
         name = "test_scripted"
 
         async def evaluate(self, content: str, context: str) -> Decision:
-            _ = (content, context)
+            _ = content
+            if context == "ai_output":
+                if output_backend_fails:
+                    # ModerationBackendError lives in the backend module;
+                    # importing it here keeps the helper self-contained.
+                    from app.services.moderation.backend import ModerationBackendError
+
+                    raise ModerationBackendError(
+                        "scripted output backend failure",
+                        backend="test_scripted",
+                    )
+                effective = out_verdict
+            else:
+                effective = input_verdict
+            categories: tuple[str, ...] = ("other",) if effective != "allow" else ()
+            # `redirect` mandates a non-None RedirectResource per the
+            # Decision dataclass invariant; supply a placeholder so the
+            # test backend can return that verdict without exploding.
+            from app.schemas.moderation import RedirectResource
+
+            redirect_resource = (
+                RedirectResource(title="test-resource", url="https://example.invalid")
+                if effective == "redirect"
+                else None
+            )
             return Decision(
-                verdict=effective_verdict,  # type: ignore[arg-type]
+                verdict=effective,  # type: ignore[arg-type]
                 score=0.99,
                 categories=categories,  # type: ignore[arg-type]
+                redirect_resource=redirect_resource,
             )
 
     return ModerationService(backend=_ScriptedBackend(), event_sink=LogOnlyEventSink())
@@ -97,6 +132,8 @@ def _service(
     llm_provider: LLMProvider | None = None,
     block_moderation: bool = False,
     moderation_verdict: str | None = None,
+    output_moderation_verdict: str | None = None,
+    output_moderation_backend_fails: bool = False,
     langfuse_client: object | None = None,
 ) -> tuple[TurnService, InMemorySessionRepository, InMemoryTurnRepository]:
     if llm_provider is None:
@@ -109,7 +146,12 @@ def _service(
     turn_repo = InMemoryTurnRepository()
     svc = TurnService(
         llm=llm_provider,
-        moderation=_moderation(block=block_moderation, verdict=moderation_verdict),
+        moderation=_moderation(
+            block=block_moderation,
+            verdict=moderation_verdict,
+            output_verdict=output_moderation_verdict,
+            output_backend_fails=output_moderation_backend_fails,
+        ),
         session_repo=session_repo,
         turn_repo=turn_repo,
         langfuse_client=langfuse_client,
@@ -383,17 +425,20 @@ async def test_stream_turn_emits_trace_with_three_generations() -> None:
     assert kwargs["tags"] == [
         "surface:sandbox",
         "minor:false",
-        "verdict:allow",
+        "verdict_input:allow",
     ]
 
     # Three generations in order: roleplay → coach → judge.
     generation_names = [c.kwargs["name"] for c in inner_trace.generation.call_args_list]
     assert generation_names == ["roleplay", "coach.three_tones", "judge"]
 
-    # Trace finished with the per-turn output payload.
-    inner_trace.update.assert_called_once()
-    finish_kwargs = inner_trace.update.call_args.kwargs
-    assert "output" in finish_kwargs
+    # Trace finished with the per-turn output payload. A-29 added a
+    # second `update(tags=...)` call for `verdict_output:` mid-trace,
+    # so we filter to the call that carries the final `output` dict
+    # rather than asserting call_count.
+    finish_calls = [c for c in inner_trace.update.call_args_list if "output" in c.kwargs]
+    assert len(finish_calls) == 1
+    finish_kwargs = finish_calls[0].kwargs
     output = finish_kwargs["output"]
     assert output["verdict"] == "guolu"
     assert output["rating"] == 70
@@ -476,14 +521,14 @@ async def test_stream_turn_tags_minor_true_when_user_is_under_18() -> None:
     assert kwargs["tags"] == [
         "surface:sandbox",
         "minor:true",
-        "verdict:allow",
+        "verdict_input:allow",
     ]
 
 
 async def test_stream_turn_tags_verdict_warn_when_moderation_warns() -> None:
     """`warn` is the most common non-allow verdict in production — the
     user's text wasn't blocked but tripped the soft-notice tier. The
-    trace tag must reflect that so a `verdict:warn` Langfuse filter
+    trace tag must reflect that so a `verdict_input:warn` Langfuse filter
     surfaces these for review."""
     from unittest.mock import MagicMock
 
@@ -509,7 +554,7 @@ async def test_stream_turn_tags_verdict_warn_when_moderation_warns() -> None:
     assert kwargs["tags"] == [
         "surface:sandbox",
         "minor:false",
-        "verdict:warn",
+        "verdict_input:warn",
     ]
 
 
@@ -644,3 +689,239 @@ async def test_stream_turn_omits_usage_when_provider_doesnt_append() -> None:
 
     for call in inner_trace.generation.call_args_list:
         assert "usage" not in call.kwargs
+
+
+# --- A-29: roleplay output moderation + verdict_output trace tag ---
+
+
+def _verdict_output_tags(trace_mock: object) -> list[str]:
+    """Pull the union of `verdict_output:*` tags ever sent via
+    `trace.update(tags=...)`. Langfuse v2's update REPLACES, so the
+    last call holds the cumulative set."""
+    from unittest.mock import MagicMock
+
+    assert isinstance(trace_mock, MagicMock)
+    tag_calls = [c.kwargs["tags"] for c in trace_mock.update.call_args_list if "tags" in c.kwargs]
+    if not tag_calls:
+        return []
+    return [t for t in tag_calls[-1] if t.startswith("verdict_output:")]
+
+
+async def test_output_allow_adds_verdict_output_allow_tag() -> None:
+    """The default (NoopBackend default = allow on every context)
+    gives `verdict_output:allow` mid-trace via add_tags, alongside the
+    initial `verdict_input:allow` set at trace creation."""
+    from unittest.mock import MagicMock
+
+    client = MagicMock(name="langfuse")
+    inner_trace = MagicMock(name="trace")
+    client.trace.return_value = inner_trace
+
+    svc, session_repo, _ = _service(langfuse_client=client)
+    await session_repo.save(_active_session())
+    validated = await svc.validate_turn_request(
+        session_id="ses_aaaa1111",
+        content="hi",
+        user_id="u",
+        trace_id="t1",
+    )
+    await _collect(svc.stream_turn(validated))
+
+    assert _verdict_output_tags(inner_trace) == ["verdict_output:allow"]
+
+
+async def test_output_warn_adds_verdict_output_warn_tag() -> None:
+    """The roleplay LLM produced text that tripped soft-tier mod —
+    we still surface it to the user but tag the trace so an analyst
+    can audit AI-side edge content separately from user-side."""
+    from unittest.mock import MagicMock
+
+    client = MagicMock(name="langfuse")
+    inner_trace = MagicMock(name="trace")
+    client.trace.return_value = inner_trace
+
+    svc, session_repo, _ = _service(
+        langfuse_client=client,
+        output_moderation_verdict="warn",
+    )
+    await session_repo.save(_active_session())
+    validated = await svc.validate_turn_request(
+        session_id="ses_aaaa1111",
+        content="hi",
+        user_id="u",
+        trace_id="t1",
+    )
+
+    frames = await _collect(svc.stream_turn(validated))
+
+    assert _verdict_output_tags(inner_trace) == ["verdict_output:warn"]
+    # `warn` is non-gating: the original LLM text stays in opponent.done.
+    done = next(f for f in frames if f.event == "opponent.done")
+    assert done.data["full_text"] == "什么安排比工作还重要？"
+
+
+async def test_output_block_redacts_done_text_and_persisted_record() -> None:
+    """`block` from the AI-output mod replaces the authoritative
+    `opponent.done.full_text` AND the persisted TurnRecord so the
+    bad text doesn't leak into future turns' chat history. The
+    `opponent.delta` frames already streamed — we can't unsend
+    them — but the trace + done frame + DB row are clean."""
+    from unittest.mock import MagicMock
+
+    client = MagicMock(name="langfuse")
+    inner_trace = MagicMock(name="trace")
+    client.trace.return_value = inner_trace
+
+    svc, session_repo, turn_repo = _service(
+        langfuse_client=client,
+        output_moderation_verdict="block",
+    )
+    await session_repo.save(_active_session())
+    validated = await svc.validate_turn_request(
+        session_id="ses_aaaa1111",
+        content="hi",
+        user_id="u",
+        trace_id="t1",
+    )
+
+    frames = await _collect(svc.stream_turn(validated))
+
+    assert _verdict_output_tags(inner_trace) == ["verdict_output:block"]
+    done = next(f for f in frames if f.event == "opponent.done")
+    assert done.data["full_text"] == "……"
+    persisted = await turn_repo.list_for_session("ses_aaaa1111")
+    assert persisted[0].opponent_reply == "……"
+
+
+async def test_output_redirect_also_redacts() -> None:
+    """`redirect` from AI-output is rare (the opponent is supposed to
+    be adversarial, not in distress) but if the LLM produces e.g.
+    self-harm content we treat it like block — replace + tag."""
+    from unittest.mock import MagicMock
+
+    client = MagicMock(name="langfuse")
+    inner_trace = MagicMock(name="trace")
+    client.trace.return_value = inner_trace
+
+    svc, session_repo, _ = _service(
+        langfuse_client=client,
+        output_moderation_verdict="redirect",
+    )
+    await session_repo.save(_active_session())
+    validated = await svc.validate_turn_request(
+        session_id="ses_aaaa1111",
+        content="hi",
+        user_id="u",
+        trace_id="t1",
+    )
+
+    frames = await _collect(svc.stream_turn(validated))
+
+    assert _verdict_output_tags(inner_trace) == ["verdict_output:redirect"]
+    done = next(f for f in frames if f.event == "opponent.done")
+    assert done.data["full_text"] == "……"
+
+
+async def test_output_backend_failure_does_not_tag_or_redact() -> None:
+    """When the moderation backend itself fails on the ai_output call
+    (e.g. Aliyun outage) we treat-as-allow so an outage doesn't
+    corrupt sandbox UX, AND we DON'T add a verdict_output tag —
+    a false `verdict_output:allow` would hide the silent-allow
+    window from analysts looking for AI-side issues."""
+    from unittest.mock import MagicMock
+
+    client = MagicMock(name="langfuse")
+    inner_trace = MagicMock(name="trace")
+    client.trace.return_value = inner_trace
+
+    svc, session_repo, _ = _service(
+        langfuse_client=client,
+        output_moderation_backend_fails=True,
+    )
+    await session_repo.save(_active_session())
+    validated = await svc.validate_turn_request(
+        session_id="ses_aaaa1111",
+        content="hi",
+        user_id="u",
+        trace_id="t1",
+    )
+
+    frames = await _collect(svc.stream_turn(validated))
+
+    assert _verdict_output_tags(inner_trace) == []
+    # Original text passes through unchanged.
+    done = next(f for f in frames if f.event == "opponent.done")
+    assert done.data["full_text"] == "什么安排比工作还重要？"
+
+
+async def test_empty_fallback_reply_skips_output_moderation() -> None:
+    """When the LLM hangs up and we emit the `……` fallback, we
+    SHOULD NOT pay for a moderation call on placeholder content
+    (and we don't want a false `verdict_output:allow` tag for it
+    either). The helper short-circuits."""
+    from unittest.mock import MagicMock
+
+    class _EmptyProvider:
+        name = "empty"
+
+        async def stream_chat(
+            self,
+            messages: list[Message],
+            *,
+            temperature: float = 0.7,
+            timeout: float = 8.0,
+            usage_sink: list[TokenUsage] | None = None,
+        ) -> AsyncIterator[str]:
+            _ = (messages, temperature, timeout, usage_sink)
+            return
+            yield ""  # pragma: no cover — makes this an async generator
+
+    client = MagicMock(name="langfuse")
+    inner_trace = MagicMock(name="trace")
+    client.trace.return_value = inner_trace
+
+    # Provide a different roleplay provider but keep coach + judge
+    # paths by wrapping in a multi-script provider would be overkill;
+    # the bare _EmptyProvider triggers the fallback for ALL three LLM
+    # calls. Coach falls back to canned text; judge fallback raises.
+    # We assert only the trace tag here.
+    class _MultiEmpty:
+        name = "multi_empty"
+
+        async def stream_chat(
+            self,
+            messages: list[Message],
+            *,
+            temperature: float = 0.7,
+            timeout: float = 8.0,
+            usage_sink: list[TokenUsage] | None = None,
+        ) -> AsyncIterator[str]:
+            _ = (temperature, timeout, usage_sink)
+            system = messages[0].content if messages else ""
+            if "你扮演用户练习对话中的对手" in system:
+                return  # empty roleplay reply triggers `……` fallback
+            if "你是教练 K" in system:
+                yield "SAFE: a\nAGGRESSIVE: b\nHUMOR: c"
+                return
+            if "你是评委" in system:
+                yield "VERDICT: guolu\nRATING: 50"
+                return
+            yield ""
+
+    svc, session_repo, _ = _service(
+        llm_provider=_MultiEmpty(),
+        langfuse_client=client,
+    )
+    await session_repo.save(_active_session())
+    validated = await svc.validate_turn_request(
+        session_id="ses_aaaa1111",
+        content="hi",
+        user_id="u",
+        trace_id="t1",
+    )
+
+    await _collect(svc.stream_turn(validated))
+
+    # The fallback `……` path skipped output moderation, so no
+    # verdict_output tag was ever added.
+    assert _verdict_output_tags(inner_trace) == []

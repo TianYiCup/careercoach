@@ -41,6 +41,7 @@ from app.agents.state import TurnScore
 from app.llm import LLMProvider, Message, TokenUsage
 from app.observability.langfuse import TurnTrace, begin_turn_trace
 from app.schemas.moderation import ModerationCheckRequest
+from app.services.moderation import ModerationBackendError
 from app.services.moderation.service import ModerationService
 from app.services.sessions.repository import SessionRepository
 from app.services.sessions.scenario_seed import get_scenario_seed
@@ -87,6 +88,14 @@ _COACH_FALLBACK = CoachHintTrio(
     aggressive="直接指出底线，不退让",
     humor="用一句玩笑把球踢回去",
 )
+
+# Used when post-stream output moderation gates the roleplay LLM's
+# reply. The user already saw the deltas (they were streamed live);
+# this replaces only the authoritative `opponent.done.full_text` +
+# the persisted turn record, so chat history doesn't carry the bad
+# text into future turns. Frontend can render it as "[opponent fell
+# silent]" or similar based on the verdict_output trace tag.
+_ROLEPLAY_REDACTED_PLACEHOLDER = "……"
 
 
 class SessionNotFoundForTurnError(LookupError):
@@ -251,22 +260,24 @@ class TurnService:
                 "scenario_id": session.scenario_id,
             },
             session_id=validated.session_id,
-            # A-24/A-26: cross-cutting Langfuse filter tags.
-            #   surface:sandbox  — which of the three surfaces this is
-            #   minor:{t|f}      — strict-tier moderation was applied
-            #   verdict:{...}    — moderation decision on user input
+            # A-24/A-26/A-29: cross-cutting Langfuse filter tags.
+            #   surface:sandbox       — which of the three surfaces this is
+            #   minor:{t|f}           — strict-tier moderation was applied
+            #   verdict_input:{...}   — moderation decision on user input
+            #   verdict_output:{...}  — added mid-trace via add_tags() once
+            #                           the roleplay LLM reply is moderated
             #
-            # Sandbox uses a single `verdict:` key (matching copilot)
-            # because only the user input is moderated. Review uses
-            # `verdict_input:` + `verdict_output:` because it moderates
-            # both. Mixing the keys would let an analyst filter
-            # `verdict:block` and see review traces where the LLM
-            # output was bad mixed with sandbox traces where the
-            # user text was bad.
+            # A-29 promoted the single `verdict:` key to
+            # `verdict_input:` + `verdict_output:` (matching review).
+            # An analyst filtering `verdict_input:block` now gets ONLY
+            # turns where the user said something bad; `verdict_output:
+            # block` isolates turns where the AI roleplay opponent
+            # produced unsafe content. Conflating these previously hid
+            # AI-side issues behind the much larger user-side noise.
             tags=[
                 "surface:sandbox",
                 f"minor:{'true' if validated.is_minor else 'false'}",
-                f"verdict:{validated.input_verdict}",
+                f"verdict_input:{validated.input_verdict}",
             ],
         )
 
@@ -305,6 +316,30 @@ class TurnService:
                 output=full_reply,
                 usage=roleplay_usage[0] if roleplay_usage else None,
             )
+
+            # A-29: moderate the roleplay LLM's reply. The deltas
+            # already streamed live — we can't unsend them — so when
+            # mod blocks we replace only the authoritative `done`
+            # full_text + the persisted record. Frontend can use the
+            # trace's verdict_output tag (or compare delta concat vs
+            # done full_text) to decide whether to redact the bubble.
+            output_passed, output_verdict = await self._output_passes_moderation(
+                full_reply,
+                user_id=validated.user_id,
+                is_minor=validated.is_minor,
+                trace_id=validated.trace_id,
+                session_id=validated.session_id,
+            )
+            if output_verdict is not None:
+                trace.add_tags([f"verdict_output:{output_verdict}"])
+            if not output_passed:
+                logger.warning(
+                    "turn_roleplay_output_blocked",
+                    session_id=validated.session_id,
+                    trace_id=validated.trace_id,
+                    verdict=output_verdict,
+                )
+                full_reply = _ROLEPLAY_REDACTED_PLACEHOLDER
 
             turn_id = _new_turn_id()
             yield SseFrame(
@@ -368,6 +403,68 @@ class TurnService:
             # the Langfuse UI.
             trace.fail(exc)
             raise
+
+    async def _output_passes_moderation(
+        self,
+        roleplay_reply: str,
+        *,
+        user_id: str,
+        is_minor: bool,
+        trace_id: str,
+        session_id: str,
+    ) -> tuple[bool, str | None]:
+        """Re-check the roleplay LLM reply against the red-line list.
+
+        Returns `(passes, verdict)`:
+          * `passes`: True when the output is safe to surface;
+                     False on `block` / `redirect`.
+          * `verdict`: the literal moderation verdict for trace
+                     tagging. None when there's nothing to check
+                     (empty reply after stripping) or the backend
+                     itself failed — both cases convert to "allow"
+                     from the caller's perspective but Langfuse
+                     should NOT show a false `verdict_output:allow`
+                     for them, hence None.
+
+        The user already passed input moderation in
+        `validate_turn_request`, but the roleplay LLM is a hostile
+        adversary by design (it plays the user's opponent) — its
+        replies need their own red-line check before we persist
+        them or echo them in future turn history.
+
+        Backend errors here are caught and treated as `allow` —
+        otherwise an Aliyun outage during sandbox would corrupt the
+        per-turn UX. The trace stays untagged so an operator can
+        still detect the silent-allow window from backend metrics.
+        """
+        if not roleplay_reply.strip() or roleplay_reply == _ROLEPLAY_REDACTED_PLACEHOLDER:
+            # Nothing meaningful to check — the empty-reply fallback
+            # has already redacted any content. Treat-as-allow with
+            # no tag so the Langfuse UI is honest about no decision.
+            return True, None
+        try:
+            decision = await self._moderation.check(
+                ModerationCheckRequest(
+                    content=roleplay_reply,
+                    context="ai_output",
+                    session_id=session_id,
+                ),
+                user_id=user_id,
+                is_minor=is_minor,
+                trace_id=trace_id,
+            )
+        except ModerationBackendError as exc:
+            logger.warning(
+                "turn_output_moderation_unavailable",
+                session_id=session_id,
+                trace_id=trace_id,
+                error=str(exc),
+            )
+            return True, None
+
+        if decision.verdict in ("block", "redirect"):
+            return False, decision.verdict
+        return True, decision.verdict
 
     async def _coach_three_tones(
         self,
