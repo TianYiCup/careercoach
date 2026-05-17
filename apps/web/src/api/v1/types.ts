@@ -132,6 +132,50 @@ export interface ShareCardResponse {
   generated_at: string
 }
 
+// --- Review (PRD §3.3 / design-spec §9.6) ---
+
+export type ReviewVerdict = 'win' | 'neutral' | 'lose'
+export type ReviewUploadStatus = 'processing' | 'done' | 'failed'
+
+export interface CreateReviewUploadRequest {
+  /** Conversation transcript pasted as text. PRD §3.3 caps at 5000 chars. */
+  text: string
+}
+
+export interface CreateReviewUploadResponse {
+  upload_id: string
+  status: ReviewUploadStatus
+}
+
+export interface ReviewTurn {
+  turn_idx: number
+  speaker: 'user' | 'opponent'
+  content: string
+  verdict: ReviewVerdict
+  /** Why this user turn lost — populated on `lose` user turns only. */
+  reason?: string | null
+  /** Suggested rewrite — populated on `lose` user turns only. */
+  better?: string | null
+}
+
+export interface ReviewSummary {
+  /** Overall score 0-10. */
+  score: number
+  /** At most 3 failure points. */
+  top_failures: string[]
+  /** At most 3 actionable improvement suggestions. */
+  improvements: string[]
+}
+
+export interface ReviewUploadResponse {
+  upload_id: string
+  status: ReviewUploadStatus
+  turns: ReviewTurn[]
+  summary: ReviewSummary | null
+  created_at: string
+  completed_at?: string | null
+}
+
 // --- Error ---
 export interface ErrorResponse {
   code: string

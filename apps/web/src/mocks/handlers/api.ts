@@ -10,6 +10,8 @@ import type {
   ShareCardType,
   SessionShareCardRequest,
   WeeklyShareCardRequest,
+  CreateReviewUploadRequest,
+  ReviewUploadResponse,
 } from '../../api/v1/types'
 
 // Wildcard origin so handlers match both relative dev fetches (`/v1/...`)
@@ -277,5 +279,63 @@ export const handlers = [
     }
 
     return HttpResponse.json(response)
+  }),
+
+  // POST /v1/review/uploads — review text (PRD §3.3)
+  http.post(`${BASE}/review/uploads`, async ({ request }) => {
+    await delay(1500)
+    const body = (await request.json()) as CreateReviewUploadRequest
+
+    // Parse the text into turns (split by \n, prefix "对方：" / "我：")
+    const lines = body.text.split('\n').filter((l) => l.trim())
+    const turns = lines.map((line, idx) => {
+      const isOpponent = line.startsWith('对方') || line.startsWith('🤵')
+      const content = line.replace(/^(对方|🤵|我|👤)[：:]\s*/, '').trim()
+      const isLose = !isOpponent && idx % 3 === 1
+      return {
+        turn_idx: idx,
+        speaker: (isOpponent ? 'opponent' : 'user') as 'opponent' | 'user',
+        content,
+        verdict: (isOpponent ? 'neutral' : isLose ? 'lose' : 'win') as 'win' | 'neutral' | 'lose',
+        reason: isLose ? '语气过软，缺少数据支撑' : null,
+        better: isLose ? '可以用具体成果来回应，比如"本周完成了A和B"' : null,
+      }
+    })
+
+    const loseTurns = turns.filter((t) => t.verdict === 'lose')
+    const response: ReviewUploadResponse = {
+      upload_id: `up_${crypto.randomUUID().slice(0, 8)}`,
+      status: 'done',
+      turns,
+      summary: {
+        score: 6.4,
+        top_failures: loseTurns.length > 0
+          ? loseTurns.slice(0, 3).map((t) => t.reason ?? '未追问')
+          : ['主动让步', '缺数据支撑'],
+        improvements: ['先认可对方再表达立场', '用具体数据替代模糊表态', '给一个替代方案而非直接拒绝'],
+      },
+      created_at: new Date().toISOString(),
+      completed_at: new Date().toISOString(),
+    }
+    return HttpResponse.json(response)
+  }),
+
+  // GET /v1/review/uploads/:uploadId
+  http.get(`${BASE}/review/uploads/:uploadId`, async () => {
+    await delay(300)
+    // Return same mock as POST for now
+    return HttpResponse.json({
+      upload_id: 'up_replay001',
+      status: 'done',
+      turns: [
+        { turn_idx: 0, speaker: 'opponent', content: '你这周做的不够多', verdict: 'neutral' },
+        { turn_idx: 1, speaker: 'user', content: '我尽力了', verdict: 'lose', reason: '主动让步，没有用事实反驳', better: '本周完成了X、Y、Z三件事，具体哪部分需要加强？' },
+        { turn_idx: 2, speaker: 'opponent', content: '你看A同事多努力', verdict: 'neutral' },
+        { turn_idx: 3, speaker: 'user', content: '好的我加班', verdict: 'lose', reason: '被贬损式比较带节奏，直接妥协', better: '每个人的工作节奏不同，我看重的是产出质量' },
+      ],
+      summary: { score: 4.2, top_failures: ['主动让步', '被带节奏'], improvements: ['用具体成果回应', '质疑比较的合理性'] },
+      created_at: new Date().toISOString(),
+      completed_at: new Date().toISOString(),
+    } satisfies ReviewUploadResponse)
   }),
 ]
