@@ -21,7 +21,7 @@ from app.llm.errors import (
     LLMTimeoutError,
     LLMUpstreamError,
 )
-from app.llm.types import Message
+from app.llm.types import Message, TokenUsage
 
 CHAT_COMPLETIONS_PATH: Final = "/v1/chat/completions"
 _SSE_PREFIX: Final = "data: "
@@ -33,21 +33,34 @@ DONE: Final[object] = object()
 
 
 def build_chat_request_body(
-    messages: list[Message], *, model: str, temperature: float
+    messages: list[Message],
+    *,
+    model: str,
+    temperature: float,
+    include_usage: bool = False,
 ) -> dict[str, Any]:
-    return {
+    body: dict[str, Any] = {
         "model": model,
         "stream": True,
         "temperature": temperature,
         "messages": [{"role": m.role.value, "content": m.content} for m in messages],
     }
+    if include_usage:
+        # OpenAI / DeepSeek / Qwen all honour this — the upstream
+        # appends one extra SSE chunk at end-of-stream carrying the
+        # `usage` payload (and an empty `choices` array). Without
+        # this flag the usage chunk is suppressed entirely.
+        body["stream_options"] = {"include_usage": True}
+    return body
 
 
-def parse_sse_line(line: str) -> str | object | None:
+def parse_sse_line(line: str) -> str | TokenUsage | object | None:
     """Return one of:
 
     * the `DONE` sentinel — end of stream
     * a non-empty `str` — text delta
+    * a `TokenUsage` — the upstream's end-of-stream accounting chunk
+      (only sent when the request body set `stream_options.include_usage`)
     * `None` — skip this line (keep-alive, malformed, empty delta)
     """
     if not line or not line.startswith(_SSE_PREFIX):
@@ -60,10 +73,27 @@ def parse_sse_line(line: str) -> str | object | None:
     except json.JSONDecodeError:
         return None
     choices = obj.get("choices") or []
+    # The usage-bearing chunk has an empty `choices` list and a
+    # populated `usage` dict. Check it first so the delta path stays
+    # untouched on every normal text chunk.
     if not choices:
-        return None
+        return _parse_usage(obj.get("usage"))
     delta = choices[0].get("delta") or {}
     return delta.get("content") or None
+
+
+def _parse_usage(usage: Any) -> TokenUsage | None:
+    """Lift a vendor `usage` dict into our `TokenUsage`, or `None` on bad shape."""
+    if not isinstance(usage, dict):
+        return None
+    try:
+        return TokenUsage(
+            prompt_tokens=int(usage.get("prompt_tokens", 0)),
+            completion_tokens=int(usage.get("completion_tokens", 0)),
+            total_tokens=int(usage.get("total_tokens", 0)),
+        )
+    except (TypeError, ValueError):
+        return None
 
 
 def map_status_to_error(*, status_code: int, body_text: str, provider: str) -> Exception:

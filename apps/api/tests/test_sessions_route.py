@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Iterator
 
 import pytest
-from app.llm import Message
+from app.llm import Message, TokenUsage
 from app.main import app
 from app.services.auth import mint_token
 from app.services.sessions import (
@@ -46,8 +46,9 @@ class _RouteStubLLM:
         *,
         temperature: float = 0.7,
         timeout: float = 30.0,
+        usage_sink: list[TokenUsage] | None = None,
     ) -> AsyncIterator[str]:
-        del messages, temperature, timeout
+        del messages, temperature, timeout, usage_sink
         yield (
             "AURA: 7\n"
             "LOGIC: 6\n"

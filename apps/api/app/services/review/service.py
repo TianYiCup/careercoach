@@ -60,7 +60,7 @@ import structlog
 from langfuse import Langfuse
 
 from app.agents.reviewer import ReviewerResult, analyze_review
-from app.llm import LLMError, LLMProvider
+from app.llm import LLMError, LLMProvider, TokenUsage
 from app.observability.langfuse import TurnTrace, begin_review_trace
 from app.schemas.moderation import ModerationCheckRequest
 from app.services.moderation.backend import ModerationBackendError
@@ -320,8 +320,11 @@ class ReviewService:
         trace_id: str,
         trace: TurnTrace,
     ) -> None:
+        usage: list[TokenUsage] = []
         try:
-            result: ReviewerResult | None = await analyze_review(self._provider, text=text)
+            result: ReviewerResult | None = await analyze_review(
+                self._provider, text=text, usage_sink=usage
+            )
         except LLMError as exc:
             logger.warning(
                 "review_llm_failed",
@@ -336,12 +339,16 @@ class ReviewService:
         # this trace. We record even on `None` so failed analyses show
         # up on the Langfuse UI with empty output — otherwise an
         # operator looking at a `failed` upload would see the trace
-        # but no generation span, which is harder to debug.
+        # but no generation span, which is harder to debug. Usage is
+        # populated by the provider when it surfaced token counts
+        # (A-27); falsy means we tried but the upstream didn't
+        # include them — the trace just lands without usage.
         trace.record_generation(
             name="analyze_review",
             model=getattr(self._provider, "name", "unknown"),
             input={"text_len": len(text)},
             output=_summarize_result_for_trace(result),
+            usage=usage[0] if usage else None,
         )
 
         if result is not None:

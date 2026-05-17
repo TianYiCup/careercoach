@@ -17,6 +17,7 @@ from app.llm import (
     LLMUpstreamError,
     Message,
     Role,
+    TokenUsage,
 )
 from pydantic import ValidationError
 
@@ -32,9 +33,13 @@ class _FakeProvider:
         *,
         temperature: float = 0.7,
         timeout: float = 8.0,
+        usage_sink: list[TokenUsage] | None = None,
     ) -> AsyncIterator[str]:
         # Echo the last user message back as two chunks so tests can
-        # assert streaming semantics.
+        # assert streaming semantics. We accept `usage_sink` for
+        # protocol-compat (A-27) but don't append — the fake doesn't
+        # synthesise token counts.
+        _ = usage_sink
         last = messages[-1].content
         yield last[: len(last) // 2]
         yield last[len(last) // 2 :]

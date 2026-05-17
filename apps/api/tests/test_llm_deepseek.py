@@ -18,6 +18,7 @@ from app.llm import (
     LLMTimeoutError,
     LLMUpstreamError,
     Message,
+    TokenUsage,
 )
 
 
@@ -202,3 +203,134 @@ async def test_other_transport_errors_map_to_upstream(messages: list[Message]) -
         await provider.aclose()
 
     assert ei.value.provider == "deepseek"
+
+
+# --- A-27: token usage on streamed responses ---
+
+
+def _sse_body_with_usage(
+    *chunks: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    total_tokens: int,
+) -> bytes:
+    """Body that DeepSeek returns when `stream_options.include_usage=true`.
+
+    DeepSeek (and OpenAI) append a final SSE chunk with an empty
+    `choices` list and a populated `usage` block, right before the
+    `[DONE]` sentinel.
+    """
+    lines: list[str] = []
+    for c in chunks:
+        payload = '{"choices":[{"index":0,"delta":{"content":"' + c + '"},"finish_reason":null}]}'
+        lines.append(f"data: {payload}")
+    usage_payload = (
+        '{"choices":[],"usage":{'
+        f'"prompt_tokens":{prompt_tokens},'
+        f'"completion_tokens":{completion_tokens},'
+        f'"total_tokens":{total_tokens}'
+        "}}"
+    )
+    lines.append(f"data: {usage_payload}")
+    lines.append("data: [DONE]")
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+async def test_usage_sink_populated_when_provided(messages: list[Message]) -> None:
+    """When the caller passes a `usage_sink`, the adapter must request
+    accounting from upstream (`stream_options.include_usage=true`),
+    parse the final usage chunk, and append the `TokenUsage` to the
+    sink. The token deltas themselves are unaffected."""
+    captured_body: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_body["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            content=_sse_body_with_usage(
+                "hi",
+                " there",
+                prompt_tokens=12,
+                completion_tokens=4,
+                total_tokens=16,
+            ),
+        )
+
+    provider = _make_provider(handler)
+    sink: list[TokenUsage] = []
+    try:
+        chunks = await _collect(provider.stream_chat(messages, usage_sink=sink))
+    finally:
+        await provider.aclose()
+
+    assert chunks == ["hi", " there"]
+    body = captured_body["body"]
+    assert isinstance(body, dict)
+    assert body.get("stream_options") == {"include_usage": True}
+    assert sink == [TokenUsage(prompt_tokens=12, completion_tokens=4, total_tokens=16)]
+
+
+async def test_usage_sink_none_means_include_usage_off(messages: list[Message]) -> None:
+    """Default (sink=None) MUST omit `stream_options` so the upstream
+    doesn't bill the (tiny) usage-chunk overhead on every call."""
+    captured_body: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_body["body"] = json.loads(request.content)
+        return httpx.Response(200, content=_sse_body("ok"))
+
+    provider = _make_provider(handler)
+    try:
+        await _collect(provider.stream_chat(messages))
+    finally:
+        await provider.aclose()
+
+    body = captured_body["body"]
+    assert isinstance(body, dict)
+    assert "stream_options" not in body
+
+
+async def test_usage_chunk_ignored_when_sink_is_none(messages: list[Message]) -> None:
+    """If an upstream sends a usage chunk anyway (because some other
+    flag was set, or the API changed default behaviour), the adapter
+    must silently drop it rather than yielding garbage strings."""
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=_sse_body_with_usage(
+                "a",
+                "b",
+                prompt_tokens=1,
+                completion_tokens=2,
+                total_tokens=3,
+            ),
+        )
+
+    provider = _make_provider(handler)
+    try:
+        chunks = await _collect(provider.stream_chat(messages))
+    finally:
+        await provider.aclose()
+
+    # Only the deltas, never the usage payload.
+    assert chunks == ["a", "b"]
+
+
+async def test_malformed_usage_payload_does_not_crash(messages: list[Message]) -> None:
+    """If the upstream sends a `usage` field with wrong types, the
+    parser must yield None for that chunk so the stream keeps going.
+    Sink stays empty — better no data than wrong data."""
+
+    bad = b'data: {"choices":[],"usage":{"prompt_tokens":"oops"}}\n'
+    body = b'data: {"choices":[{"delta":{"content":"x"}}]}\n' + bad + b"data: [DONE]\n"
+
+    provider = _make_provider(lambda _r: httpx.Response(200, content=body))
+    sink: list[TokenUsage] = []
+    try:
+        chunks = await _collect(provider.stream_chat(messages, usage_sink=sink))
+    finally:
+        await provider.aclose()
+
+    assert chunks == ["x"]
+    assert sink == []

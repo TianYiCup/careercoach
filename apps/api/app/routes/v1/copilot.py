@@ -94,7 +94,7 @@ from langfuse import Langfuse
 from starlette.websockets import WebSocketDisconnect
 
 from app.asr import ASRProvider, get_asr_provider
-from app.llm import LLMError, LLMProvider, Message
+from app.llm import LLMError, LLMProvider, Message, TokenUsage
 from app.llm.factory import get_llm_router
 from app.observability.langfuse import (
     TurnTrace,
@@ -599,8 +599,9 @@ async def _stream_coach_hint(
         Message.user(_build_coach_user_prompt(scenario_hint, user_input)),
     ]
     parts: list[str] = []
+    usage: list[TokenUsage] = []
     try:
-        async for chunk in llm_router.stream_chat(messages):
+        async for chunk in llm_router.stream_chat(messages, usage_sink=usage):
             if not chunk:
                 continue
             if not await _send_or_drop(
@@ -627,6 +628,7 @@ async def _stream_coach_hint(
         model=llm_router.name,
         input={"scenario_hint": scenario_hint, "user_input": user_input},
         output={"text": full},
+        usage=usage[0] if usage else None,
     )
     await _send_or_drop(
         websocket,

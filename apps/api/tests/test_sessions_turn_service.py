@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 
 import pytest
 from app.agents.state import Verdict
-from app.llm import LLMProvider, Message
+from app.llm import LLMProvider, Message, TokenUsage
 from app.services.moderation import LogOnlyEventSink, ModerationService, NoopBackend
 from app.services.moderation.types import Decision
 from app.services.sessions.repository import InMemorySessionRepository, SessionRecord
@@ -49,8 +49,9 @@ class _ScriptedProvider:
         *,
         temperature: float = 0.7,
         timeout: float = 8.0,
+        usage_sink: list[TokenUsage] | None = None,
     ) -> AsyncIterator[str]:
-        _ = (temperature, timeout)
+        _ = (temperature, timeout, usage_sink)
         system = messages[0].content if messages else ""
         for keyword, response in self._script.items():
             if keyword in system:
@@ -414,8 +415,9 @@ async def test_stream_turn_marks_trace_error_when_llm_blows_up() -> None:
             *,
             temperature: float = 0.7,
             timeout: float = 8.0,
+            usage_sink: list[TokenUsage] | None = None,
         ) -> AsyncIterator[str]:
-            _ = (messages, temperature, timeout)
+            _ = (messages, temperature, timeout, usage_sink)
             raise RuntimeError("scripted provider failure")
             yield ""  # pragma: no cover — unreachable
 
@@ -534,3 +536,111 @@ async def test_validated_turn_carries_moderation_context() -> None:
 
     assert validated.is_minor is False
     assert validated.input_verdict == "warn"
+
+
+# --- A-27: token usage forwarded to Langfuse generations ---
+
+
+async def test_stream_turn_records_token_usage_when_provider_supplies_it() -> None:
+    """A provider that appends to its `usage_sink` (real DeepSeek /
+    Qwen do) should have those token counts forwarded to every
+    `record_generation` call — roleplay + coach + judge — so the
+    Langfuse cost view picks them up on the per-turn span."""
+    from unittest.mock import MagicMock
+
+    class _UsageAwareProvider:
+        """Yields scripted text AND populates usage_sink, mimicking
+        the real adapter contract after A-27."""
+
+        name = "usage_aware"
+
+        def __init__(self) -> None:
+            self._script = {
+                "你扮演用户练习对话中的对手": "好的",
+                "你是教练 K": "SAFE: a\nAGGRESSIVE: b\nHUMOR: c",
+                "你是评委": "VERDICT: shenfeng\nRATING: 85",
+            }
+
+        async def stream_chat(
+            self,
+            messages: list[Message],
+            *,
+            temperature: float = 0.7,
+            timeout: float = 8.0,
+            usage_sink: list[TokenUsage] | None = None,
+        ) -> AsyncIterator[str]:
+            _ = (temperature, timeout)
+            system = messages[0].content if messages else ""
+            for keyword, response in self._script.items():
+                if keyword in system:
+                    yield response
+                    if usage_sink is not None:
+                        # Different counts per call so we can tell
+                        # which generation received which.
+                        usage_sink.append(
+                            TokenUsage(
+                                prompt_tokens=len(messages),
+                                completion_tokens=len(response),
+                                total_tokens=len(messages) + len(response),
+                            )
+                        )
+                    return
+            raise AssertionError(f"unscripted system prompt: {system[:60]!r}")
+
+    client = MagicMock(name="langfuse")
+    inner_trace = MagicMock(name="trace")
+    inner_gen = MagicMock(name="generation")
+    inner_trace.generation.return_value = inner_gen
+    client.trace.return_value = inner_trace
+
+    svc, session_repo, _ = _service(
+        llm_provider=_UsageAwareProvider(),
+        langfuse_client=client,
+    )
+    await session_repo.save(_active_session())
+    validated = await svc.validate_turn_request(
+        session_id="ses_aaaa1111",
+        content="hi",
+        user_id="u_42",
+        trace_id="t1",
+    )
+
+    await _collect(svc.stream_turn(validated))
+
+    # Every generation call must carry a `usage` kwarg this time —
+    # the provider supplied counts for all three.
+    usage_payloads = [
+        c.kwargs["usage"] for c in inner_trace.generation.call_args_list if "usage" in c.kwargs
+    ]
+    assert len(usage_payloads) == 3
+    for u in usage_payloads:
+        assert set(u.keys()) == {"input", "output", "total"}
+        assert u["total"] == u["input"] + u["output"]
+
+
+async def test_stream_turn_omits_usage_when_provider_doesnt_append() -> None:
+    """The default scripted provider doesn't append to usage_sink —
+    record_generation must NOT pass `usage=` to Langfuse in that case
+    (otherwise the dashboard would see explicit None and clobber any
+    backfill the upstream might add later)."""
+    from unittest.mock import MagicMock
+
+    client = MagicMock(name="langfuse")
+    inner_trace = MagicMock(name="trace")
+    inner_gen = MagicMock(name="generation")
+    inner_trace.generation.return_value = inner_gen
+    client.trace.return_value = inner_trace
+
+    svc, session_repo, _ = _service(langfuse_client=client)
+    await session_repo.save(_active_session())
+    validated = await svc.validate_turn_request(
+        session_id="ses_aaaa1111",
+        content="hi",
+        user_id="u",
+        trace_id="t1",
+    )
+
+    await _collect(svc.stream_turn(validated))
+
+    for call in inner_trace.generation.call_args_list:
+        assert "usage" not in call.kwargs

@@ -38,7 +38,7 @@ from langfuse import Langfuse
 
 from app.agents.judge import parse_judge_output
 from app.agents.state import TurnScore
-from app.llm import LLMProvider, Message
+from app.llm import LLMProvider, Message, TokenUsage
 from app.observability.langfuse import TurnTrace, begin_turn_trace
 from app.schemas.moderation import ModerationCheckRequest
 from app.services.moderation.service import ModerationService
@@ -283,8 +283,9 @@ class TurnService:
                 Message.user(validated.content),
             ]
 
+            roleplay_usage: list[TokenUsage] = []
             full_reply_parts: list[str] = []
-            async for chunk in self._llm.stream_chat(roleplay_messages):
+            async for chunk in self._llm.stream_chat(roleplay_messages, usage_sink=roleplay_usage):
                 if not chunk:
                     continue
                 full_reply_parts.append(chunk)
@@ -302,6 +303,7 @@ class TurnService:
                 model=self._llm.name,
                 input=[m.model_dump() for m in roleplay_messages],
                 output=full_reply,
+                usage=roleplay_usage[0] if roleplay_usage else None,
             )
 
             turn_id = _new_turn_id()
@@ -376,12 +378,14 @@ class TurnService:
         """Single LLM call → parse the three-tone block. Fallback on parse fail."""
         prompt = f"用户刚说：{user_content}\n对手回应：{opponent_reply}\n请按三档输出。"
         messages = [Message.system(_COACH_PROMPT), Message.user(prompt)]
-        raw = await _collect(self._llm.stream_chat(messages))
+        usage: list[TokenUsage] = []
+        raw = await _collect(self._llm.stream_chat(messages, usage_sink=usage))
         trace.record_generation(
             name="coach.three_tones",
             model=self._llm.name,
             input=[m.model_dump() for m in messages],
             output=raw,
+            usage=usage[0] if usage else None,
         )
         return _parse_three_tones(raw)
 
@@ -394,12 +398,14 @@ class TurnService:
         """Reuse the agent-level parser so SSE + LangGraph stay in sync."""
         prompt = f"用户的话：{user_content}\n对手的回应：{opponent_reply}\n请评分。"
         messages = [Message.system(_JUDGE_PROMPT), Message.user(prompt)]
-        raw = await _collect(self._llm.stream_chat(messages))
+        usage: list[TokenUsage] = []
+        raw = await _collect(self._llm.stream_chat(messages, usage_sink=usage))
         trace.record_generation(
             name="judge",
             model=self._llm.name,
             input=[m.model_dump() for m in messages],
             output=raw,
+            usage=usage[0] if usage else None,
         )
         return parse_judge_output(raw)
 

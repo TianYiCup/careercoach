@@ -22,7 +22,7 @@ from app.agents.reviewer import (
     parse_review_text,
     parse_reviewer_output,
 )
-from app.llm import Message
+from app.llm import Message, TokenUsage
 from app.services.review import ReviewTurnRecord
 
 # --------------------------------------------------------------------- #
@@ -301,7 +301,9 @@ class _FakeProvider:
         *,
         temperature: float = 0.7,
         timeout: float = 8.0,
+        usage_sink: list[TokenUsage] | None = None,
     ) -> AsyncIterator[str]:
+        _ = usage_sink
         self.received = list(messages)
         return self._chunks()
 

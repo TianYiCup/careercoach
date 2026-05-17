@@ -26,7 +26,7 @@ from app.llm._openai_compat import (
     safe_response_text,
 )
 from app.llm.provider import DEFAULT_TEMPERATURE, DEFAULT_TIMEOUT_SECONDS
-from app.llm.types import Message
+from app.llm.types import Message, TokenUsage
 
 PROVIDER_NAME = "qwen"
 DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode"
@@ -74,6 +74,7 @@ class QwenProvider:
         *,
         temperature: float = DEFAULT_TEMPERATURE,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        usage_sink: list[TokenUsage] | None = None,
     ) -> AsyncIterator[str]:
         if not messages:
             raise ValueError("messages must not be empty")
@@ -83,7 +84,12 @@ class QwenProvider:
             "Authorization": f"Bearer {self._api_key}",
             "Accept": "text/event-stream",
         }
-        body = build_chat_request_body(messages, model=self._model, temperature=temperature)
+        body = build_chat_request_body(
+            messages,
+            model=self._model,
+            temperature=temperature,
+            include_usage=usage_sink is not None,
+        )
 
         try:
             async with client.stream(
@@ -106,6 +112,10 @@ class QwenProvider:
                         continue
                     if chunk is DONE:
                         return
+                    if isinstance(chunk, TokenUsage):
+                        if usage_sink is not None:
+                            usage_sink.append(chunk)
+                        continue
                     if isinstance(chunk, str) and chunk:
                         yield chunk
         except httpx.HTTPError as exc:

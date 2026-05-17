@@ -33,7 +33,7 @@ from app.llm.provider import (
     DEFAULT_TIMEOUT_SECONDS,
     LLMProvider,
 )
-from app.llm.types import Message
+from app.llm.types import Message, TokenUsage
 
 logger = structlog.get_logger(__name__)
 
@@ -69,11 +69,17 @@ class LLMRouter:
         *,
         temperature: float = DEFAULT_TEMPERATURE,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        usage_sink: list[TokenUsage] | None = None,
     ) -> AsyncIterator[str]:
         last_error: LLMError | None = None
 
         for attempt, provider in enumerate(self._chain):
-            stream = provider.stream_chat(messages, temperature=temperature, timeout=timeout)
+            stream = provider.stream_chat(
+                messages,
+                temperature=temperature,
+                timeout=timeout,
+                usage_sink=usage_sink,
+            )
             try:
                 first_chunk = await self._await_first_chunk(stream, provider.name)
             except _FailoverSignal as signal:
