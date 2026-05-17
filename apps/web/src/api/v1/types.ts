@@ -252,6 +252,39 @@ export interface CopilotAudioEndFrame {
   type: 'audio_end'
 }
 
+// --- Weakness Profile (PRD §7.7 / design-spec §9.7) ---
+
+export interface WeaknessItem {
+  /** Weakness tag, e.g. "主动让步" */
+  tag: string
+  /** Frequency count across all sessions */
+  count: number
+  /** Percentage of total weakness occurrences (0-100) */
+  percentage: number
+  /** K's sharp comment on this weakness */
+  remark: string
+}
+
+export interface RecommendedScenario {
+  /** Scenario id for direct navigation */
+  scenario_id: string
+  /** Display title */
+  title: string
+  /** Why K recommends this */
+  reason: string
+}
+
+export interface WeaknessProfile {
+  /** Total sessions analyzed */
+  total_sessions: number
+  /** Top weakness (displayed as hero card) */
+  top_weakness: WeaknessItem
+  /** Remaining weaknesses ranked #2... */
+  weaknesses: WeaknessItem[]
+  /** K's recommended training scenarios (max 3) */
+  recommendations: RecommendedScenario[]
+}
+
 // --- API error codes (emitted as body.code on 4xx) ---
 
 export type ApiErrorCode =

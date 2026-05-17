@@ -1,0 +1,1 @@
+export { WeaknessProfilePage } from './WeaknessProfilePage'
