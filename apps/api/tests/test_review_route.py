@@ -754,9 +754,9 @@ async def test_output_moderation_backend_error_does_not_lose_analysis(
 ) -> None:
     """If the moderation backend errors during the OUTPUT pass, the
     user's already-paid-for analysis must not be invalidated. Service
-    catches `ModerationBackendError` only on the output side and
-    treats it as `allow`. (Input-side backend errors stay uncaught
-    and would 5xx — verified by `test_input_moderation_backend_error_propagates`.)
+    catches `ModerationBackendError` on the output side and treats it
+    as `allow`. The A-37 input-side handling is symmetric — verified
+    by `test_input_moderation_backend_error_fails_open_and_persists`.
     """
     backend = _RaisingModBackend()
 
@@ -795,17 +795,19 @@ async def test_output_moderation_backend_error_does_not_lose_analysis(
     assert resp.json()["status"] == "done"
 
 
-async def test_input_moderation_backend_error_propagates(client: AsyncClient) -> None:
-    """If the moderation backend errors on the INPUT side, the
-    `ModerationBackendError` bubbles up unchanged — FastAPI returns 500
-    in production and ops gets paged. Critically, NO orphan upload row
-    is created (input mod runs before any persist) and the LLM is never
-    called. Mirrors `TurnService.validate_turn_request`'s decision to
-    fail loud instead of silently passing through unsafe content.
+async def test_input_moderation_backend_error_fails_open_and_persists(
+    client: AsyncClient,
+) -> None:
+    """A-37: symmetric with the output-side handling.
 
-    The httpx ASGI transport re-raises unhandled exceptions in tests
-    rather than mapping them to a 500 response, so we assert via
-    `pytest.raises` rather than `resp.status_code`."""
+    Policy reversal vs the pre-A-37 behavior (which 5xx'd): an input
+    moderation backend outage MUST NOT deny service. The upload is
+    persisted, the LLM is called, and the response is 200 — the
+    Langfuse trace carries `verdict_input:backend_failed` instead of
+    a real verdict so analysts can count exposure during a mod-backend
+    incident. PRD §3.0.5 reserves block for the six red lines; a
+    transport outage is not a red-line hit.
+    """
     provider = _FakeProvider(_REVIEWER_OUTPUT)
     service, repo = _deterministic_service(provider, moderation=_moderation(_RaisingModBackend()))
     app.dependency_overrides[get_review_service] = lambda: service
@@ -816,16 +818,25 @@ async def test_input_moderation_backend_error_propagates(client: AsyncClient) ->
         age_set=True,
     )
 
-    with pytest.raises(ModerationBackendError):
-        await client.post(
-            "/v1/review/uploads",
-            headers={"Authorization": f"Bearer {token}"},
-            json={"text": _SAMPLE_TEXT},
-        )
+    resp = await client.post(
+        "/v1/review/uploads",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"text": _SAMPLE_TEXT},
+    )
 
-    # No upload row leaked — input mod ran before persistence.
-    assert await repo.get("up_test0000000001") is None
-    assert provider.call_count == 0
+    # Fail-open: upload accepted, analysis ran end-to-end.
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "done"
+
+    # Upload row IS persisted now (was MUST NOT before A-37).
+    persisted = await repo.get("up_test0000000001")
+    assert persisted is not None
+    assert persisted.status == "done"
+
+    # LLM IS called now (was MUST NOT before A-37) — analyzing the
+    # text is the entire reason the user uploaded it.
+    assert provider.call_count == 1
 
 
 # --------------------------------------------------------------------- #

@@ -1292,6 +1292,7 @@ def _install_scripted_moderation(
     *,
     output_verdict: str = "allow",
     output_backend_fails: bool = False,
+    input_backend_fails: bool = False,
 ) -> None:
     """Install a moderation service that returns `allow` on user_input
     (so the upstream gate doesn't block the hint from spawning) and
@@ -1299,6 +1300,11 @@ def _install_scripted_moderation(
 
     `output_backend_fails=True` raises `ModerationBackendError` on the
     ai_output call so the treat-as-allow-but-no-tag path is covered.
+
+    `input_backend_fails=True` raises `ModerationBackendError` on the
+    user_input call to exercise the A-37 fail-open path: no
+    moderation frame goes out and the trace gets
+    `verdict_input:backend_failed`.
     """
 
     class _ScriptedBackend:
@@ -1314,6 +1320,11 @@ def _install_scripted_moderation(
                     )
                 effective = output_verdict
             else:
+                if input_backend_fails:
+                    raise ModerationBackendError(
+                        "scripted input backend failure",
+                        backend="test_scripted",
+                    )
                 effective = "allow"
             categories: tuple[str, ...] = ("other",) if effective != "allow" else ()
             redirect_resource = (
@@ -1451,3 +1462,46 @@ def test_hint_output_backend_failure_falls_through_to_hint_done(
     # Trace surfaces the outage via the shared verdict_output key.
     tags = _final_tag_set(trace)
     assert "verdict_output:backend_failed" in tags
+
+
+def test_input_backend_failure_tags_verdict_input_backend_failed(
+    client: TestClient,
+) -> None:
+    """A-37: when the user_input moderation backend fails, we MUST
+    NOT silently allow the hint to spawn (no Decision => no signal
+    about user safety), but we MUST surface the outage to ops.
+
+    Behavior:
+      * No `moderation` WS frame emitted — clients today don't
+        know about a `backend_failed` verdict and a synthetic `allow`
+        frame would mislead them.
+      * Trace gets `verdict_input:backend_failed` so an analyst can
+        count outage exposure on the same key real verdicts ride.
+      * Hint generation is suppressed (Decision is None, gating
+        upstream hint logic).
+    """
+    _install_scripted_moderation(input_backend_fails=True)
+    _install_llm(chunks=("hint that should NOT be generated",))
+    _lf_client, trace = _install_langfuse_mock()
+    service, repo = _build_service()
+    app.dependency_overrides[get_copilot_service] = lambda: service
+    _seed_pending(repo, "cop_test0000000001")
+
+    sent_events: list[dict[str, object]] = []
+    with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
+        ws.send_bytes(b"hi")
+        ws.send_text(_AUDIO_END_FRAME)
+        # Only ASR frames arrive (asr_partial + asr_final) — no
+        # moderation, no hint. Consume two with a tight timeout so
+        # any spurious frame would surface as a test failure.
+        for _ in range(2):
+            sent_events.append(ws.receive_json())
+
+    event_types = [e.get("type") for e in sent_events]
+    assert "asr_final" in event_types
+    assert "moderation" not in event_types
+    assert "hint_delta" not in event_types
+    assert "hint_done" not in event_types
+
+    tags = _final_tag_set(trace)
+    assert "verdict_input:backend_failed" in tags

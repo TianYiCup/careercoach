@@ -432,7 +432,7 @@ async def _run_one_utterance(
         trace.finish(output={"final_text": "", "verdict": None})
         return _UtteranceResult(final_text="", verdict=None), trace
 
-    decision = await _moderate_and_emit(
+    decision, verdict_label = await _moderate_and_emit(
         websocket,
         moderation_service=moderation_service,
         text=final_text,
@@ -450,13 +450,14 @@ async def _run_one_utterance(
                 "categories": list(decision.categories),
             },
         )
-        # A-24/A-32: verdict tag added now that user-input moderation
-        # has run. A-32 renamed the key from `verdict:` to
-        # `verdict_input:` so all three surfaces (sandbox / review /
-        # copilot) align on the input/output split. The output-side
-        # `verdict_output:{...}` tag is added later in
-        # `_stream_coach_hint` once the hint moderation runs.
-        trace.add_tags([f"verdict_input:{decision.verdict}"])
+    # A-24/A-32/A-37: verdict_input tag. Decoupled from `decision is
+    # not None` in A-37 so a backend outage still surfaces as
+    # `verdict_input:backend_failed` even though no Decision exists.
+    # Other catch-all failures (verdict_label is None) stay untagged
+    # — those are bugs and should be investigated via the exception
+    # log, not silently bucketed as `backend_failed`.
+    if verdict_label is not None:
+        trace.add_tags([f"verdict_input:{verdict_label}"])
 
     verdict = decision.verdict if decision is not None else None
     trace.finish(output={"final_text": final_text, "verdict": verdict})
@@ -581,14 +582,28 @@ async def _moderate_and_emit(
     text: str,
     copilot_id: str,
     user_id: str,
-) -> Decision | None:
+) -> tuple[Decision | None, str | None]:
     """Score the finalized transcript and emit a `moderation` event.
 
-    Returns the underlying `Decision` so the caller can gate
-    downstream work (hint generation) on the verdict. Returns None if
-    the moderation call itself raised — the WS stays open and we just
-    skip the gate (downstream hint won't spawn since None isn't in
-    the allowed set).
+    Returns `(decision, verdict_label)`:
+
+      * Success:                `(decision, decision.verdict)`
+      * Moderation backend down: `(None, "backend_failed")`   [A-37]
+      * Any other exception:    `(None, None)`
+
+    The caller uses `decision` to gate downstream hint generation
+    (None → no hint spawns) and `verdict_label` to tag the Langfuse
+    trace with `verdict_input:{label}`. Splitting the two lets us
+    surface a backend outage as an observability signal without
+    emitting a misleading "allow" decision the hint would then act
+    on.
+
+    Why a tuple instead of a sentinel Decision: `Decision.verdict`
+    is typed `Literal["allow","warn","block","redirect"]`. Adding a
+    `backend_failed` member would propagate into every downstream
+    that pattern-matches on the verdict (DB persistence, scorecard
+    aggregation, etc.) — far broader blast radius than a localized
+    label string used only for the Langfuse tag.
 
     Strictness
     ----------
@@ -607,13 +622,29 @@ async def _moderate_and_emit(
             is_minor=False,
             trace_id=trace_id,
         )
+    except ModerationBackendError as exc:
+        # A-37: distinguished from the generic catch-all below so the
+        # Langfuse trace gets a `verdict_input:backend_failed` tag
+        # instead of being silently untagged. We deliberately do NOT
+        # emit a `moderation` WS frame here — clients today don't
+        # know about a `backend_failed` verdict and a synthetic
+        # `allow` would be misleading. Skipping the frame is the
+        # safe default; the trace tag is the ops-visible signal.
+        logger.warning(
+            "copilot_input_moderation_unavailable",
+            copilot_id=copilot_id,
+            trace_id=trace_id,
+            backend=exc.backend,
+            error=str(exc),
+        )
+        return None, "backend_failed"
     except Exception:
         logger.exception(
             "copilot_moderation_failed",
             copilot_id=copilot_id,
             trace_id=trace_id,
         )
-        return None
+        return None, None
 
     payload: dict[str, Any] = {
         "type": "moderation",
@@ -628,11 +659,14 @@ async def _moderate_and_emit(
     }
     await websocket.send_json(payload)
 
-    return Decision(
-        verdict=response.verdict,
-        score=response.score,
-        categories=tuple(response.categories),
-        redirect_resource=response.redirect_resource,
+    return (
+        Decision(
+            verdict=response.verdict,
+            score=response.score,
+            categories=tuple(response.categories),
+            redirect_resource=response.redirect_resource,
+        ),
+        response.verdict,
     )
 
 

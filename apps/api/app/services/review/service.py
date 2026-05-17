@@ -155,20 +155,39 @@ class ReviewService:
         # `block` short-circuits before any DB or queue work. `warn` /
         # `redirect` proceed; minors had `warn` already elevated to
         # `block` inside the service via `_apply_minor_strictness`.
-        input_decision = await self._moderation.check(
-            ModerationCheckRequest(content=text, context="user_input"),
-            user_id=user_id,
-            is_minor=is_minor,
-            trace_id=trace_id,
-        )
-        if input_decision.verdict == "block":
-            logger.info(
-                "review_input_blocked",
+        #
+        # A-37: when the moderation backend itself is unavailable we
+        # fail-open (matching the sandbox surface). The upload still
+        # gets persisted and analyzed; the Langfuse trace just carries
+        # `verdict_input:backend_failed` instead of a real verdict so
+        # the outage is greppable. Output-side moderation (A-29) on
+        # the analyzer's reply is unaffected.
+        try:
+            input_decision = await self._moderation.check(
+                ModerationCheckRequest(content=text, context="user_input"),
+                user_id=user_id,
+                is_minor=is_minor,
+                trace_id=trace_id,
+            )
+        except ModerationBackendError as exc:
+            logger.warning(
+                "review_input_moderation_unavailable",
                 trace_id=trace_id,
                 user_id=user_id,
-                categories=list(input_decision.categories),
+                backend=exc.backend,
+                error=str(exc),
             )
-            raise ReviewInputBlockedError(categories=tuple(input_decision.categories))
+            input_verdict = "backend_failed"
+        else:
+            if input_decision.verdict == "block":
+                logger.info(
+                    "review_input_blocked",
+                    trace_id=trace_id,
+                    user_id=user_id,
+                    categories=list(input_decision.categories),
+                )
+                raise ReviewInputBlockedError(categories=tuple(input_decision.categories))
+            input_verdict = input_decision.verdict
 
         # ---- PERSIST processing record ----
         upload_id = self._id_factory()
@@ -191,9 +210,9 @@ class ReviewService:
         # ---- ENQUEUE the post-persist work ----
         # `input_verdict` rides through to `_process_upload` so the
         # Langfuse trace can tag it (A-25). `block` already early-
-        # returned above, so this is always `allow` / `warn` /
-        # `redirect` — meaningful enough for analysts to filter on.
-        input_verdict = input_decision.verdict
+        # returned above, so this is `allow` / `warn` / `redirect`
+        # for a successful mod call, or `backend_failed` for an A-37
+        # fail-open. The variable is set in the try/else block above.
 
         async def _do_analysis() -> None:
             await self._process_upload(
