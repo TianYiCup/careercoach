@@ -18,8 +18,9 @@ import { AuthProvider, LoginPage, AgeGatePage, useAuth } from './features/auth'
 import { ReviewUploadPage } from './features/review/ReviewUploadPage'
 import { ReviewResultPage } from './features/review/ReviewResultPage'
 import { CopilotPage } from './features/copilot'
+import { WeaknessProfilePage } from './features/weakness'
 
-type Page = 'home' | 'sandbox' | 'copilot' | 'wrapped' | 'score' | 'reviewUpload' | 'reviewResult'
+type Page = 'home' | 'sandbox' | 'copilot' | 'wrapped' | 'score' | 'reviewUpload' | 'reviewResult' | 'weakness'
 
 /** Narrow MascotExpression to the 3 expressions that make sense on the score page */
 function toScoreExpression(expr: MascotExpression): 'godlike' | 'crashed' | 'confident' {
@@ -385,11 +386,18 @@ function UserBubble({ text }: { text: string }) {
 }
 
 /** Wrapped 卡演示页 — design-spec §10 */
-function WrappedPage() {
+function WrappedPage({ onBack }: { onBack: () => void }) {
   return (
     <div className="relative min-h-screen flex flex-col items-center justify-center px-4 py-12 overflow-hidden">
       <BlobBackground />
       <div className="relative z-10 w-full max-w-md space-y-8 text-center">
+        <button
+          type="button"
+          onClick={onBack}
+          className="self-start text-ink-text-2 text-sm hover:text-ink-text transition-colors"
+        >
+          &larr; 返回
+        </button>
         <h1 className="text-3xl font-display text-ink-text mb-2">Wrapped 战报</h1>
         <p className="text-sm text-ink-text-2">Canvas 渲染 + PNG 下载 spike</p>
         <GlassCard className="space-y-6">
@@ -478,6 +486,13 @@ function HomePage({
             >
               📊 Wrapped 战报
             </button>
+            <button
+              type="button"
+              onClick={() => onNavigate('weakness')}
+              className="px-6 py-3 rounded-radius-md bg-vivid-orange/20 border border-vivid-orange/40 text-vivid-orange font-body font-medium hover:bg-vivid-orange/30 transition-colors"
+            >
+              🔥 弱点画像
+            </button>
           </div>
         </GlassCard>
         <GlassCard glow className="text-center">
@@ -531,7 +546,10 @@ function AppGate() {
       {page === 'copilot' && (
         <CopilotPage onBack={() => setPage('home')} />
       )}
-      {page === 'wrapped' && <WrappedPage />}
+      {page === 'weakness' && (
+        <WeaknessProfilePage onBack={() => setPage('home')} />
+      )}
+      {page === 'wrapped' && <WrappedPage onBack={() => setPage('home')} />}
       {page === 'reviewUpload' && (
         <ReviewUploadPage
           onResult={(uploadId) => {
