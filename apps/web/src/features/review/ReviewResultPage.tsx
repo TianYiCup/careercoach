@@ -2,25 +2,24 @@
  * 复盘结果页 — 三栏 UI — PRD §3.3 US-C2 / design-spec §9.6
  *
  * 左栏：上传内容摘要（句数统计）
- * 中栏：逐句三色标记 + K 更佳话术
+ * 中栏：逐句三色标记 + 失分弹出更佳话术
  * 右栏：战报（总分 + 三大翻车 + 神回话术）
  *
- * v0.1 简化：桌面端三栏并排，移动端单列堆叠。
+ * D12-B: 使用 VerdictBadge（色盲友好三色标记）+
+ *        BetterSuggestion（失分原因+更佳话术+一键复制）
  */
 
 import { useState, useEffect } from 'react'
 
-import { BlobBackground, GlassCard, MascotReaction } from '../../components'
+import {
+  BlobBackground,
+  GlassCard,
+  MascotReaction,
+  VerdictBadge,
+  BetterSuggestion,
+} from '../../components'
 import { apiClient, ApiError } from '../../api/v1'
-import type { ReviewUploadResponse, ReviewTurn, ReviewVerdict } from '../../api/v1'
-
-// --- Verdict display mapping ---
-
-const VERDICT_CONFIG: Record<ReviewVerdict, { label: string; color: string; icon: string }> = {
-  win: { label: '封神', color: 'text-vivid-green', icon: '✨' },
-  neutral: { label: '路过', color: 'text-ink-text-3', icon: '🌀' },
-  lose: { label: '翻车', color: 'text-vivid-orange', icon: '💥' },
-}
+import type { ReviewUploadResponse, ReviewTurn } from '../../api/v1'
 
 export function ReviewResultPage({
   uploadId,
@@ -188,55 +187,65 @@ function CenterPanel({
     <GlassCard className="space-y-3">
       <h2 className="text-sm font-body font-medium text-ink-text-2">🔬 逐句分析</h2>
       <div className="space-y-2">
-        {turns.map((turn) => {
-          const cfg = VERDICT_CONFIG[turn.verdict]
-          const isExpanded = expandedIdx === turn.turn_idx
-          const isLose = turn.verdict === 'lose'
-
-          return (
-            <div key={turn.turn_idx} className="space-y-1">
-              <button
-                type="button"
-                onClick={() => onToggle(isExpanded ? null : turn.turn_idx)}
-                className={`w-full text-left rounded-radius-md px-3 py-2 text-sm font-body transition-colors ${
-                  isLose
-                    ? 'bg-vivid-orange/10 border border-vivid-orange/20 hover:bg-vivid-orange/20'
-                    : turn.speaker === 'user'
-                      ? 'bg-vivid-green/5 border border-vivid-green/10'
-                      : 'bg-ink-card border border-ink-line'
-                }`}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex-1">
-                    <span className="text-ink-text-3 text-xs">
-                      {turn.speaker === 'opponent' ? '🤵 对方' : '👤 我'}
-                    </span>
-                    <p className="text-ink-text mt-0.5">{turn.content}</p>
-                  </div>
-                  <span className={`flex-shrink-0 text-xs ${cfg.color}`}>
-                    {cfg.icon} {cfg.label}
-                  </span>
-                </div>
-              </button>
-
-              {/* Expanded: K's better suggestion */}
-              {isExpanded && isLose && turn.reason && (
-                <div className="ml-4 rounded-radius-md px-3 py-2 bg-vivid-purple/10 border border-vivid-purple/20">
-                  <p className="text-xs text-vivid-purple font-body">
-                    💡 K 说：{turn.reason}
-                  </p>
-                  {turn.better && (
-                    <p className="text-xs text-ink-text font-body mt-1">
-                      更佳话术：「{turn.better}」
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
-          )
-        })}
+        {turns.map((turn) => (
+          <ReviewTurnCard
+            key={turn.turn_idx}
+            turn={turn}
+            isExpanded={expandedIdx === turn.turn_idx}
+            onToggle={() => onToggle(expandedIdx === turn.turn_idx ? null : turn.turn_idx)}
+          />
+        ))}
       </div>
     </GlassCard>
+  )
+}
+
+/** Single turn card with VerdictBadge + expandable BetterSuggestion */
+function ReviewTurnCard({
+  turn,
+  isExpanded,
+  onToggle,
+}: {
+  turn: ReviewTurn
+  isExpanded: boolean
+  onToggle: () => void
+}) {
+  const isLose = turn.verdict === 'lose'
+
+  return (
+    <div className="space-y-1">
+      <button
+        type="button"
+        onClick={onToggle}
+        className={`w-full text-left rounded-radius-md px-3 py-2 text-sm font-body transition-colors ${
+          isLose
+            ? 'bg-vivid-orange/10 border border-vivid-orange/20 hover:bg-vivid-orange/20'
+            : turn.speaker === 'user'
+              ? 'bg-vivid-green/5 border border-vivid-green/10'
+              : 'bg-ink-card border border-ink-line'
+        }`}
+      >
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex-1">
+            <span className="text-ink-text-3 text-xs">
+              {turn.speaker === 'opponent' ? '🤵 对方' : '👤 我'}
+            </span>
+            <p className="text-ink-text mt-0.5">{turn.content}</p>
+          </div>
+          <VerdictBadge verdict={turn.verdict} size="sm" />
+        </div>
+      </button>
+
+      {/* Expanded: K's better suggestion for lose turns */}
+      {isExpanded && isLose && turn.reason && (
+        <div className="pl-2">
+          <BetterSuggestion
+            reason={turn.reason ?? ''}
+            better={turn.better ?? ''}
+          />
+        </div>
+      )}
+    </div>
   )
 }
 
