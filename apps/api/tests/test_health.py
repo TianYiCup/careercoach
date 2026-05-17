@@ -1,15 +1,20 @@
 """Tests for liveness `/health` + readiness `/health/ready` probes.
 
 The liveness test is a smoke. The readiness tests cover the dep-check
-matrix introduced by A-35: each of the three checks (LLM, ASR, mod)
-can be `ok`, `skipped`, or `fail`; the top-level status flips to
-`degraded` + HTTP 503 if any check fails.
+matrix:
+
+  A-35: LLM router, ASR provider, moderation backend
+  A-36: db_postgres, db_redis
+
+Each check returns `ok`, `skipped`, or `fail`; the top-level status
+flips to `degraded` + HTTP 503 if any check fails.
 """
 
 from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
+from app import routes  # noqa: F401 — ensures app.routes is importable
 from app.asr import ASRAuthError, get_asr_provider
 from app.asr.aliyun import AliyunASRProvider
 from app.asr.dummy import DummyASRProvider
@@ -17,6 +22,7 @@ from app.config import get_settings
 from app.llm.factory import NoCredentialsProvider, get_llm_router
 from app.llm.router import LLMRouter
 from app.main import app
+from app.routes import health as health_module
 from app.services.moderation import (
     DictBackend,
     LogOnlyEventSink,
@@ -241,7 +247,111 @@ async def test_ready_response_schema_is_stable(
     body = resp.json()
 
     assert set(body.keys()) == {"status", "version", "env", "checks"}
-    assert set(body["checks"].keys()) == {"llm_router", "asr", "moderation"}
+    # A-35 keys: llm_router, asr, moderation. A-36 keys: db_postgres, db_redis.
+    # Adding new keys is OK; removing/renaming would break downstream
+    # dashboards that scrape these check IDs.
+    assert set(body["checks"].keys()) == {
+        "llm_router",
+        "asr",
+        "moderation",
+        "db_postgres",
+        "db_redis",
+    }
     for check in body["checks"].values():
         assert set(check.keys()) == {"status", "latency_ms", "detail"}
         assert check["status"] in {"ok", "skipped", "fail"}
+
+
+# --------------------------------------------------------------------- #
+# A-36: db_postgres + db_redis                                          #
+# --------------------------------------------------------------------- #
+
+
+async def test_ready_postgres_skipped_when_all_repos_memory(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default-dev: every repo backend is `memory`, so Postgres isn't
+    actually a dependency. The probe MUST `skipped` (not `ok`) so an
+    analyst doesn't think we verified a connection we never made."""
+    monkeypatch.setenv("ASR_BACKEND", "dummy")
+    get_settings.cache_clear()
+    _install_llm_router(with_creds=True)
+    _install_dummy_asr()
+    _install_moderation_dict_only()
+
+    resp = await client.get("/health/ready")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["checks"]["db_postgres"]["status"] == "skipped"
+    assert "no backend uses postgres" in body["checks"]["db_postgres"]["detail"]
+    assert body["checks"]["db_redis"]["status"] == "skipped"
+    assert "no backend uses redis" in body["checks"]["db_redis"]["detail"]
+
+
+async def test_ready_postgres_unreachable_returns_503(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When ANY repo backend is `postgres`, the probe MUST run a real
+    `SELECT 1` and a connection failure MUST flip the response to 503.
+    Sibling checks staying green doesn't save the overall status."""
+    from sqlalchemy.exc import OperationalError
+
+    monkeypatch.setenv("ASR_BACKEND", "dummy")
+    monkeypatch.setenv("SESSIONS_REPO_BACKEND", "postgres")
+    get_settings.cache_clear()
+    _install_llm_router(with_creds=True)
+    _install_dummy_asr()
+    _install_moderation_dict_only()
+
+    class _FailingEngine:
+        def connect(self) -> object:
+            raise OperationalError("SELECT 1", {}, Exception("connection refused"))
+
+    monkeypatch.setattr(health_module, "_get_engine", lambda: _FailingEngine())
+
+    resp = await client.get("/health/ready")
+
+    assert resp.status_code == 503
+    body = resp.json()
+    assert body["status"] == "degraded"
+    assert body["checks"]["db_postgres"]["status"] == "fail"
+    assert "OperationalError" in body["checks"]["db_postgres"]["detail"]
+    # Sibling checks unaffected — proves we ran all probes, not short-circuited.
+    assert body["checks"]["db_redis"]["status"] == "skipped"
+    assert body["checks"]["llm_router"]["status"] == "ok"
+
+
+async def test_ready_redis_unreachable_returns_503(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When `auth_code_store_backend=redis`, the probe MUST PING Redis
+    and a connection failure MUST flip the response to 503."""
+    from unittest.mock import AsyncMock
+
+    from redis.exceptions import ConnectionError as RedisConnectionError
+
+    monkeypatch.setenv("ASR_BACKEND", "dummy")
+    monkeypatch.setenv("AUTH_CODE_STORE_BACKEND", "redis")
+    get_settings.cache_clear()
+    _install_llm_router(with_creds=True)
+    _install_dummy_asr()
+    _install_moderation_dict_only()
+
+    fake_client = AsyncMock()
+    fake_client.ping.side_effect = RedisConnectionError("Connection refused")
+    fake_client.aclose = AsyncMock()
+    monkeypatch.setattr(health_module, "_make_redis_client", lambda _url: fake_client)
+
+    resp = await client.get("/health/ready")
+
+    assert resp.status_code == 503
+    body = resp.json()
+    assert body["status"] == "degraded"
+    assert body["checks"]["db_redis"]["status"] == "fail"
+    assert "ConnectionError" in body["checks"]["db_redis"]["detail"]
+    # Client MUST be closed even on failure — no leaked connections.
+    fake_client.aclose.assert_awaited_once()
