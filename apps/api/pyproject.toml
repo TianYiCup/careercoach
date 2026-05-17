@@ -116,6 +116,9 @@ ignore = [
 # Copilot WS tests speak Chinese in coach-prompt fixtures and stub
 # LLMProvider with the contract-required `timeout=` parameter.
 "tests/test_copilot_*.py" = ["RUF001", "RUF002", "RUF003", "ASYNC109"]
+# Health readiness test stubs LLMProvider for dep-injection — the
+# `timeout=` parameter is contract, not a misuse of asyncio.timeout.
+"tests/test_health.py" = ["ASYNC109"]
 
 [tool.ruff.format]
 quote-style = "double"
