@@ -109,3 +109,14 @@ playwright/.cache/
 tests/uat-recordings/
 # Share card local-fs storage (LocalFilesystemStorage default root)
 apps/api/var/
+
+# =================== A-side PR staging artifacts ===================
+# Drafts written to disk per stacked PR so HEREDOC-style commits +
+# `gh pr create --body` survive PowerShell quoting quirks. They live
+# at the repo root, get rewritten every PR, and have zero value
+# after the PR merges — committing them would just add noise to
+# git history. Pattern matches `.commit-msg-a*.txt` and
+# `.pr-body-a*.md` (and `.pr-body-aN.md` from PRs that predated
+# the `-a` prefix convention).
+.commit-msg-*.txt
+.pr-body-*.md
