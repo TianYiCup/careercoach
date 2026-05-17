@@ -15,8 +15,10 @@ import { ScorePage } from './features/sandbox/ScorePage'
 import type { Score } from './api/v1/types'
 import type { MascotExpression } from './components/mascot/types'
 import { AuthProvider, LoginPage, AgeGatePage, useAuth } from './features/auth'
+import { ReviewUploadPage } from './features/review/ReviewUploadPage'
+import { ReviewResultPage } from './features/review/ReviewResultPage'
 
-type Page = 'home' | 'sandbox' | 'wrapped' | 'score'
+type Page = 'home' | 'sandbox' | 'wrapped' | 'score' | 'reviewUpload' | 'reviewResult'
 
 /** Narrow MascotExpression to the 3 expressions that make sense on the score page */
 function toScoreExpression(expr: MascotExpression): 'godlike' | 'crashed' | 'confident' {
@@ -456,6 +458,13 @@ function HomePage({
             </button>
             <button
               type="button"
+              onClick={() => onNavigate('reviewUpload' as Page)}
+              className="px-6 py-3 rounded-radius-md bg-vivid-green/20 border border-vivid-green/40 text-vivid-green font-body font-medium hover:bg-vivid-green/30 transition-colors"
+            >
+              🔍 复盘师
+            </button>
+            <button
+              type="button"
               onClick={() => onNavigate('wrapped')}
               className="px-6 py-3 rounded-radius-md bg-vivid-green/20 border border-vivid-green/40 text-vivid-green font-body font-medium hover:bg-vivid-green/30 transition-colors"
             >
@@ -492,6 +501,7 @@ function AppGate() {
     score: Score
     expression: 'godlike' | 'crashed' | 'confident'
   } | null>(null)
+  const [reviewUploadId, setReviewUploadId] = useState<string | null>(null)
 
   if (!isAuthenticated) return <LoginPage />
   if (needsAge) return <AgeGatePage />
@@ -511,6 +521,21 @@ function AppGate() {
         />
       )}
       {page === 'wrapped' && <WrappedPage />}
+      {page === 'reviewUpload' && (
+        <ReviewUploadPage
+          onResult={(uploadId) => {
+            setReviewUploadId(uploadId)
+            setPage('reviewResult')
+          }}
+          onBack={() => setPage('home')}
+        />
+      )}
+      {page === 'reviewResult' && reviewUploadId && (
+        <ReviewResultPage
+          uploadId={reviewUploadId}
+          onBack={() => setPage('home')}
+        />
+      )}
       {page === 'score' && scoreData && (
         <ScorePage
           score={scoreData.score}
