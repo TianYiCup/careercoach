@@ -16,6 +16,7 @@ The `app/asr/` package mirrors `app/llm/` deliberately so anyone who
 has read one knows where to look in the other.
 """
 
+from app.asr.aliyun import AliyunASRProvider
 from app.asr.dummy import DummyASRProvider
 from app.asr.errors import (
     ASRAuthError,
@@ -40,6 +41,7 @@ __all__ = [
     "ASRProvider",
     "ASRTimeoutError",
     "ASRUpstreamError",
+    "AliyunASRProvider",
     "DummyASRProvider",
     "get_asr_provider",
 ]
