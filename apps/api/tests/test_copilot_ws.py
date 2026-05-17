@@ -1431,9 +1431,9 @@ def test_hint_output_backend_failure_falls_through_to_hint_done(
     client: TestClient,
 ) -> None:
     """When the moderation backend itself fails on the hint check, we
-    treat-as-allow (hint ships as `hint_done`) AND do NOT tag the
-    trace — a false `verdict_output:allow` would hide the silent
-    window from analysts triaging an outage."""
+    treat-as-allow (hint ships as `hint_done`) AND now tag the trace
+    with `verdict_output:backend_failed` (A-34) so analysts can spot
+    outage windows by filtering the same key real verdicts ride."""
     _install_scripted_moderation(output_backend_fails=True)
     _install_llm(chunks=("here you go",))
     _lf_client, trace = _install_langfuse_mock()
@@ -1446,6 +1446,8 @@ def test_hint_output_backend_failure_falls_through_to_hint_done(
         ws.send_text(_AUDIO_END_FRAME)
         events = [ws.receive_json() for _ in range(5)]
 
+    # UX unaffected: hint_done ships with the original text.
     assert {"type": "hint_done", "text": "here you go"} in events
+    # Trace surfaces the outage via the shared verdict_output key.
     tags = _final_tag_set(trace)
-    assert not any(t.startswith("verdict_output:") for t in tags)
+    assert "verdict_output:backend_failed" in tags

@@ -419,12 +419,16 @@ class TurnService:
           * `passes`: True when the output is safe to surface;
                      False on `block` / `redirect`.
           * `verdict`: the literal moderation verdict for trace
-                     tagging. None when there's nothing to check
-                     (empty reply after stripping) or the backend
-                     itself failed — both cases convert to "allow"
-                     from the caller's perspective but Langfuse
-                     should NOT show a false `verdict_output:allow`
-                     for them, hence None.
+                     tagging. One of:
+                       * `"allow"`/`"warn"`/`"redirect"`/`"block"`
+                         — backend produced a real decision
+                       * `"backend_failed"` (A-34) — backend itself
+                         raised; we still treat-as-allow on the
+                         UX side but tag the trace so analysts can
+                         spot outages without parsing logs
+                       * `None` — nothing to check (empty reply
+                         after stripping) so we never asked the
+                         backend; no `verdict_output:` tag added
 
         The user already passed input moderation in
         `validate_turn_request`, but the roleplay LLM is a hostile
@@ -460,7 +464,14 @@ class TurnService:
                 trace_id=trace_id,
                 error=str(exc),
             )
-            return True, None
+            # A-34: return the "backend_failed" sentinel verdict so the
+            # caller's existing `verdict_output:{verdict}` tag-add
+            # path automatically surfaces outages on the Langfuse UI.
+            # `passes=True` keeps the treat-as-allow semantics — UX
+            # stays unaffected during a vendor blip. The sentinel
+            # rides the same key as real verdicts (allow/warn/...)
+            # so analysts only need to know one tag namespace.
+            return True, "backend_failed"
 
         if decision.verdict in ("block", "redirect"):
             return False, decision.verdict
