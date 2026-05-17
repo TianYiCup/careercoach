@@ -86,6 +86,14 @@ class Settings(BaseSettings):
     # mark_ended on this same repo.
     copilot_repo_backend: Literal["memory", "postgres"] = Field(default="memory")
 
+    # LLM call (per-generation token accounting) persistence — same
+    # defaulting rule. A-39 ships the schema + repo; A-40 wires the
+    # observability `record_generation` callsites to actually insert.
+    # `memory` is fine for dev/tests because the rollup endpoint
+    # (A-41/A-42) is an ops-only surface — nothing user-facing breaks
+    # when the backend has no history.
+    llm_calls_repo_backend: Literal["memory", "postgres"] = Field(default="memory")
+
     # Base URL the client uses to open the copilot WebSocket. The
     # service appends `/v1/copilot/sessions/{copilot_id}/stream`. v0
     # dev runs against `ws://localhost:8000`; production sets this to
