@@ -296,6 +296,13 @@ class ReviewService:
                 "is_minor": is_minor,
             },
             session_id=upload_id,
+            # A-40: trace_id + user_id let `record_generation` schedule
+            # the per-call DB insert into `llm_calls`. `upload_id` is the
+            # natural per-trace correlator (same value Langfuse already
+            # sees as session_id); review's surface is hardcoded inside
+            # `begin_review_trace`.
+            trace_id=upload_id,
+            user_id=user_id,
             # A-24: surface + minor tags for cross-cutting Langfuse
             # filtering. `minor:true` is the load-bearing one — it
             # lets analysts isolate moderation behaviors that only
