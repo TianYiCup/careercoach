@@ -11,6 +11,7 @@ from app.routes.v1 import (
     auth,
     copilot,
     moderation,
+    ops,
     review,
     scenarios,
     sessions,
@@ -30,5 +31,8 @@ router.include_router(sharecards.router)
 # the business logic lands. See `docs/b-side-review-2026-05-15/`.
 router.include_router(copilot.router)
 router.include_router(review.router)
+# A-42: ops-only surface (X-Ops-Token gated). First endpoint is
+# /v1/ops/token-cost for per-user LLM spend rollups.
+router.include_router(ops.router)
 
 __all__ = ["router"]

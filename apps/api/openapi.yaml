@@ -598,6 +598,70 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /v1/ops/token-cost:
+    get:
+      tags:
+      - ops
+      summary: Per-user LLM token spend rollup over a fixed time window
+      description: Aggregates `llm_calls` rows for one user across the requested window. Returns headline
+        totals plus by-model and by-surface breakdowns, each sorted by `total_tokens` descending. `window=all`
+        skips time bounds; otherwise the response's `since`/`until` echo the resolved bounds for cacheability.
+      operationId: get_token_cost_v1_ops_token_cost_get
+      parameters:
+      - name: user_id
+        in: query
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          description: The user whose spend to roll up. Pass the literal `system` for non-user-attributed
+            calls (cron, background).
+          examples:
+          - u_018f3a8b1c2d7e3a
+          title: User Id
+        description: The user whose spend to roll up. Pass the literal `system` for non-user-attributed
+          calls (cron, background).
+      - name: window
+        in: query
+        required: false
+        schema:
+          enum:
+          - 1d
+          - 7d
+          - 30d
+          - all
+          type: string
+          description: Time window for the rollup. `1d` / `7d` / `30d` are rolling windows ending at request
+            time; `all` is unbounded.
+          default: 7d
+          title: Window
+        description: Time window for the rollup. `1d` / `7d` / `30d` are rolling windows ending at request
+          time; `all` is unbounded.
+      - name: X-Ops-Token
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Ops-Token
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenCostResponse'
+        '401':
+          description: missing or wrong X-Ops-Token header
+        '503':
+          description: ops endpoints disabled (OPS_API_TOKEN unset)
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
     CoachHintEvent:
@@ -1541,6 +1605,137 @@ components:
       - frame
       title: SseEventEnvelope
       description: Wrapper that lets FastAPI register `SseEventFrame` in components/schemas.
+    TokenCostBreakdownEntry:
+      properties:
+        key:
+          type: string
+          minLength: 1
+          title: Key
+        call_count:
+          type: integer
+          minimum: 0.0
+          title: Call Count
+        prompt_tokens:
+          type: integer
+          minimum: 0.0
+          title: Prompt Tokens
+        completion_tokens:
+          type: integer
+          minimum: 0.0
+          title: Completion Tokens
+        total_tokens:
+          type: integer
+          minimum: 0.0
+          title: Total Tokens
+      additionalProperties: false
+      type: object
+      required:
+      - key
+      - call_count
+      - prompt_tokens
+      - completion_tokens
+      - total_tokens
+      title: TokenCostBreakdownEntry
+      description: "One row in a by-model or by-surface breakdown.\n\n`key` is the grouping value:\n \
+        \ * for `by_model` — the vendor model id verbatim (e.g.\n    `\"deepseek-chat\"`, `\"qwen-max\"\
+        `)\n  * for `by_surface` — `sandbox` / `review` / `copilot` / `agent`\n\nSorted by `total_tokens`\
+        \ desc (the rollup endpoint surfaces\nmost-expensive first so ops tooling renders without re-sorting)."
+    TokenCostResponse:
+      properties:
+        user_id:
+          type: string
+          minLength: 1
+          title: User Id
+        window:
+          type: string
+          enum:
+          - 1d
+          - 7d
+          - 30d
+          - all
+          title: Window
+        since:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Since
+        until:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Until
+        totals:
+          $ref: '#/components/schemas/TokenCostTotals'
+        by_model:
+          items:
+            $ref: '#/components/schemas/TokenCostBreakdownEntry'
+          type: array
+          title: By Model
+        by_surface:
+          items:
+            $ref: '#/components/schemas/TokenCostBreakdownEntry'
+          type: array
+          title: By Surface
+        generated_at:
+          type: string
+          format: date-time
+          title: Generated At
+      additionalProperties: false
+      type: object
+      required:
+      - user_id
+      - window
+      - since
+      - until
+      - totals
+      - by_model
+      - by_surface
+      - generated_at
+      title: TokenCostResponse
+      description: 'Per-user × per-window LLM token spend.
+
+
+        `since` / `until` echo the time window the route resolved from
+
+        the `window` query param so a downstream renderer doesn''t have
+
+        to re-derive them. Both null when `window=all` (unbounded).
+
+
+        `generated_at` is the server''s UTC timestamp at the moment the
+
+        rollup ran — lets ops cache responses with a known freshness
+
+        floor without parsing dashboard timing themselves.'
+    TokenCostTotals:
+      properties:
+        call_count:
+          type: integer
+          minimum: 0.0
+          title: Call Count
+        prompt_tokens:
+          type: integer
+          minimum: 0.0
+          title: Prompt Tokens
+        completion_tokens:
+          type: integer
+          minimum: 0.0
+          title: Completion Tokens
+        total_tokens:
+          type: integer
+          minimum: 0.0
+          title: Total Tokens
+      additionalProperties: false
+      type: object
+      required:
+      - call_count
+      - prompt_tokens
+      - completion_tokens
+      - total_tokens
+      title: TokenCostTotals
+      description: Sum across the window — the headline cost numbers.
     TurnRequest:
       properties:
         content:
