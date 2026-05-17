@@ -766,10 +766,13 @@ async def _hint_output_passes_moderation(
       * `passes`: True when the hint is safe to surface as `hint_done`;
                   False on `block` / `redirect`.
       * `verdict`: literal moderation verdict for trace tagging.
-                  None when the backend itself failed — treat-as-allow
-                  with no spurious `verdict_output:allow` tag so an
-                  analyst doesn't mistake an outage window for a
-                  clean run.
+                  One of `"allow"|"warn"|"redirect"|"block"` (real
+                  backend decision) or `"backend_failed"` (A-34
+                  sentinel — backend raised, we still ship
+                  `hint_done` but the trace surfaces the outage via
+                  `verdict_output:backend_failed`). Never `None`
+                  for hint mod: hint_text is always non-empty when
+                  we get here (the caller short-circuits empties).
 
     The user's input was already moderated upstream in
     `_moderate_and_emit`. This is the symmetric check on the LLM's
@@ -793,7 +796,13 @@ async def _hint_output_passes_moderation(
             copilot_id=copilot_id,
             error=str(exc),
         )
-        return True, None
+        # A-34: return the `"backend_failed"` sentinel verdict so the
+        # caller's existing `verdict_output:{verdict}` tag adder
+        # surfaces hint-mod outages on Langfuse. `passes=True` keeps
+        # the treat-as-allow UX — hint_done still ships — but the
+        # trace clearly shows mod didn't actually run. Same sentinel
+        # used by sandbox + review for cross-surface analyst queries.
+        return True, "backend_failed"
 
     if decision.verdict in ("block", "redirect"):
         return False, decision.verdict

@@ -1189,11 +1189,15 @@ async def test_output_block_adds_verdict_output_tag(client: AsyncClient) -> None
     assert "verdict_input:allow" in final_tags
 
 
-async def test_no_output_verdict_tag_when_backend_fails(client: AsyncClient) -> None:
-    """A-25: when the output moderation backend itself raises, we
-    treat-as-allow but explicitly DON'T tag `verdict_output:allow`
-    — that would be misleading. The trace just shows the input tag
-    and no output tag."""
+async def test_output_verdict_backend_failed_tag_when_backend_fails(
+    client: AsyncClient,
+) -> None:
+    """A-25 originally suppressed the tag on backend failure. A-34
+    flipped that — backend failure now rides the `verdict_output:`
+    key with a `backend_failed` sentinel value so analysts can
+    filter all moderation outages with the same query they use for
+    block/redirect. UX still treat-as-allow (review survives the
+    failure)."""
 
     class _OutputOnlyRaisingBackend:
         name = "output_raising"
@@ -1228,19 +1232,15 @@ async def test_no_output_verdict_tag_when_backend_fails(client: AsyncClient) -> 
     assert resp.status_code == 200
     assert resp.json()["status"] == "done"
 
-    # But no verdict_output tag — backend never produced a decision.
+    # The outage tag rides verdict_output: just like real verdicts.
     tag_calls = [
         c
         for c in inner_trace.update.call_args_list  # type: ignore[attr-defined]
         if "tags" in c.kwargs
     ]
-    # Either no tag updates at all, or any that happened don't carry
-    # a verdict_output: prefix.
-    for call in tag_calls:
-        for tag in call.kwargs["tags"]:
-            assert not tag.startswith("verdict_output:"), (
-                f"unexpected verdict_output tag when backend failed: {tag}"
-            )
+    assert tag_calls, "expected at least one tags= update for verdict_output"
+    final_tags = tag_calls[-1].kwargs["tags"]
+    assert "verdict_output:backend_failed" in final_tags
 
 
 async def test_review_trace_marks_error_when_worker_crashes(client: AsyncClient) -> None:

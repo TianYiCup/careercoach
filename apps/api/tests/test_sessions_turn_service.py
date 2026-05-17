@@ -822,12 +822,13 @@ async def test_output_redirect_also_redacts() -> None:
     assert done.data["full_text"] == "……"
 
 
-async def test_output_backend_failure_does_not_tag_or_redact() -> None:
+async def test_output_backend_failure_tags_backend_failed_sentinel() -> None:
     """When the moderation backend itself fails on the ai_output call
-    (e.g. Aliyun outage) we treat-as-allow so an outage doesn't
-    corrupt sandbox UX, AND we DON'T add a verdict_output tag —
-    a false `verdict_output:allow` would hide the silent-allow
-    window from analysts looking for AI-side issues."""
+    (e.g. Aliyun outage) we treat-as-allow on the UX side — the
+    roleplay text passes through unchanged. A-34 now tags the trace
+    with `verdict_output:backend_failed` (the sentinel verdict
+    value) so analysts can spot outage windows by filtering the
+    same key real verdicts ride."""
     from unittest.mock import MagicMock
 
     client = MagicMock(name="langfuse")
@@ -848,8 +849,9 @@ async def test_output_backend_failure_does_not_tag_or_redact() -> None:
 
     frames = await _collect(svc.stream_turn(validated))
 
-    assert _verdict_output_tags(inner_trace) == []
-    # Original text passes through unchanged.
+    # Trace surfaces the outage via the shared verdict_output key.
+    assert _verdict_output_tags(inner_trace) == ["verdict_output:backend_failed"]
+    # Original text passes through unchanged (treat-as-allow UX).
     done = next(f for f in frames if f.event == "opponent.done")
     assert done.data["full_text"] == "什么安排比工作还重要？"
 

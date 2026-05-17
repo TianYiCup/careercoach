@@ -411,12 +411,15 @@ class ReviewService:
           * `passes`: True when the output is safe to surface;
                      False on `block` / `redirect`.
           * `verdict`: the literal moderation verdict for trace
-                     tagging (A-25). None when there's nothing to
-                     check (empty coaching text) or the backend
-                     itself failed — both cases convert to "allow"
-                     from the caller's perspective but we want
-                     Langfuse to NOT show a false `verdict_output:allow`
-                     tag for them, hence None.
+                     tagging. One of:
+                       * `"allow"`/`"warn"`/`"redirect"`/`"block"`
+                         (A-25) — backend produced a real decision
+                       * `"backend_failed"` (A-34) — backend itself
+                         raised; treat-as-allow on the result side
+                         but tag the trace so analysts can spot
+                         outages without parsing logs
+                       * `None` — empty coaching text; no backend
+                         call was made, no tag added
 
         The user-uploaded text already passed input moderation, but the
         LLM's `reason` / `better` suggestions could echo or rephrase
@@ -450,7 +453,11 @@ class ReviewService:
                 trace_id=trace_id,
                 error=str(exc),
             )
-            return True, None
+            # A-34: see turn_service for the rationale — return the
+            # `"backend_failed"` sentinel so the caller's existing
+            # `verdict_output:{verdict}` tag adder surfaces outages
+            # under the same key as real verdicts.
+            return True, "backend_failed"
 
         if decision.verdict in ("block", "redirect"):
             logger.warning(
