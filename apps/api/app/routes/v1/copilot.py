@@ -93,7 +93,14 @@ from fastapi import APIRouter, Depends, WebSocket
 from langfuse import Langfuse
 from starlette.websockets import WebSocketDisconnect
 
-from app.asr import ASRError, ASRProvider, get_asr_provider
+from app.asr import (
+    ASRAuthError,
+    ASRError,
+    ASRProvider,
+    ASRTimeoutError,
+    ASRUpstreamError,
+    get_asr_provider,
+)
 from app.llm import LLMError, LLMProvider, Message, TokenUsage
 from app.llm.factory import get_llm_router
 from app.observability.langfuse import (
@@ -378,7 +385,7 @@ async def _run_one_utterance(
     # WebSocketDisconnect from the feeder; we do NOT mint a trace
     # for that case — the outer handler logs the disconnect and
     # an empty Langfuse trace would just be noise.
-    _, final_text = await asyncio.gather(feeder, streamer)
+    _, (final_text, asr_error_type) = await asyncio.gather(feeder, streamer)
 
     trace = begin_copilot_trace(
         langfuse_client,
@@ -398,6 +405,16 @@ async def _run_one_utterance(
             f"privacy:{privacy_level}",
         ],
     )
+    # A-31: surface the ASR outcome on the trace so a failed
+    # transcription is distinguishable from an actual empty utterance
+    # (both currently look the same downstream — final_text=""). Two
+    # tags so analysts can filter just the failed ones AND see the
+    # error class without parsing logs.
+    asr_status = "failed" if asr_error_type is not None else "ok"
+    asr_status_tags = [f"asr_status:{asr_status}"]
+    if asr_error_type is not None:
+        asr_status_tags.append(f"asr_error:{asr_error_type}")
+    trace.add_tags(asr_status_tags)
     trace.record_generation(
         name="transcribe",
         model=asr_provider.name,
@@ -474,17 +491,19 @@ async def _stream_asr_events(
     asr_provider: ASRProvider,
     audio_chunks: AsyncIterator[bytes],
     copilot_id: str,
-) -> str:
+) -> tuple[str, str | None]:
     """Consume the ASR provider's event stream, forward each event as
-    a typed WS envelope, and return the final transcript text so the
-    caller can run moderation + hint generation on it.
+    a typed WS envelope, and return `(final_text, error_type)` so the
+    caller can both gate moderation/hint AND tag the Langfuse trace.
 
     On any `ASRError` (auth / timeout / upstream) we emit a single
     `asr_error` frame with an opaque user-facing message and return
-    `""` — that tells the caller to treat this utterance as a no-op
-    (skip moderation + skip hint generation). The WS stays open so
-    the user can keep speaking — a transient vendor outage shouldn't
-    tear down a live coaching session.
+    `("", <error_type>)` where `error_type` is one of
+    `"auth" | "timeout" | "upstream"`. The empty `final_text` tells
+    the caller to treat the utterance as a no-op (skip moderation +
+    skip hint generation); the `error_type` drives the
+    `asr_error:{type}` Langfuse tag so analysts can triage outages
+    by class without parsing structured logs.
 
     Vendor-specific details (status codes, internal messages) are
     kept out of the client-facing payload — they'd leak provider
@@ -503,22 +522,47 @@ async def _stream_asr_events(
             if event.kind == "final":
                 final_text = event.text
     except ASRError as exc:
+        error_type = _classify_asr_error(exc)
         logger.warning(
             "copilot_ws_asr_failed",
             copilot_id=copilot_id,
             provider=asr_provider.name,
             error_type=type(exc).__name__,
+            error_class=error_type,
             error=str(exc),
         )
         await websocket.send_json({"type": "asr_error", "message": "transcription unavailable"})
-        return ""
+        return "", error_type
     logger.info(
         "copilot_ws_utterance_complete",
         copilot_id=copilot_id,
         provider=asr_provider.name,
         final_char_count=len(final_text),
     )
-    return final_text
+    return final_text, None
+
+
+def _classify_asr_error(exc: ASRError) -> str:
+    """Map a typed `ASRError` to the short label used in trace tags.
+
+    Three buckets analysts care about when triaging an outage:
+
+      * `auth`     — token expired/revoked, AK/secret wrong, IAM denied
+      * `timeout`  — vendor took longer than our budget
+      * `upstream` — everything else (5xx, malformed response,
+                     unrecognised `ASRError` subclass)
+
+    Order matters: both `ASRAuthError` and `ASRTimeoutError` subclass
+    the base `ASRError`, so the isinstance ladder checks
+    most-specific-first.
+    """
+    if isinstance(exc, ASRAuthError):
+        return "auth"
+    if isinstance(exc, ASRTimeoutError):
+        return "timeout"
+    if isinstance(exc, ASRUpstreamError):
+        return "upstream"
+    return "upstream"
 
 
 async def _moderate_and_emit(
