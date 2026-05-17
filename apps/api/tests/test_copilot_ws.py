@@ -32,7 +32,13 @@ from itertools import count
 from unittest.mock import MagicMock
 
 import pytest
-from app.asr import get_asr_provider
+from app.asr import (
+    ASRAuthError,
+    ASRError,
+    ASREvent,
+    ASRUpstreamError,
+    get_asr_provider,
+)
 from app.llm import LLMAuthError, Message, TokenUsage
 from app.llm.factory import get_llm_router
 from app.llm.provider import DEFAULT_TEMPERATURE, DEFAULT_TIMEOUT_SECONDS
@@ -931,3 +937,234 @@ def test_unknown_copilot_id_does_not_mint_a_row(client: TestClient) -> None:
             ws.receive_text()
 
     assert asyncio.run(repo.get("cop_phantom")) is None
+
+
+# --------------------------------------------------------------------- #
+# A-30: ASR error handling on the WS bridge                             #
+# --------------------------------------------------------------------- #
+
+
+class _FailingASRProvider:
+    """ASRProvider stub that drains the audio queue then raises a
+    scripted `ASRError`. Modeled on a mid-utterance failure (token
+    expired, network blip) where the user already finished talking
+    before the error surfaced — the most common production shape."""
+
+    name = "failing_asr"
+
+    def __init__(self, error: ASRError) -> None:
+        self._error = error
+
+    async def transcribe_stream(
+        self,
+        audio_chunks: AsyncIterator[bytes],
+        *,
+        timeout: float = 8.0,
+    ) -> AsyncIterator[ASREvent]:
+        _ = timeout
+        async for _chunk in audio_chunks:
+            pass
+        raise self._error
+        yield ASREvent(kind="final", text="")  # pragma: no cover — unreachable
+
+
+def _install_asr(provider: object) -> None:
+    """Override the ASR DI to a caller-supplied stub. Tests must call
+    `get_asr_provider.cache_clear()` themselves AFTER returning so
+    the lru_cache doesn't leak a stale provider."""
+    app.dependency_overrides[get_asr_provider] = lambda: provider
+
+
+def test_asr_auth_error_emits_asr_error_event_and_skips_moderation(
+    client: TestClient,
+) -> None:
+    """When the ASR provider raises ASRAuthError mid-utterance the
+    bridge MUST emit a single `asr_error` event with an opaque
+    message and SKIP downstream moderation + hint — a transient
+    vendor outage shouldn't tear down a live coaching session."""
+    service, repo = _build_service()
+    app.dependency_overrides[get_copilot_service] = lambda: service
+    _seed_pending(repo, "cop_test0000000001")
+    _install_asr(_FailingASRProvider(ASRAuthError("token revoked", provider="aliyun")))
+
+    with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
+        ws.send_bytes(b"audio")
+        ws.send_text(_AUDIO_END_FRAME)
+        first = ws.receive_json()
+        # Send a second utterance to prove the connection stayed open
+        # and the next utterance routes through normally (also using
+        # our failing provider — so it errors again, deterministically).
+        ws.send_bytes(b"more")
+        ws.send_text(_AUDIO_END_FRAME)
+        second = ws.receive_json()
+
+    assert first == {"type": "asr_error", "message": "transcription unavailable"}
+    assert second == {"type": "asr_error", "message": "transcription unavailable"}
+
+
+def test_asr_upstream_error_does_not_emit_partial_or_final(
+    client: TestClient,
+) -> None:
+    """`ASRUpstreamError` from a vendor 5xx — same client-facing
+    treatment as auth errors (opaque `asr_error`, no
+    `asr_partial`/`asr_final` for the failed utterance)."""
+    service, repo = _build_service()
+    app.dependency_overrides[get_copilot_service] = lambda: service
+    _seed_pending(repo, "cop_test0000000001")
+    _install_asr(
+        _FailingASRProvider(ASRUpstreamError("upstream 502", provider="aliyun", status_code=502))
+    )
+
+    with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
+        ws.send_bytes(b"audio")
+        ws.send_text(_AUDIO_END_FRAME)
+        events = [ws.receive_json()]
+
+    # Exactly one event, and it's the error envelope. No moderation
+    # event follows (because final_text is empty after the catch).
+    assert events == [{"type": "asr_error", "message": "transcription unavailable"}]
+
+
+def test_asr_error_does_not_trigger_hint_task(client: TestClient) -> None:
+    """Hint generation is gated on (final_text non-empty + verdict
+    allowed). An ASR error returns empty final_text, so the bridge
+    MUST NOT spawn a hint task — even if the LLM stub were configured
+    to emit chunks. We prove absence by sending a second utterance
+    and asserting its response arrives immediately as `asr_error`,
+    not preceded by hint_delta/hint_done from the first utterance."""
+    service, repo = _build_service()
+    app.dependency_overrides[get_copilot_service] = lambda: service
+    _seed_pending(repo, "cop_test0000000001")
+    _install_asr(_FailingASRProvider(ASRUpstreamError("scripted", provider="aliyun")))
+    # Wire a chunky LLM stub. If a hint task spawned for the first
+    # utterance, its hint_delta events would interleave between the
+    # two `asr_error` events below — the assertion at the end pins
+    # the absence of that leak.
+    _install_llm(chunks=("would not appear", " in events"))
+
+    with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
+        ws.send_bytes(b"x")
+        ws.send_text(_AUDIO_END_FRAME)
+        first = ws.receive_json()
+        ws.send_bytes(b"y")
+        ws.send_text(_AUDIO_END_FRAME)
+        second = ws.receive_json()
+
+    assert first == {"type": "asr_error", "message": "transcription unavailable"}
+    assert second == {"type": "asr_error", "message": "transcription unavailable"}
+
+
+# --------------------------------------------------------------------- #
+# A-30: AliyunASRProvider end-to-end integration through the WS bridge  #
+# --------------------------------------------------------------------- #
+
+
+class _FakeAliyunWSChannel:
+    """Tiny duplicate of A-28's _FakeWSChannel — kept local to this
+    test file to avoid a cross-test import. Same contract: scripted
+    `to_send` for `recv()`, `sent` log for outbound writes, yields
+    to the loop every `recv` so the feeder/consumer interleave."""
+
+    def __init__(self, to_send: list[str | bytes]) -> None:
+        self.sent: list[str | bytes] = []
+        self._to_send = list(to_send)
+
+    async def send(self, message: bytes | str) -> None:
+        self.sent.append(message)
+
+    async def recv(self) -> bytes | str:
+        await asyncio.sleep(0)
+        from websockets.exceptions import ConnectionClosed
+
+        if not self._to_send:
+            raise ConnectionClosed(rcvd=None, sent=None)
+        return self._to_send.pop(0)
+
+    async def close(self, code: int = 1000, reason: str = "") -> None:
+        del code, reason
+
+
+class _FakeAliyunWSConnection:
+    def __init__(self, channel: _FakeAliyunWSChannel) -> None:
+        self._channel = channel
+
+    async def __aenter__(self) -> _FakeAliyunWSChannel:
+        return self._channel
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+
+def _aliyun_provider_with_scripted_events(
+    *,
+    partials: tuple[str, ...],
+    final: str,
+) -> object:
+    """Build an `AliyunASRProvider` whose token cache is pre-seeded
+    and whose WS factory yields a fake channel with the supplied
+    scripted events. The provider is otherwise unmodified so we're
+    exercising the real adapter logic + the real bridge."""
+    from app.asr import AliyunASRProvider
+    from app.asr._aliyun_token import AccessToken, AliyunTokenCache
+
+    events_json: list[str | bytes] = []
+    for text in partials:
+        events_json.append(
+            json.dumps(
+                {
+                    "header": {"name": "TranscriptionResultChanged"},
+                    "payload": {"result": text, "confidence": 0.9},
+                }
+            )
+        )
+    events_json.append(
+        json.dumps(
+            {
+                "header": {"name": "SentenceEnd"},
+                "payload": {"result": final, "confidence": 0.95},
+            }
+        )
+    )
+
+    channel = _FakeAliyunWSChannel(to_send=events_json)
+
+    async def factory(_url: str) -> _FakeAliyunWSConnection:
+        return _FakeAliyunWSConnection(channel)
+
+    return AliyunASRProvider(
+        access_key_id="ak",
+        access_key_secret="secret",
+        app_key="app",
+        ws_url="wss://example.invalid/ws",
+        token_url="https://nls-meta.example/",
+        ws_factory=factory,
+        token_cache=AliyunTokenCache(cached_token=AccessToken(token="tk", expires_at=9999999999)),
+    )
+
+
+def test_aliyun_provider_drives_bridge_end_to_end(client: TestClient) -> None:
+    """Full slice: AliyunASRProvider (real adapter, fake WS conn) →
+    `_stream_asr_events` → WS envelope. Locks down that the adapter's
+    `ASREvent(partial|final)` shape lines up with what the bridge
+    expects to forward as `asr_partial`/`asr_final` JSON."""
+    service, repo = _build_service()
+    app.dependency_overrides[get_copilot_service] = lambda: service
+    _seed_pending(repo, "cop_test0000000001")
+    _install_asr(
+        _aliyun_provider_with_scripted_events(
+            partials=("你", "你好"),
+            final="你好世界",
+        )
+    )
+
+    with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
+        ws.send_bytes(b"\x00\x01\x02")
+        ws.send_text(_AUDIO_END_FRAME)
+        events = [ws.receive_json() for _ in range(4)]
+
+    assert events == [
+        {"type": "asr_partial", "text": "你"},
+        {"type": "asr_partial", "text": "你好"},
+        {"type": "asr_final", "text": "你好世界"},
+        _ALLOW_MOD,
+    ]

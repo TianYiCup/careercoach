@@ -93,7 +93,7 @@ from fastapi import APIRouter, Depends, WebSocket
 from langfuse import Langfuse
 from starlette.websockets import WebSocketDisconnect
 
-from app.asr import ASRProvider, get_asr_provider
+from app.asr import ASRError, ASRProvider, get_asr_provider
 from app.llm import LLMError, LLMProvider, Message, TokenUsage
 from app.llm.factory import get_llm_router
 from app.observability.langfuse import (
@@ -477,17 +477,41 @@ async def _stream_asr_events(
 ) -> str:
     """Consume the ASR provider's event stream, forward each event as
     a typed WS envelope, and return the final transcript text so the
-    caller can run moderation + hint generation on it."""
+    caller can run moderation + hint generation on it.
+
+    On any `ASRError` (auth / timeout / upstream) we emit a single
+    `asr_error` frame with an opaque user-facing message and return
+    `""` — that tells the caller to treat this utterance as a no-op
+    (skip moderation + skip hint generation). The WS stays open so
+    the user can keep speaking — a transient vendor outage shouldn't
+    tear down a live coaching session.
+
+    Vendor-specific details (status codes, internal messages) are
+    kept out of the client-facing payload — they'd leak provider
+    fingerprints to anyone with browser devtools. The structured log
+    has the full detail for ops.
+    """
     final_text = ""
-    async for event in asr_provider.transcribe_stream(audio_chunks):
-        await websocket.send_json(
-            {
-                "type": f"asr_{event.kind}",
-                "text": event.text,
-            }
+    try:
+        async for event in asr_provider.transcribe_stream(audio_chunks):
+            await websocket.send_json(
+                {
+                    "type": f"asr_{event.kind}",
+                    "text": event.text,
+                }
+            )
+            if event.kind == "final":
+                final_text = event.text
+    except ASRError as exc:
+        logger.warning(
+            "copilot_ws_asr_failed",
+            copilot_id=copilot_id,
+            provider=asr_provider.name,
+            error_type=type(exc).__name__,
+            error=str(exc),
         )
-        if event.kind == "final":
-            final_text = event.text
+        await websocket.send_json({"type": "asr_error", "message": "transcription unavailable"})
+        return ""
     logger.info(
         "copilot_ws_utterance_complete",
         copilot_id=copilot_id,
