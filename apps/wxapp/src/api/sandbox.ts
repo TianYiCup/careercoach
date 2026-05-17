@@ -1,12 +1,17 @@
 /**
  * 沙盘会话 API — 小程序端
  *
- * 小程序没有 fetch/EventSource，SSE 通过 wx.request + enableChunked 实现。
- * 后端 POST /v1/sessions/:id/turns 返回 SSE 流，
- * 小程序端收到 chunked 响应后手动解析 event/data 帧。
+ * SSE 通过 wx.request + enableChunked 实现。
+ * B-6: 401 → clear + reLaunch 登录页
+ * B-1: 403 AGE_REQUIRED → 跳年龄确认页
+ * B-2: 403 MINOR_QUIET_HOURS → showModal → navigateBack
+ * B-7: 删除所有 console.* 调用
  */
 
+import Taro from '@tarojs/taro'
 import { API_BASE } from './config'
+import { getAuthToken, clearAuthToken } from '../utils/auth-token'
+import { clearAuthUser } from '../utils/auth-user'
 
 // --- Types (aligned with packages/shared + web api/v1/types) ---
 
@@ -45,22 +50,42 @@ export interface ChatMessage {
   text: string
 }
 
-// --- Auth token helper ---
-
-function getAuthToken(): string {
-  try {
-    return wx.getStorageSync('auth_token') as string || ''
-  } catch {
-    return ''
-  }
-}
+// --- Auth header helper ---
 
 function authHeader(): Record<string, string> {
   const token = getAuthToken()
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
-// --- Simple request wrapper ---
+// --- 401/403 global handler ---
+
+function handleAuthError(statusCode: number, body: unknown): void {
+  if (statusCode === 401) {
+    clearAuthToken()
+    clearAuthUser()
+    Taro.reLaunch({ url: '/pages/login/index' })
+    return
+  }
+  if (statusCode === 403) {
+    const code = (body as { code?: string })?.code
+    if (code === 'AGE_REQUIRED') {
+      Taro.reLaunch({ url: '/pages/age-gate/index' })
+      return
+    }
+    if (code === 'MINOR_QUIET_HOURS') {
+      Taro.showModal({
+        title: '静默时段',
+        content: '为保护未成年人，22:00-08:00 期间无法使用对练功能',
+        showCancel: false,
+        confirmText: '我知道了',
+        success: () => Taro.navigateBack(),
+      })
+      return
+    }
+  }
+}
+
+// --- Session API ---
 
 function request<T>(
   path: string,
@@ -69,7 +94,7 @@ function request<T>(
 ): Promise<T> {
   return new Promise((resolve, reject) => {
     wx.request({
-      url: `${API_BASE}${path}`,
+      url: `${API_BASE}/v1${path}`,
       method,
       data,
       header: {
@@ -79,19 +104,17 @@ function request<T>(
       success: (res) => {
         if (res.statusCode >= 200 && res.statusCode < 300) {
           resolve(res.data as T)
-        } else {
-          reject(new Error(`API ${method} ${path} → ${res.statusCode}`))
+          return
         }
+        handleAuthError(res.statusCode, res.data)
+        reject(new Error(`API ${method} ${path} → ${res.statusCode}`))
       },
       fail: (err) => {
-        console.error(`[API] ${method} ${path} failed:`, err)
-        reject(err)
+        reject(new Error(err.errMsg))
       },
     })
   })
 }
-
-// --- Session API ---
 
 /** Create a new sandbox session */
 export function createSession(body: {
@@ -100,13 +123,13 @@ export function createSession(body: {
   persona_id: string
   user_goal: string
 }) {
-  return request<CreateSessionResponse>('/v1/sessions', 'POST', body)
+  return request<CreateSessionResponse>('/sessions', 'POST', body)
 }
 
 /** End a session and get score */
 export function endSession(sessionId: string) {
   return request<EndSessionResponse>(
-    `/v1/sessions/${sessionId}/end`,
+    `/sessions/${sessionId}/end`,
     'POST',
   )
 }
@@ -116,7 +139,6 @@ export function endSession(sessionId: string) {
 /**
  * Parse SSE text chunk into event frames.
  * SSE format: "event: <name>\ndata: <json>\n\n"
- * Chunks may contain partial or multiple events.
  */
 export function parseSseChunk(chunk: string): SseEventFrame[] {
   const frames: SseEventFrame[] = []
@@ -147,7 +169,7 @@ export function parseSseChunk(chunk: string): SseEventFrame[] {
         frames.push({ event: 'meta', data: data as { turns_used: number; turns_left: number } })
       }
     } catch {
-      console.warn('[SSE] Failed to parse data for event:', eventName)
+      // Skip unparseable chunks silently
     }
   }
 
@@ -156,9 +178,7 @@ export function parseSseChunk(chunk: string): SseEventFrame[] {
 
 /**
  * Send a user turn and consume the SSE response.
- *
- * WeChat Mini Program supports chunked transfer via `enableChunked: true`
- * and the `onChunkMessage` callback on the request task.
+ * Includes 401/403 handling on the initial HTTP response.
  */
 export function sendTurnSSE(
   sessionId: string,
@@ -175,8 +195,12 @@ export function sendTurnSSE(
       'Content-Type': 'application/json',
       ...authHeader(),
     },
-    success: () => {
-      // Stream complete
+    success: (res) => {
+      // If the HTTP status itself is an error, handle auth + reject
+      if (res.statusCode >= 300) {
+        handleAuthError(res.statusCode, res.data)
+        onError(new Error(`SSE turn → ${res.statusCode}`))
+      }
     },
     fail: (err) => {
       onError(new Error(err.errMsg))
@@ -193,8 +217,8 @@ export function sendTurnSSE(
       for (const frame of frames) {
         onFrame(frame)
       }
-    } catch (e) {
-      console.warn('[SSE] chunk parse error:', e)
+    } catch {
+      // Skip unparseable chunks silently
     }
   })
 

@@ -2,6 +2,10 @@
  * 沙盘对练房 — 小程序文字版
  * design-spec §9.3 / PRD §5.2 mobile wireframe
  *
+ * B-7: 删除 isMockMode() 默认 + 所有 mock fallback
+ * B-6: 401 由 API 层全局处理（client.ts/sandbox.ts）
+ * B-1/B-2: AGE_REQUIRED/MINOR_QUIET_HOURS 由 API 层全局处理
+ *
  * 小程序适配限制：
  * - GlassCard: backdrop-filter 降级为 rgba + 1px border
  * - Mascot: Lottie 兜底（v1 先用 emoji）
@@ -16,11 +20,9 @@ import {
   createSession,
   endSession as endSessionApi,
   sendTurnSSE,
-  parseSseChunk,
   type ChatMessage,
   type ToneLevel,
   type SseEventFrame,
-  type Score,
   type EndSessionResponse,
 } from '../../api/sandbox'
 import './index.scss'
@@ -38,6 +40,7 @@ interface SessionState {
   turnsLeft: number
   score: EndSessionResponse | null
   started: boolean
+  error: string | null
 }
 
 const INITIAL_STATE: SessionState = {
@@ -51,22 +54,7 @@ const INITIAL_STATE: SessionState = {
   turnsLeft: 30,
   score: null,
   started: false,
-}
-
-// --- Mock data fallback (for dev without backend) ---
-
-const MOCK_OPENING = '小林啊，这次项目就靠你了，周末加个班吧。'
-const MOCK_REPLY = '你是不是对工作有什么误解？加班不是奉献，是剥削。'
-const MOCK_HINT = {
-  safe: '可以试试委婉地说自己有安排，同时给出替代方案。',
-  aggressive: '直接反问 deadline 是什么时候，把压力还给对方。',
-  humor: '一本正经地说"赵总我周末得给猫过生日"。',
-}
-
-function isMockMode(): boolean {
-  // In dev without backend, fall back to mock
-  const base = process.env.TARO_APP_API_BASE ?? ''
-  return base === '' || base.includes('localhost')
+  error: null,
 }
 
 // --- Component ---
@@ -96,18 +84,7 @@ export default function SandboxPage() {
   }, [state.turnsLeft]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const startSession = async () => {
-    if (isMockMode()) {
-      setState((s) => ({
-        ...s,
-        started: true,
-        sessionId: 'mock-session',
-        messages: [{ role: 'opponent', text: MOCK_OPENING }],
-        turnsUsed: 1,
-        turnsLeft: 29,
-      }))
-      return
-    }
-
+    setState((s) => (s.error ? { ...s, error: null } : s))
     try {
       const res = await createSession({
         mode: 'sandbox',
@@ -121,52 +98,29 @@ export default function SandboxPage() {
         started: true,
         messages: [{ role: 'opponent', text: res.opening_line }],
       }))
-    } catch (err) {
-      console.error('[Sandbox] startSession failed:', err)
-      // Fallback to mock
+    } catch {
       setState((s) => ({
         ...s,
-        started: true,
-        sessionId: 'mock-session',
-        messages: [{ role: 'opponent', text: MOCK_OPENING }],
-        turnsUsed: 1,
-        turnsLeft: 29,
+        error: '加载失败，请稍后重试',
       }))
     }
   }
 
   const handleSend = async () => {
     const text = input.trim()
-    if (!text || state.isStreaming) return
+    if (!text || state.isStreaming || !state.sessionId) return
     setInput('')
 
-    const userMsg: ChatMessage = { role: 'user', text }
     setState((s) => ({
       ...s,
-      messages: [...s.messages, userMsg],
+      messages: [...s.messages, { role: 'user', text }],
       isStreaming: true,
       streamingText: '',
       hints: null,
     }))
 
-    if (isMockMode() || state.sessionId === 'mock-session') {
-      // Mock reply with short delay
-      setTimeout(() => {
-        setState((s) => ({
-          ...s,
-          isStreaming: false,
-          messages: [...s.messages, { role: 'opponent', text: MOCK_REPLY }],
-          hints: MOCK_HINT,
-          turnsUsed: s.turnsUsed + 1,
-          turnsLeft: s.turnsLeft - 1,
-        }))
-      }, 1200)
-      return
-    }
-
-    // Real SSE flow
     const task = sendTurnSSE(
-      state.sessionId!,
+      state.sessionId,
       text,
       (frame: SseEventFrame) => {
         setState((s) => {
@@ -193,8 +147,7 @@ export default function SandboxPage() {
           }
         })
       },
-      (err: Error) => {
-        console.error('[SSE] error:', err)
+      () => {
         setState((s) => ({
           ...s,
           isStreaming: false,
@@ -210,33 +163,17 @@ export default function SandboxPage() {
     requestTaskRef.current?.abort()
     requestTaskRef.current = null
 
-    if (!state.sessionId || state.sessionId === 'mock-session') {
-      // Mock score
-      setState((s) => ({
-        ...s,
-        score: {
-          score: {
-            aura: 7,
-            logic: 8,
-            emotion: 6,
-            professionalism: 7,
-            goal_achieve: 5,
-            highlights: '能坚持立场，没有退让',
-            failures: '情绪管理可以更好',
-            result: 'guolu',
-          },
-          weakness_updates: [],
-        },
-        isStreaming: false,
-      }))
-      return
-    }
+    if (!state.sessionId) return
 
     try {
       const res = await endSessionApi(state.sessionId)
       setState((s) => ({ ...s, score: res, isStreaming: false }))
-    } catch (err) {
-      console.error('[Sandbox] endSession failed:', err)
+    } catch {
+      setState((s) => ({
+        ...s,
+        isStreaming: false,
+        error: '结算失败，可重试或先退出',
+      }))
     }
   }
 
@@ -296,6 +233,14 @@ export default function SandboxPage() {
           }}
         />
       </View>
+
+      {/* Error banner */}
+      {state.error && (
+        <View className="sandbox-warning">
+          <Text className="sandbox-warning-text">{state.error}</Text>
+          <Text className="sandbox-warning-dismiss" onClick={() => setState((s) => ({ ...s, error: null }))}>×</Text>
+        </View>
+      )}
 
       {/* Turn limit warning */}
       {state.turnsLeft > 0 && state.turnsLeft <= 3 && !state.score && (

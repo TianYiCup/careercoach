@@ -1,0 +1,96 @@
+/* 年龄确认页 — 小程序版样式 */
+
+.age-gate {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 48rpx 32rpx;
+  background-color: #0f0e1a;
+  color: #f5f0ff;
+}
+
+.age-gate-header {
+  text-align: center;
+  margin-bottom: 64rpx;
+}
+
+.age-gate-emoji {
+  font-size: 80rpx;
+  display: block;
+  margin-bottom: 24rpx;
+}
+
+.age-gate-title {
+  font-size: 40rpx;
+  font-weight: 600;
+  color: #f5f0ff;
+  display: block;
+  margin-bottom: 16rpx;
+}
+
+.age-gate-desc {
+  font-size: 28rpx;
+  color: #a8a3c2;
+  display: block;
+}
+
+.age-gate-card {
+  width: 100%;
+  max-width: 600rpx;
+  padding: 48rpx;
+  background: rgba(26, 24, 46, 0.8);
+  border: 1px solid rgba(108, 77, 255, 0.15);
+  border-radius: 24rpx;
+}
+
+.age-gate-input {
+  width: 100%;
+  height: 88rpx;
+  padding: 0 36rpx;
+  background: #1a1830;
+  border: 1px solid rgba(108, 77, 255, 0.2);
+  border-radius: 999rpx;
+  color: #f5f0ff;
+  font-size: 30rpx;
+  text-align: center;
+  margin-bottom: 24rpx;
+  box-sizing: border-box;
+}
+
+.age-gate-btn {
+  width: 100%;
+  height: 88rpx;
+  background: linear-gradient(135deg, #6c4dff, #8b6fff);
+  border-radius: 999rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.age-gate-btn--disabled {
+  opacity: 0.5;
+}
+
+.age-gate-btn-text {
+  color: white;
+  font-size: 30rpx;
+  font-weight: 600;
+}
+
+.age-gate-error {
+  font-size: 26rpx;
+  color: #ff6b35;
+  text-align: center;
+  display: block;
+  margin-top: 24rpx;
+}
+
+.age-gate-privacy {
+  margin-top: 32rpx;
+  font-size: 22rpx;
+  color: #7c7799;
+  text-align: center;
+  padding: 0 32rpx;
+}
