@@ -116,7 +116,11 @@ from app.services.copilot.service import (
     CopilotSessionNotFound,
     CopilotSessionUnavailable,
 )
-from app.services.moderation import ModerationService, get_moderation_service
+from app.services.moderation import (
+    ModerationBackendError,
+    ModerationService,
+    get_moderation_service,
+)
 from app.services.moderation.types import Decision
 
 # Stable model labels surfaced on the Langfuse generation rows. The
@@ -268,9 +272,11 @@ async def copilot_stream(
                     _stream_coach_hint(
                         websocket,
                         llm_router=llm_router,
+                        moderation_service=moderation_service,
                         scenario_hint=record.scenario_hint,
                         user_input=result.final_text,
                         copilot_id=copilot_id,
+                        user_id=record.user_id,
                         trace=trace,
                     )
                 )
@@ -444,10 +450,13 @@ async def _run_one_utterance(
                 "categories": list(decision.categories),
             },
         )
-        # A-24: verdict tag added now that moderation has run. Lets
-        # analysts filter for traces that hit a particular outcome
-        # (e.g. all `verdict:redirect` for crisis-line escalations).
-        trace.add_tags([f"verdict:{decision.verdict}"])
+        # A-24/A-32: verdict tag added now that user-input moderation
+        # has run. A-32 renamed the key from `verdict:` to
+        # `verdict_input:` so all three surfaces (sandbox / review /
+        # copilot) align on the input/output split. The output-side
+        # `verdict_output:{...}` tag is added later in
+        # `_stream_coach_hint` once the hint moderation runs.
+        trace.add_tags([f"verdict_input:{decision.verdict}"])
 
     verdict = decision.verdict if decision is not None else None
     trace.finish(output={"final_text": final_text, "verdict": verdict})
@@ -631,9 +640,11 @@ async def _stream_coach_hint(
     websocket: WebSocket,
     *,
     llm_router: LLMProvider,
+    moderation_service: ModerationService,
     scenario_hint: str,
     user_input: str,
     copilot_id: str,
+    user_id: str,
     trace: TurnTrace,
 ) -> None:
     """Generate a Coach K hint for one utterance and stream it back.
@@ -653,11 +664,23 @@ async def _stream_coach_hint(
     the `hint_error` event the user sees; an extra empty Langfuse
     span would be noise.
 
+    A-32: after the hint stream completes, run output moderation on
+    the joined text. On `block` / `redirect` we suppress `hint_done`
+    and emit `hint_error` instead — same pattern as A-29 in sandbox.
+    The deltas already streamed to the client (we can't unsend them)
+    but the authoritative `hint_done` is replaced by the
+    "hint unavailable" error envelope, and the persisted Langfuse
+    trace carries a `verdict_output:{...}` tag so analysts can
+    triage hints that produced red-line content.
+
     Failure modes
     -------------
       * `LLMError` (auth / timeout / upstream)  → log + emit one
         `hint_error` event with a stable opaque message; the WS stays
         open so the user can keep speaking.
+      * Output moderation `block` / `redirect`  → emit `hint_error`
+        instead of `hint_done`; record the generation so Langfuse
+        shows what tripped the gate.
       * WS already closed when we try to send → return silently. The
         outer handler will await this task in `finally` and discard
         the return value.
@@ -698,11 +721,83 @@ async def _stream_coach_hint(
         output={"text": full},
         usage=usage[0] if usage else None,
     )
+
+    # A-32: output-side moderation on the hint text. block/redirect
+    # suppress hint_done and emit hint_error instead (same envelope
+    # the LLM-error path uses, so frontend handling stays unified).
+    output_passed, output_verdict = await _hint_output_passes_moderation(
+        full,
+        moderation_service=moderation_service,
+        copilot_id=copilot_id,
+        user_id=user_id,
+    )
+    if output_verdict is not None:
+        trace.add_tags([f"verdict_output:{output_verdict}"])
+    if not output_passed:
+        logger.warning(
+            "copilot_hint_output_blocked",
+            copilot_id=copilot_id,
+            verdict=output_verdict,
+        )
+        await _send_or_drop(
+            websocket,
+            {"type": "hint_error", "message": "hint unavailable"},
+            copilot_id=copilot_id,
+        )
+        return
+
     await _send_or_drop(
         websocket,
         {"type": "hint_done", "text": full},
         copilot_id=copilot_id,
     )
+
+
+async def _hint_output_passes_moderation(
+    hint_text: str,
+    *,
+    moderation_service: ModerationService,
+    copilot_id: str,
+    user_id: str,
+) -> tuple[bool, str | None]:
+    """Re-check the coach hint text against the red-line list.
+
+    Returns `(passes, verdict)`:
+      * `passes`: True when the hint is safe to surface as `hint_done`;
+                  False on `block` / `redirect`.
+      * `verdict`: literal moderation verdict for trace tagging.
+                  None when the backend itself failed — treat-as-allow
+                  with no spurious `verdict_output:allow` tag so an
+                  analyst doesn't mistake an outage window for a
+                  clean run.
+
+    The user's input was already moderated upstream in
+    `_moderate_and_emit`. This is the symmetric check on the LLM's
+    output, mirroring A-29 sandbox. Copilot is adult-only by R-15
+    so `is_minor=False` is hardcoded — no JWT thread needed.
+    """
+    try:
+        decision = await moderation_service.check(
+            ModerationCheckRequest(
+                content=hint_text,
+                context="ai_output",
+                session_id=copilot_id,
+            ),
+            user_id=user_id,
+            is_minor=False,
+            trace_id=copilot_id,
+        )
+    except ModerationBackendError as exc:
+        logger.warning(
+            "copilot_hint_output_moderation_unavailable",
+            copilot_id=copilot_id,
+            error=str(exc),
+        )
+        return True, None
+
+    if decision.verdict in ("block", "redirect"):
+        return False, decision.verdict
+    return True, decision.verdict
 
 
 def _build_coach_user_prompt(scenario_hint: str, user_input: str) -> str:

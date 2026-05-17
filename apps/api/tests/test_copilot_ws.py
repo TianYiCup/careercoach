@@ -45,6 +45,7 @@ from app.llm.factory import get_llm_router
 from app.llm.provider import DEFAULT_TEMPERATURE, DEFAULT_TIMEOUT_SECONDS
 from app.main import app
 from app.observability.langfuse import get_langfuse_client
+from app.schemas.moderation import RedirectResource
 from app.services.copilot import (
     CopilotService,
     CopilotSessionRecord,
@@ -54,10 +55,12 @@ from app.services.copilot import (
 from app.services.moderation import (
     DictBackend,
     LogOnlyEventSink,
+    ModerationBackendError,
     ModerationService,
     NoopBackend,
     get_moderation_service,
 )
+from app.services.moderation.types import Decision
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
@@ -844,10 +847,14 @@ def test_initial_tags_reflect_high_privacy_level(client: TestClient) -> None:
 
 
 def test_verdict_tag_added_after_moderation_runs(client: TestClient) -> None:
-    """A-24: once moderation produces a verdict, `verdict:xxx` is
-    appended to the trace's tag list via `add_tags`. Lets analysts
-    filter for all `verdict:redirect` (crisis-line escalations) etc.
-    without joining against the DB."""
+    """A-24/A-32: once user-input moderation produces a verdict,
+    `verdict_input:xxx` is appended to the trace's tag list via
+    `add_tags`. Lets analysts filter for all `verdict_input:redirect`
+    (crisis-line escalations) etc. without joining against the DB.
+
+    A-32 renamed the key from `verdict:` to `verdict_input:` to align
+    with sandbox + review and make room for the new `verdict_output:`
+    on the hint moderation."""
     _install_moderation(with_dict=True)
     _lf_client, trace = _install_langfuse_mock()
     service, repo = _build_service()
@@ -855,15 +862,17 @@ def test_verdict_tag_added_after_moderation_runs(client: TestClient) -> None:
     _seed_pending(repo, "cop_test0000000001")
 
     with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
-        ws.send_bytes("我想死".encode())  # self_harm → verdict:redirect
+        ws.send_bytes("我想死".encode())  # self_harm → verdict_input:redirect
         ws.send_text(_AUDIO_END_FRAME)
         for _ in range(3):
             ws.receive_json()
 
     # The trace's update was called multiple times: A-31's asr_status
-    # tag goes on FIRST (right after ASR returns), then A-24's verdict
-    # tag goes on after moderation. The last `tags=` call holds the
-    # cumulative union — that's what Langfuse renders.
+    # tag goes on FIRST (right after ASR returns), then A-24/A-32's
+    # verdict_input tag goes on after moderation. The last `tags=`
+    # call holds the cumulative union — that's what Langfuse renders.
+    # Note: redirect verdict gates hint generation, so no
+    # `verdict_output:` tag follows here.
     tag_calls = [c for c in trace.update.call_args_list if "tags" in c.kwargs]
     assert tag_calls, "expected at least one tags= update for the verdict tag"
     final_tag_call = tag_calls[-1]
@@ -871,7 +880,7 @@ def test_verdict_tag_added_after_moderation_runs(client: TestClient) -> None:
         "surface:copilot",
         "privacy:standard",
         "asr_status:ok",
-        "verdict:redirect",
+        "verdict_input:redirect",
     ]
 
 
@@ -1272,3 +1281,171 @@ def test_no_verdict_tag_when_asr_fails(client: TestClient) -> None:
 
     tags = _final_tag_set(trace)
     assert not any(t.startswith("verdict:") for t in tags)
+
+
+# --------------------------------------------------------------------- #
+# A-32: hint output moderation + verdict_output trace tag               #
+# --------------------------------------------------------------------- #
+
+
+def _install_scripted_moderation(
+    *,
+    output_verdict: str = "allow",
+    output_backend_fails: bool = False,
+) -> None:
+    """Install a moderation service that returns `allow` on user_input
+    (so the upstream gate doesn't block the hint from spawning) and
+    a scripted decision on `ai_output` (the hint moderation A-32 adds).
+
+    `output_backend_fails=True` raises `ModerationBackendError` on the
+    ai_output call so the treat-as-allow-but-no-tag path is covered.
+    """
+
+    class _ScriptedBackend:
+        name = "test_scripted"
+
+        async def evaluate(self, content: str, context: str) -> Decision:
+            _ = content
+            if context == "ai_output":
+                if output_backend_fails:
+                    raise ModerationBackendError(
+                        "scripted hint backend failure",
+                        backend="test_scripted",
+                    )
+                effective = output_verdict
+            else:
+                effective = "allow"
+            categories: tuple[str, ...] = ("other",) if effective != "allow" else ()
+            redirect_resource = (
+                RedirectResource(title="test", url="https://example.invalid")
+                if effective == "redirect"
+                else None
+            )
+            return Decision(
+                verdict=effective,  # type: ignore[arg-type]
+                score=0.9,
+                categories=categories,  # type: ignore[arg-type]
+                redirect_resource=redirect_resource,
+            )
+
+    service = ModerationService(backend=_ScriptedBackend(), event_sink=LogOnlyEventSink())
+    app.dependency_overrides[get_moderation_service] = lambda: service
+
+
+def test_hint_output_allow_emits_hint_done_and_tags_verdict_output(
+    client: TestClient,
+) -> None:
+    """Default path: hint mod returns `allow`. `hint_done` ships normally
+    and the trace gets `verdict_output:allow` mid-trace so analysts
+    can sanity-check that the moderation pass actually ran."""
+    _install_scripted_moderation(output_verdict="allow")
+    _install_llm(chunks=("ok ", "advice"))
+    _lf_client, trace = _install_langfuse_mock()
+    service, repo = _build_service()
+    app.dependency_overrides[get_copilot_service] = lambda: service
+    _seed_pending(repo, "cop_test0000000001")
+
+    with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
+        ws.send_bytes(b"hi")
+        ws.send_text(_AUDIO_END_FRAME)
+        events = [ws.receive_json() for _ in range(6)]
+        # asr_partial + asr_final + moderation + hint_delta x2 + hint_done
+
+    assert {"type": "hint_done", "text": "ok advice"} in events
+    tags = _final_tag_set(trace)
+    assert "verdict_output:allow" in tags
+
+
+def test_hint_output_block_emits_hint_error_instead_of_hint_done(
+    client: TestClient,
+) -> None:
+    """`block` from the hint mod suppresses `hint_done` and emits
+    `hint_error` instead. The deltas already streamed (we can't
+    unsend), but the authoritative terminal frame is the error
+    envelope so the frontend doesn't treat the bad content as
+    canonical advice."""
+    _install_scripted_moderation(output_verdict="block")
+    _install_llm(chunks=("would not", " be advice"))
+    _lf_client, trace = _install_langfuse_mock()
+    service, repo = _build_service()
+    app.dependency_overrides[get_copilot_service] = lambda: service
+    _seed_pending(repo, "cop_test0000000001")
+
+    with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
+        ws.send_bytes(b"hi")
+        ws.send_text(_AUDIO_END_FRAME)
+        events = [ws.receive_json() for _ in range(6)]
+        # asr_partial + asr_final + moderation + hint_delta x2 + hint_error
+
+    # The terminal hint event must be `hint_error`, NOT `hint_done`.
+    assert {"type": "hint_error", "message": "hint unavailable"} in events
+    assert not any(e.get("type") == "hint_done" for e in events)
+    tags = _final_tag_set(trace)
+    assert "verdict_output:block" in tags
+
+
+def test_hint_output_redirect_also_emits_hint_error(client: TestClient) -> None:
+    """`redirect` on coaching advice is rare but mirrors block —
+    suppress the hint, emit hint_error, tag the trace."""
+    _install_scripted_moderation(output_verdict="redirect")
+    _install_llm(chunks=("would not show",))
+    _lf_client, trace = _install_langfuse_mock()
+    service, repo = _build_service()
+    app.dependency_overrides[get_copilot_service] = lambda: service
+    _seed_pending(repo, "cop_test0000000001")
+
+    with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
+        ws.send_bytes(b"hi")
+        ws.send_text(_AUDIO_END_FRAME)
+        events = [ws.receive_json() for _ in range(5)]
+        # asr_partial + asr_final + moderation + hint_delta + hint_error
+
+    assert {"type": "hint_error", "message": "hint unavailable"} in events
+    assert not any(e.get("type") == "hint_done" for e in events)
+    tags = _final_tag_set(trace)
+    assert "verdict_output:redirect" in tags
+
+
+def test_hint_output_warn_does_not_gate_hint_done(client: TestClient) -> None:
+    """`warn` is non-gating — the hint still ships as `hint_done`,
+    matching how user-input `warn` doesn't block the user from
+    talking. The verdict_output tag goes on for observability."""
+    _install_scripted_moderation(output_verdict="warn")
+    _install_llm(chunks=("borderline ", "advice"))
+    _lf_client, trace = _install_langfuse_mock()
+    service, repo = _build_service()
+    app.dependency_overrides[get_copilot_service] = lambda: service
+    _seed_pending(repo, "cop_test0000000001")
+
+    with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
+        ws.send_bytes(b"hi")
+        ws.send_text(_AUDIO_END_FRAME)
+        events = [ws.receive_json() for _ in range(6)]
+
+    assert {"type": "hint_done", "text": "borderline advice"} in events
+    tags = _final_tag_set(trace)
+    assert "verdict_output:warn" in tags
+
+
+def test_hint_output_backend_failure_falls_through_to_hint_done(
+    client: TestClient,
+) -> None:
+    """When the moderation backend itself fails on the hint check, we
+    treat-as-allow (hint ships as `hint_done`) AND do NOT tag the
+    trace — a false `verdict_output:allow` would hide the silent
+    window from analysts triaging an outage."""
+    _install_scripted_moderation(output_backend_fails=True)
+    _install_llm(chunks=("here you go",))
+    _lf_client, trace = _install_langfuse_mock()
+    service, repo = _build_service()
+    app.dependency_overrides[get_copilot_service] = lambda: service
+    _seed_pending(repo, "cop_test0000000001")
+
+    with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
+        ws.send_bytes(b"hi")
+        ws.send_text(_AUDIO_END_FRAME)
+        events = [ws.receive_json() for _ in range(5)]
+
+    assert {"type": "hint_done", "text": "here you go"} in events
+    tags = _final_tag_set(trace)
+    assert not any(t.startswith("verdict_output:") for t in tags)
