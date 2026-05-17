@@ -28,6 +28,11 @@ REQUIRED_ENDPOINTS: set[tuple[str, str]] = {
     ("post", "/v1/copilot/sessions"),
     ("post", "/v1/review/uploads"),
     ("get", "/v1/review/uploads/{upload_id}"),
+    # A-42: ops-only rollup, gated by X-Ops-Token (A-41). Listed
+    # here so the openapi contract test stays a deny-by-default
+    # gate — every new endpoint surfaces on B's side of the
+    # contract, even ones B never calls.
+    ("get", "/v1/ops/token-cost"),
 }
 
 # Endpoints intentionally shipped as 501 stubs so the compliance gates
