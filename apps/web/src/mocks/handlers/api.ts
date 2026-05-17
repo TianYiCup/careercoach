@@ -12,6 +12,8 @@ import type {
   WeeklyShareCardRequest,
   CreateReviewUploadRequest,
   ReviewUploadResponse,
+  CreateCopilotSessionRequest,
+  CreateCopilotSessionResponse,
 } from '../../api/v1/types'
 
 // Wildcard origin so handlers match both relative dev fetches (`/v1/...`)
@@ -337,5 +339,19 @@ export const handlers = [
       created_at: new Date().toISOString(),
       completed_at: new Date().toISOString(),
     } satisfies ReviewUploadResponse)
+  }),
+
+  // POST /v1/copilot/sessions — PRD §7.5 / design-spec §9.5
+  // Returns a mock ws_url; actual WS events are simulated client-side
+  // by useCopilotSession in mock mode (MSW can't intercept WebSocket).
+  http.post(`${BASE}/copilot/sessions`, async ({ request }) => {
+    await delay(600)
+    const body = (await request.json()) as CreateCopilotSessionRequest
+    const response: CreateCopilotSessionResponse = {
+      copilot_id: `cop_${crypto.randomUUID().replaceAll('-', '').slice(0, 16)}`,
+      ws_url: `wss://mock.careercoach.ai/copilot/ws`,
+    }
+    void body.scenario_hint // consumed by real backend, stored but not acted on in mock
+    return HttpResponse.json(response)
   }),
 ]
