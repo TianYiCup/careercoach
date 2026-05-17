@@ -1,5 +1,6 @@
 import { getAuthToken } from './auth-token';
-import { emitAuthInvalid } from './auth-events';
+import { ApiError } from './client';
+import { emitAuthInvalid, emitAgeRequired } from './auth-events';
 import type { SseEventFrame } from './types';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/v1';
@@ -36,15 +37,14 @@ export async function postSSE(
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ message: res.statusText }));
-    // Same 401 emit-then-throw rule as the JSON client (see client.ts).
+    // Same 401 / AGE_REQUIRED emit-then-throw rule as the JSON client.
     if (res.status === 401) {
       emitAuthInvalid();
     }
-    throw new Error(
-      typeof error === 'object' && error !== null && 'message' in error
-        ? String((error as { message: unknown }).message)
-        : `API Error ${res.status}`,
-    );
+    if (res.status === 403 && (error as { code?: string }).code === 'AGE_REQUIRED') {
+      emitAgeRequired();
+    }
+    throw new ApiError(res.status, error);
   }
 
   const reader = res.body?.getReader();

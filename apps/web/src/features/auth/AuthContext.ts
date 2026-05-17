@@ -15,6 +15,8 @@ export interface AuthContextValue {
   token: string | null;
   user: UserPublic | null;
   isAuthenticated: boolean;
+  /** User hasn't declared birth year — show AgeGatePage. */
+  needsAge: boolean;
   /** Persist token + user and re-render gated routes. */
   login: (token: string, user: UserPublic) => void;
   /** Wipe token + user — call from logout button or after 401. */
