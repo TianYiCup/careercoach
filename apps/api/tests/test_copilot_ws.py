@@ -36,6 +36,7 @@ from app.asr import (
     ASRAuthError,
     ASRError,
     ASREvent,
+    ASRTimeoutError,
     ASRUpstreamError,
     get_asr_provider,
 )
@@ -859,22 +860,26 @@ def test_verdict_tag_added_after_moderation_runs(client: TestClient) -> None:
         for _ in range(3):
             ws.receive_json()
 
-    # The trace's update was called at least twice: once for tag
-    # extension (with verdict:redirect appended) and once for finish
-    # (output payload). Find the tag-update call.
+    # The trace's update was called multiple times: A-31's asr_status
+    # tag goes on FIRST (right after ASR returns), then A-24's verdict
+    # tag goes on after moderation. The last `tags=` call holds the
+    # cumulative union — that's what Langfuse renders.
     tag_calls = [c for c in trace.update.call_args_list if "tags" in c.kwargs]
     assert tag_calls, "expected at least one tags= update for the verdict tag"
     final_tag_call = tag_calls[-1]
     assert final_tag_call.kwargs["tags"] == [
         "surface:copilot",
         "privacy:standard",
+        "asr_status:ok",
         "verdict:redirect",
     ]
 
 
 def test_no_verdict_tag_when_utterance_is_empty(client: TestClient) -> None:
     """Empty utterance skips moderation entirely; therefore no
-    `verdict:xxx` tag is added. The initial tags stay as-is."""
+    `verdict:xxx` tag is added. Initial tags + `asr_status:ok` (A-31
+    fires on every utterance, even empty — it reflects the ASR call,
+    not the transcript content) is the full set."""
     lf_client, trace = _install_langfuse_mock()
     service, repo = _build_service()
     app.dependency_overrides[get_copilot_service] = lambda: service
@@ -887,8 +892,14 @@ def test_no_verdict_tag_when_utterance_is_empty(client: TestClient) -> None:
     # Trace was created with the initial tags...
     _, kwargs = lf_client.trace.call_args
     assert kwargs["tags"] == ["surface:copilot", "privacy:standard"]
-    # ...and never updated with a verdict tag (no tags= call).
-    assert not any("tags" in c.kwargs for c in trace.update.call_args_list)
+    # ...and the only tags= update was the A-31 asr_status:ok extension.
+    tag_calls = [c for c in trace.update.call_args_list if "tags" in c.kwargs]
+    assert len(tag_calls) == 1
+    assert tag_calls[0].kwargs["tags"] == [
+        "surface:copilot",
+        "privacy:standard",
+        "asr_status:ok",
+    ]
 
 
 # --------------------------------------------------------------------- #
@@ -1168,3 +1179,96 @@ def test_aliyun_provider_drives_bridge_end_to_end(client: TestClient) -> None:
         {"type": "asr_final", "text": "你好世界"},
         _ALLOW_MOD,
     ]
+
+
+# --------------------------------------------------------------------- #
+# A-31: asr_status / asr_error trace tags for outage triage             #
+# --------------------------------------------------------------------- #
+
+
+def _final_tag_set(trace_mock: MagicMock) -> list[str]:
+    """Return the cumulative tag list from the last `update(tags=...)` call,
+    or `None` if the trace was never re-tagged. Langfuse v2 REPLACEs on
+    each update so the final call holds the union."""
+    tag_calls = [c for c in trace_mock.update.call_args_list if "tags" in c.kwargs]
+    assert tag_calls, "expected at least one tags= update on the trace"
+    return list(tag_calls[-1].kwargs["tags"])
+
+
+def test_asr_status_ok_tag_added_on_successful_utterance(client: TestClient) -> None:
+    """Every successful ASR call must tag `asr_status:ok`. Without this
+    tag, the only way an analyst can tell a successful empty utterance
+    apart from an ASR failure is by parsing structured logs — too
+    coarse for on-call triage."""
+    _lf_client, trace = _install_langfuse_mock()
+    service, repo = _build_service()
+    app.dependency_overrides[get_copilot_service] = lambda: service
+    _seed_pending(repo, "cop_test0000000001")
+
+    with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
+        ws.send_bytes(b"hi")
+        ws.send_text(_AUDIO_END_FRAME)
+        for _ in range(3):
+            ws.receive_json()  # asr_partial + asr_final + moderation
+
+    tags = _final_tag_set(trace)
+    assert "asr_status:ok" in tags
+    assert not any(t.startswith("asr_error:") for t in tags)
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_class"),
+    [
+        (ASRAuthError("token revoked", provider="aliyun"), "auth"),
+        (
+            ASRUpstreamError("upstream 502", provider="aliyun", status_code=502),
+            "upstream",
+        ),
+        (ASRTimeoutError("vendor slow", provider="aliyun"), "timeout"),
+    ],
+    ids=["auth", "upstream", "timeout"],
+)
+def test_asr_failure_tags_status_failed_plus_error_class(
+    client: TestClient,
+    error: ASRError,
+    expected_class: str,
+) -> None:
+    """One ASR failure variant per row. Each must produce both
+    `asr_status:failed` AND `asr_error:{class}` so an analyst can
+    filter the Langfuse UI for `asr_error:auth` to surface only
+    the cred-rotation incidents, etc."""
+    _lf_client, trace = _install_langfuse_mock()
+    service, repo = _build_service()
+    app.dependency_overrides[get_copilot_service] = lambda: service
+    _seed_pending(repo, "cop_test0000000001")
+    _install_asr(_FailingASRProvider(error))
+
+    with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
+        ws.send_bytes(b"hi")
+        ws.send_text(_AUDIO_END_FRAME)
+        ws.receive_json()  # asr_error envelope
+
+    tags = _final_tag_set(trace)
+    assert "asr_status:failed" in tags
+    assert f"asr_error:{expected_class}" in tags
+    # Negative: must NOT have asr_status:ok (mutual exclusion)
+    assert "asr_status:ok" not in tags
+
+
+def test_no_verdict_tag_when_asr_fails(client: TestClient) -> None:
+    """ASR failure → empty final_text → no moderation runs → no
+    `verdict:*` tag. The trace surface should ONLY show asr_status +
+    asr_error, never a spurious `verdict:allow` for a no-op turn."""
+    _lf_client, trace = _install_langfuse_mock()
+    service, repo = _build_service()
+    app.dependency_overrides[get_copilot_service] = lambda: service
+    _seed_pending(repo, "cop_test0000000001")
+    _install_asr(_FailingASRProvider(ASRAuthError("nope", provider="aliyun")))
+
+    with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
+        ws.send_bytes(b"x")
+        ws.send_text(_AUDIO_END_FRAME)
+        ws.receive_json()
+
+    tags = _final_tag_set(trace)
+    assert not any(t.startswith("verdict:") for t in tags)
