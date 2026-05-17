@@ -403,6 +403,13 @@ async def _run_one_utterance(
         # cross-session filtering.
         metadata={"user_id": user_id},
         session_id=copilot_id,
+        # A-40: trace_id + user_id let `record_generation` schedule
+        # the per-call DB insert into `llm_calls`. `copilot_id` doubles
+        # as the per-utterance trace correlator (same value Langfuse
+        # already sees as session_id); copilot's surface is hardcoded
+        # inside `begin_copilot_trace`.
+        trace_id=copilot_id,
+        user_id=user_id,
         # A-24: surface + privacy tags at creation. Verdict tag is
         # added after moderation runs (below). `minor:false` is
         # implicit and intentionally NOT tagged — copilot is

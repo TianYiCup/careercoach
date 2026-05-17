@@ -287,6 +287,13 @@ class TurnService:
                 "scenario_id": session.scenario_id,
             },
             session_id=validated.session_id,
+            # A-40: trace_id + user_id let `record_generation` schedule
+            # the per-call DB insert into `llm_calls`. begin_turn_trace
+            # hardcodes surface="sandbox" so the rollup endpoint can
+            # split sandbox vs review vs copilot spend without each
+            # callsite remembering its own surface label.
+            trace_id=validated.trace_id,
+            user_id=validated.user_id,
             # A-24/A-26/A-29: cross-cutting Langfuse filter tags.
             #   surface:sandbox       — which of the three surfaces this is
             #   minor:{t|f}           — strict-tier moderation was applied

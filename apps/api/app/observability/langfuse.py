@@ -34,7 +34,11 @@ started Langfuse locally still has a working app.
 
 from __future__ import annotations
 
+import asyncio
+import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 import structlog
@@ -42,11 +46,24 @@ from langfuse import Langfuse
 
 from app.config import get_settings
 from app.llm.types import TokenUsage
+from app.services.llm_calls import LLMCallRecord, get_llm_call_repository
 
 if TYPE_CHECKING:
     from app.agents import SessionState
 
 logger = structlog.get_logger(__name__)
+
+# Persist callback signature: each `record_generation` with token usage
+# schedules a fire-and-forget call into this. Kept narrow (one arg,
+# returns awaitable) so test doubles can be a plain async lambda.
+LLMCallPersistCall = Callable[[LLMCallRecord], Awaitable[None]]
+
+# Module-level strong-ref set for fire-and-forget persist tasks.
+# `loop.create_task(...)` only weak-refs the task — without a strong
+# reference Python may garbage-collect mid-flight, silently dropping
+# the DB write. We add on schedule + remove on done so the set's size
+# tracks live in-flight inserts (typically 0 to a few even at peak).
+_background_persist_tasks: set[asyncio.Task[None]] = set()
 
 
 def get_langfuse_client() -> Langfuse | None:
@@ -123,10 +140,32 @@ class TurnTrace:
     than appends, so to add a tag mid-trace we have to re-send the
     full union. `field(default_factory=list)` keeps the dataclass
     frozen while still allowing the *contents* of the list to mutate.
+
+    A-40 added the per-trace persistence fields:
+
+    * `trace_id` — request-id correlator (also stored in metadata).
+      Used as the `llm_calls.trace_id` FK back to the Langfuse trace.
+    * `user_id` — who paid for the LLM spend on this trace.
+    * `surface` — which subsystem opened the trace (sandbox / review
+      / copilot / agent). Hardcoded per `begin_*_trace` so callers
+      don't have to remember.
+    * `_persist_call` — async callable that takes one `LLMCallRecord`
+      and inserts it. None disables persistence (matches the no-op
+      langfuse client contract).
+
+    When `_persist_call` is set AND `record_generation` has a usage
+    object AND all of (trace_id, user_id, surface) are present,
+    `record_generation` schedules a fire-and-forget task that calls
+    `_persist_call(record)`. Observability failures here are caught
+    and logged — they never propagate up to the user-facing flow.
     """
 
     _trace: Any | None
     _tags: list[str] = field(default_factory=list)
+    trace_id: str | None = None
+    user_id: str | None = None
+    surface: str | None = None
+    _persist_call: LLMCallPersistCall | None = None
 
     def record_generation(
         self,
@@ -147,24 +186,78 @@ class TurnTrace:
         per-trace cost view on the Langfuse dashboard. Pass `None`
         when the provider didn't surface token counts (e.g. a stub
         in tests, or an upstream that refused `include_usage`).
+
+        A-40: when a `usage` is supplied AND the trace was opened with
+        a `_persist_call` (plus trace_id / user_id / surface), the
+        same call also schedules a fire-and-forget DB insert so the
+        per-user cost rollup endpoint (A-42) doesn't have to
+        round-trip Langfuse on every read. Langfuse remains the
+        authoritative observability store; the DB row is the queryable
+        replica we control.
         """
-        if self._trace is None:
+        if self._trace is not None:
+            try:
+                gen_kwargs: dict[str, Any] = {
+                    "name": name,
+                    "model": model,
+                    "input": input,
+                    "metadata": metadata or {},
+                }
+                if usage is not None:
+                    gen_kwargs["usage"] = usage.to_langfuse_usage()
+                gen = self._trace.generation(**gen_kwargs)
+                gen.end(output=output)
+            except Exception:
+                # An observability failure must NEVER take down the SSE
+                # stream the user is watching. Swallow + log.
+                logger.exception("langfuse_generation_failed", generation_name=name)
+        # Persist runs regardless of whether the langfuse client was
+        # configured — A-39's table is the system-of-record for cost
+        # data, independent of Langfuse availability. The persist
+        # callable itself defaults to `None` (no-op) when the trace
+        # wasn't opened with persistence wired, so dev runs without
+        # the wiring still see no DB write.
+        self._maybe_schedule_persist(model=model, usage=usage)
+
+    def _maybe_schedule_persist(self, *, model: str, usage: TokenUsage | None) -> None:
+        """Fire-and-forget DB insert when all four conditions hold:
+          * usage was surfaced by the provider
+          * a persist callable was wired at trace-open time
+          * the trace knows its user_id, trace_id, and surface
+
+        If any condition is missing this is a silent no-op — matches
+        the no-op-on-None pattern already in `_trace is None` above.
+
+        We schedule with `loop.create_task` rather than `await` so
+        the surrounding SSE stream isn't blocked on a DB round-trip;
+        observability writes must never extend user-perceived latency.
+        Missing running loop (e.g. a sync test that constructs a
+        TurnTrace and calls record_generation outside of asyncio) is
+        also a silent no-op — the test author already knows the
+        persistence side isn't exercised under that harness.
+        """
+        if usage is None or self._persist_call is None:
+            return
+        if not self.user_id or not self.surface or not self.trace_id:
             return
         try:
-            gen_kwargs: dict[str, Any] = {
-                "name": name,
-                "model": model,
-                "input": input,
-                "metadata": metadata or {},
-            }
-            if usage is not None:
-                gen_kwargs["usage"] = usage.to_langfuse_usage()
-            gen = self._trace.generation(**gen_kwargs)
-            gen.end(output=output)
-        except Exception:
-            # An observability failure must NEVER take down the SSE
-            # stream the user is watching. Swallow + log.
-            logger.exception("langfuse_generation_failed", generation_name=name)
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        record = LLMCallRecord(
+            id=uuid.uuid4(),
+            trace_id=self.trace_id,
+            user_id=self.user_id,
+            surface=self.surface,
+            model=model,
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+            total_tokens=usage.total_tokens,
+            created_at=datetime.now(UTC),
+        )
+        task = loop.create_task(_safe_persist(self._persist_call, record))
+        _background_persist_tasks.add(task)
+        task.add_done_callback(_background_persist_tasks.discard)
 
     def finish(self, *, output: dict[str, Any]) -> None:
         """Mark the trace as completed with the given output payload."""
@@ -208,6 +301,25 @@ class TurnTrace:
             logger.exception("langfuse_trace_tag_update_failed", tag_count=len(tags))
 
 
+async def _safe_persist(call: LLMCallPersistCall, record: LLMCallRecord) -> None:
+    """Wrap one persist call so a DB failure is logged, not raised.
+
+    Called by `TurnTrace._maybe_schedule_persist` via `loop.create_task`,
+    so any exception escaping here would surface as an unawaited-task
+    warning at best and a crashed event-loop callback at worst.
+    Mirrors the swallow-and-log pattern in `record_generation` for
+    Langfuse failures."""
+    try:
+        await call(record)
+    except Exception:
+        logger.exception(
+            "llm_call_persist_failed",
+            trace_id=record.trace_id,
+            model=record.model,
+            user_id=record.user_id,
+        )
+
+
 def begin_turn_trace(
     client: Langfuse | None,
     *,
@@ -215,6 +327,9 @@ def begin_turn_trace(
     metadata: dict[str, Any] | None = None,
     session_id: str | None = None,
     tags: list[str] | None = None,
+    trace_id: str | None = None,
+    user_id: str | None = None,
+    persist_call: LLMCallPersistCall | None = None,
 ) -> TurnTrace:
     """Start a Langfuse trace for one `/turns` SSE call.
 
@@ -238,6 +353,10 @@ def begin_turn_trace(
         metadata=metadata,
         session_id=session_id,
         tags=tags,
+        trace_id=trace_id,
+        user_id=user_id,
+        surface="sandbox",
+        persist_call=persist_call or _default_persist_call(),
     )
 
 
@@ -248,6 +367,9 @@ def begin_review_trace(
     metadata: dict[str, Any] | None = None,
     session_id: str | None = None,
     tags: list[str] | None = None,
+    trace_id: str | None = None,
+    user_id: str | None = None,
+    persist_call: LLMCallPersistCall | None = None,
 ) -> TurnTrace:
     """Start a Langfuse trace for one review upload analysis.
 
@@ -268,6 +390,10 @@ def begin_review_trace(
         metadata=metadata,
         session_id=session_id,
         tags=tags,
+        trace_id=trace_id,
+        user_id=user_id,
+        surface="review",
+        persist_call=persist_call or _default_persist_call(),
     )
 
 
@@ -278,6 +404,9 @@ def begin_copilot_trace(
     metadata: dict[str, Any] | None = None,
     session_id: str | None = None,
     tags: list[str] | None = None,
+    trace_id: str | None = None,
+    user_id: str | None = None,
+    persist_call: LLMCallPersistCall | None = None,
 ) -> TurnTrace:
     """Start a Langfuse trace for one copilot WS utterance.
 
@@ -302,7 +431,30 @@ def begin_copilot_trace(
         metadata=metadata,
         session_id=session_id,
         tags=tags,
+        trace_id=trace_id,
+        user_id=user_id,
+        surface="copilot",
+        persist_call=persist_call or _default_persist_call(),
     )
+
+
+def _default_persist_call() -> LLMCallPersistCall | None:
+    """Look up the configured llm_call repo and return its `insert`
+    bound method, or `None` on any wiring error.
+
+    Pulled into a helper so each `begin_*_trace` stays a one-liner and
+    so tests that want to bypass persistence can pass an explicit
+    `persist_call=` instead of clearing the `lru_cache` on
+    `get_llm_call_repository`. We swallow exceptions here because an
+    observability-side wiring failure must not stop a user-facing
+    trace from being opened — the trace just runs without persistence
+    (same posture as a no-op Langfuse client).
+    """
+    try:
+        return get_llm_call_repository().insert
+    except Exception:
+        logger.exception("llm_call_repository_unavailable")
+        return None
 
 
 def _begin_named_trace(
@@ -313,6 +465,10 @@ def _begin_named_trace(
     metadata: dict[str, Any] | None,
     session_id: str | None = None,
     tags: list[str] | None = None,
+    trace_id: str | None = None,
+    user_id: str | None = None,
+    surface: str | None = None,
+    persist_call: LLMCallPersistCall | None = None,
 ) -> TurnTrace:
     """Internal helper — the only difference between trace entry points
     is the `name` field; everything else (null-client handling, error
@@ -329,7 +485,15 @@ def _begin_named_trace(
     `update(tags=...)` REPLACES rather than appends).
     """
     if client is None:
-        return TurnTrace(_trace=None)
+        # Persistence runs even in the no-op-langfuse case so the cost
+        # table stays accurate when the dev env has Langfuse disabled.
+        return TurnTrace(
+            _trace=None,
+            trace_id=trace_id,
+            user_id=user_id,
+            surface=surface,
+            _persist_call=persist_call,
+        )
     initial_tags = list(tags) if tags else []
     try:
         trace_kwargs: dict[str, Any] = {
@@ -349,8 +513,23 @@ def _begin_named_trace(
         trace = client.trace(**trace_kwargs)
     except Exception:
         logger.exception("langfuse_trace_create_failed", trace_name=name)
-        return TurnTrace(_trace=None)
-    return TurnTrace(_trace=trace, _tags=initial_tags)
+        # Persistence still wires through on Langfuse-create failure
+        # so a Langfuse outage doesn't also blind the cost rollup.
+        return TurnTrace(
+            _trace=None,
+            trace_id=trace_id,
+            user_id=user_id,
+            surface=surface,
+            _persist_call=persist_call,
+        )
+    return TurnTrace(
+        _trace=trace,
+        _tags=initial_tags,
+        trace_id=trace_id,
+        user_id=user_id,
+        surface=surface,
+        _persist_call=persist_call,
+    )
 
 
 __all__ = [
