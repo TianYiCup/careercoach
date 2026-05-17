@@ -37,6 +37,8 @@ export interface SandboxState {
   started: boolean
   /** Current mascot expression (auto-derived from conversation state) */
   mascotExpression: MascotExpression
+  /** Minor is in quiet hours (22:00-08:00 Asia/Shanghai) — PRD §3.0.5 C */
+  isQuietHours: boolean
   /**
    * Last user-visible error from startSession / endSession (non-401).
    * Null when no error is showing. 401s are handled globally by
@@ -58,6 +60,7 @@ const INITIAL_STATE: SandboxState = {
   score: null,
   started: false,
   mascotExpression: 'confident',
+  isQuietHours: false,
   error: null,
 }
 
@@ -68,6 +71,15 @@ const INITIAL_STATE: SandboxState = {
  */
 function _isAuthError(err: unknown): boolean {
   return err instanceof ApiError && err.status === 401
+}
+
+/** Was this a 403 MINOR_QUIET_HOURS rejection? PRD §3.0.5 C */
+function _isQuietHoursError(err: unknown): boolean {
+  return (
+    err instanceof ApiError &&
+    err.status === 403 &&
+    (err.body as { code?: string })?.code === 'MINOR_QUIET_HOURS'
+  )
 }
 
 /** Derive mascot expression from conversation state — design-spec §3.3 */
@@ -130,6 +142,10 @@ export function useSandboxSession() {
         }))
       } catch (err) {
         if (_isAuthError(err)) return
+        if (_isQuietHoursError(err)) {
+          setState((s) => ({ ...s, isQuietHours: true }))
+          return
+        }
         setState((s) => ({
           ...s,
           error: '加载失败，请稍后重试',
@@ -202,6 +218,15 @@ export function useSandboxSession() {
       } catch (err) {
         // Abort is expected on unmount/cancel
         if (err instanceof DOMException && err.name === 'AbortError') return
+        if (_isQuietHoursError(err)) {
+          setState((s) => ({
+            ...s,
+            isStreaming: false,
+            streamingText: '',
+            isQuietHours: true,
+          }))
+          return
+        }
         setState((s) => ({
           ...s,
           isStreaming: false,
@@ -245,6 +270,11 @@ export function useSandboxSession() {
     setState((s) => (s.error === null ? s : { ...s, error: null }))
   }, [setState])
 
+  /** Dismiss the quiet-hours banner — user acknowledged the notice. */
+  const dismissQuietHours = useCallback(() => {
+    setState((s) => (s.isQuietHours ? { ...s, isQuietHours: false } : s))
+  }, [setState])
+
   /** Set active tone */
   const setTone = useCallback(
     (tone: ToneLevel) => {
@@ -267,5 +297,6 @@ export function useSandboxSession() {
     setTone,
     reset,
     dismissError,
+    dismissQuietHours,
   }
 }

@@ -77,7 +77,6 @@ export type ModerationContext = 'user_input' | 'ai_output' | 'scenario_custom'
 export interface ModerationCheckRequest {
   content: string
   context: ModerationContext
-  user_id: string
   session_id?: string | null
 }
 
@@ -172,3 +171,24 @@ export interface SmsVerifyResponse {
   token: string
   user: UserPublic
 }
+
+// --- Age Gate (PRD §1.5 / §3.0.5 C) ---
+
+export interface UpdateBirthYearRequest {
+  /** 4-digit birth year. 1900 ≤ year ≤ 2100. Server derives is_minor. */
+  birth_year: number
+}
+
+// --- API error codes (emitted as body.code on 4xx) ---
+
+export type ApiErrorCode =
+  | 'AGE_REQUIRED'
+  | 'MINOR_QUIET_HOURS'
+  | 'MINOR_FORBIDDEN'
+  | 'SMS_SEND_COOLDOWN'
+  | 'SMS_VERIFY_LOCKED'
+  | 'USER_INPUT_BLOCKED'
+  | 'CAPTION_BLOCKED'
+  | 'INVALID_CODE'
+  | 'NOT_FOUND'
+  | 'ALREADY_ENDED'

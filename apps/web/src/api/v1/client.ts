@@ -1,5 +1,5 @@
 import { getAuthToken } from './auth-token';
-import { emitAuthInvalid } from './auth-events';
+import { emitAuthInvalid, emitAgeRequired } from './auth-events';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/v1';
 
@@ -25,6 +25,11 @@ class ApiClient {
       // local error UI (banners, toasts) can render on the way out.
       if (res.status === 401) {
         emitAuthInvalid();
+      }
+      // 403 AGE_REQUIRED — user hasn't declared birth year yet.
+      // Emit so AuthProvider shows the age gate page.
+      if (res.status === 403 && (error as { code?: string }).code === 'AGE_REQUIRED') {
+        emitAgeRequired();
       }
       throw new ApiError(res.status, error);
     }

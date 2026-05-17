@@ -14,7 +14,7 @@ import { useSandboxSession } from './features/sandbox/useSandboxSession'
 import { ScorePage } from './features/sandbox/ScorePage'
 import type { Score } from './api/v1/types'
 import type { MascotExpression } from './components/mascot/types'
-import { AuthProvider, LoginPage, useAuth } from './features/auth'
+import { AuthProvider, LoginPage, AgeGatePage, useAuth } from './features/auth'
 
 type Page = 'home' | 'sandbox' | 'wrapped' | 'score'
 
@@ -42,6 +42,7 @@ function SandboxRoom({
     endSession,
     setTone,
     dismissError,
+    dismissQuietHours,
   } = useSandboxSession()
 
   const [input, setInput] = useState('')
@@ -312,6 +313,31 @@ function SandboxRoom({
           </GlassCard>
         </div>
       )}
+
+      {/* Minor quiet hours modal — PRD §3.0.5 C */}
+      {state.isQuietHours && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-bg/70 backdrop-blur-sm">
+          <GlassCard className="mx-4 max-w-sm w-full space-y-4 text-center">
+            <MascotReaction expression="caring" size="md" showLabel />
+            <p className="text-lg font-body text-ink-text">现在是静默时段</p>
+            <p className="text-sm text-ink-text-2">
+              为保护未成年人，22:00-08:00 期间无法使用对练功能
+            </p>
+            <div className="flex gap-3 justify-center pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  dismissQuietHours()
+                  onExit()
+                }}
+                className="px-5 py-2 rounded-radius-pill gradient-vivid text-white text-sm font-body font-medium hover:scale-105 transition-transform"
+              >
+                我知道了
+              </button>
+            </div>
+          </GlassCard>
+        </div>
+      )}
     </div>
   )
 }
@@ -460,7 +486,7 @@ function HomePage({
  * one bit. We'll bring in router when the route count grows.
  */
 function AppGate() {
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, needsAge } = useAuth()
   const [page, setPage] = useState<Page>('home')
   const [scoreData, setScoreData] = useState<{
     score: Score
@@ -468,6 +494,7 @@ function AppGate() {
   } | null>(null)
 
   if (!isAuthenticated) return <LoginPage />
+  if (needsAge) return <AgeGatePage />
 
   const handleScore = (score: Score, expression: 'godlike' | 'crashed' | 'confident') => {
     setScoreData({ score, expression })

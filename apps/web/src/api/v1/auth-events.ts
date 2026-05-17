@@ -27,3 +27,19 @@ export function emitAuthInvalid(): void {
     window.dispatchEvent(new CustomEvent(AUTH_INVALID_EVENT));
   }
 }
+
+/**
+ * Age-required event — the backend rejected a request because the
+ * user's JWT has no `age_set=true` claim (PRD §1.5 / §3.0.5 C).
+ *
+ * Wiring:
+ *   apiClient / postSSE  ─emit──►  window.CustomEvent
+ *   AuthProvider         ──listen──┘  → sets needsAge → renders <AgeGatePage>
+ */
+export const AGE_REQUIRED_EVENT = 'careercoach:age-required';
+
+export function emitAgeRequired(): void {
+  if (typeof window !== 'undefined' && typeof CustomEvent !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(AGE_REQUIRED_EVENT));
+  }
+}
