@@ -17,8 +17,9 @@ import type { MascotExpression } from './components/mascot/types'
 import { AuthProvider, LoginPage, AgeGatePage, useAuth } from './features/auth'
 import { ReviewUploadPage } from './features/review/ReviewUploadPage'
 import { ReviewResultPage } from './features/review/ReviewResultPage'
+import { CopilotPage } from './features/copilot'
 
-type Page = 'home' | 'sandbox' | 'wrapped' | 'score' | 'reviewUpload' | 'reviewResult'
+type Page = 'home' | 'sandbox' | 'copilot' | 'wrapped' | 'score' | 'reviewUpload' | 'reviewResult'
 
 /** Narrow MascotExpression to the 3 expressions that make sense on the score page */
 function toScoreExpression(expr: MascotExpression): 'godlike' | 'crashed' | 'confident' {
@@ -458,6 +459,13 @@ function HomePage({
             </button>
             <button
               type="button"
+              onClick={() => onNavigate('copilot')}
+              className="px-6 py-3 rounded-radius-md gradient-vivid text-white font-body font-medium hover:scale-105 transition-transform shadow-[0_0_20px_rgba(124,58,237,0.3)]"
+            >
+              🎧 实战副驾
+            </button>
+            <button
+              type="button"
               onClick={() => onNavigate('reviewUpload' as Page)}
               className="px-6 py-3 rounded-radius-md bg-vivid-green/20 border border-vivid-green/40 text-vivid-green font-body font-medium hover:bg-vivid-green/30 transition-colors"
             >
@@ -519,6 +527,9 @@ function AppGate() {
           onExit={() => setPage('home')}
           onScore={handleScore}
         />
+      )}
+      {page === 'copilot' && (
+        <CopilotPage onBack={() => setPage('home')} />
       )}
       {page === 'wrapped' && <WrappedPage />}
       {page === 'reviewUpload' && (

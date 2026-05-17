@@ -223,6 +223,35 @@ export interface UpdateBirthYearRequest {
   birth_year: number
 }
 
+// --- Copilot (PRD §3.2 / §7.5 / design-spec §9.5) ---
+
+export type PrivacyLevel = 'standard' | 'high'
+
+export interface CreateCopilotSessionRequest {
+  scenario_hint: string
+  privacy_level?: PrivacyLevel
+}
+
+export interface CreateCopilotSessionResponse {
+  copilot_id: string
+  ws_url: string
+}
+
+/** WS server → client events — PRD §7.5, A-18/A-19/A-20 */
+export type CopilotWsEvent =
+  | { type: 'asr_partial'; text: string }
+  | { type: 'asr_final'; text: string }
+  | { type: 'moderation'; verdict: ModerationVerdict; categories: ModerationCategory[]; score: number; redirect_resource?: { title: string; url: string } | null }
+  | { type: 'hint_delta'; text: string }
+  | { type: 'hint_done'; text: string }
+  | { type: 'hint_error'; message: string }
+  | { type: 'asr_error'; message: string }
+
+/** WS client → server control frame */
+export interface CopilotAudioEndFrame {
+  type: 'audio_end'
+}
+
 // --- API error codes (emitted as body.code on 4xx) ---
 
 export type ApiErrorCode =

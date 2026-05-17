@@ -151,3 +151,19 @@
     transform: translateY(-24px);
   }
 }
+
+/* ── HUD fadeIn animation (design-spec §9.5: 200ms float-in) ── */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@utility animate-fade-in {
+  animation: fadeIn 200ms var(--ease-out) both;
+}
