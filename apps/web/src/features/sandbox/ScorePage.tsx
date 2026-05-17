@@ -7,7 +7,7 @@ import {
   Radar,
   ResponsiveContainer,
 } from 'recharts'
-import { GlassCard, MascotReaction, StickerBadge } from '../../components'
+import { GlassCard, MascotReaction, VerdictBadge } from '../../components'
 import type { Score, ScoreResult } from '../../api/v1/types'
 
 interface ScorePageProps {
@@ -27,15 +27,12 @@ function buildRadarData(score: Score) {
   ]
 }
 
-/** Get result display config */
-function getResultConfig(result: ScoreResult) {
+/** Map ScoreResult to ReviewVerdict for VerdictBadge reuse */
+function toVerdict(result: ScoreResult): 'win' | 'neutral' | 'lose' {
   switch (result) {
-    case 'shenfeng':
-      return { label: '封神', variant: 'green' as const, emoji: '✨' }
-    case 'fanche':
-      return { label: '翻车', variant: 'orange' as const, emoji: '💥' }
-    case 'guolu':
-      return { label: '路过', variant: 'cyan' as const, emoji: '🌀' }
+    case 'shenfeng': return 'win'
+    case 'guolu': return 'neutral'
+    case 'fanche': return 'lose'
   }
 }
 
@@ -89,7 +86,7 @@ function ConfettiBurst() {
 
 export function ScorePage({ score, mascotExpression, onBack }: ScorePageProps) {
   const data = buildRadarData(score)
-  const config = getResultConfig(score.result)
+  const verdict = toVerdict(score.result)
   const isShenfeng = score.result === 'shenfeng'
 
   return (
@@ -100,9 +97,7 @@ export function ScorePage({ score, mascotExpression, onBack }: ScorePageProps) {
         <div className="text-center mb-6">
           <MascotReaction expression={mascotExpression} size="lg" showLabel />
           <div className="mt-4 flex justify-center">
-            <StickerBadge variant={config.variant}>
-              {config.emoji} {config.label}
-            </StickerBadge>
+            <VerdictBadge verdict={verdict} size="md" />
           </div>
         </div>
 
