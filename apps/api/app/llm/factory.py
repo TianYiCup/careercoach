@@ -29,7 +29,7 @@ from app.llm.provider import (
 )
 from app.llm.qwen import QwenProvider
 from app.llm.router import LLMRouter
-from app.llm.types import Message
+from app.llm.types import Message, TokenUsage
 
 logger = structlog.get_logger(__name__)
 
@@ -50,8 +50,9 @@ class NoCredentialsProvider:
         *,
         temperature: float = DEFAULT_TEMPERATURE,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        usage_sink: list[TokenUsage] | None = None,
     ) -> AsyncIterator[str]:
-        _ = (messages, temperature, timeout)
+        _ = (messages, temperature, timeout, usage_sink)
         raise LLMAuthError(
             "no LLM credentials configured — set DEEPSEEK_API_KEY or QWEN_API_KEY",
             provider=self.name,

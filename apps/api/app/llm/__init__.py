@@ -16,7 +16,7 @@ from app.llm.errors import (
 from app.llm.provider import LLMProvider
 from app.llm.qwen import QwenProvider
 from app.llm.router import LLMRouter
-from app.llm.types import Message, Role
+from app.llm.types import Message, Role, TokenUsage
 
 __all__ = [
     "DeepSeekProvider",
@@ -30,4 +30,5 @@ __all__ = [
     "Message",
     "QwenProvider",
     "Role",
+    "TokenUsage",
 ]

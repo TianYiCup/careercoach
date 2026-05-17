@@ -41,7 +41,7 @@ from typing import cast
 import structlog
 
 from app.agents._stream import stream_to_text
-from app.llm import LLMProvider, Message
+from app.llm import LLMProvider, Message, TokenUsage
 from app.services.review import ReviewTurnRecord, ReviewVerdict, Speaker
 
 logger = structlog.get_logger(__name__)
@@ -288,6 +288,7 @@ async def analyze_review(
     provider: LLMProvider,
     *,
     text: str,
+    usage_sink: list[TokenUsage] | None = None,
 ) -> ReviewerResult | None:
     """Raw text → parsed turns → LLM call → ReviewerResult.
 
@@ -298,6 +299,11 @@ async def analyze_review(
     The route layer (A-11) is responsible for translating None into
     `repo.mark_failed(...)` and a non-None result into
     `repo.update_result(...)`.
+
+    `usage_sink` forwards to the provider (A-27) so the caller can
+    record the underlying LLM's token counts on the Langfuse trace.
+    Stays optional — callers that don't care still get a one-call
+    surface with no extra plumbing.
     """
     parsed_turns = parse_review_text(text)
     if not parsed_turns:
@@ -314,7 +320,7 @@ async def analyze_review(
         Message.user(user_prompt),
     ]
 
-    raw = await stream_to_text(provider.stream_chat(messages))
+    raw = await stream_to_text(provider.stream_chat(messages, usage_sink=usage_sink))
     return parse_reviewer_output(raw, parsed_turns)
 
 

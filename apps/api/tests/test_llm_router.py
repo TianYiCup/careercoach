@@ -19,6 +19,7 @@ from app.llm import (
     LLMTimeoutError,
     LLMUpstreamError,
     Message,
+    TokenUsage,
 )
 
 
@@ -56,7 +57,9 @@ class _FakeProvider:
         *,
         temperature: float = 0.7,
         timeout: float = 8.0,
+        usage_sink: list[TokenUsage] | None = None,
     ) -> AsyncIterator[str]:
+        _ = usage_sink
         self.invocations += 1
         if self._pre_stream_error is not None:
             raise self._pre_stream_error

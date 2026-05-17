@@ -25,7 +25,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import Protocol, runtime_checkable
 
-from app.llm.types import Message
+from app.llm.types import Message, TokenUsage
 
 DEFAULT_TEMPERATURE = 0.7
 DEFAULT_TIMEOUT_SECONDS = 8.0
@@ -49,6 +49,7 @@ class LLMProvider(Protocol):
         *,
         temperature: float = DEFAULT_TEMPERATURE,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        usage_sink: list[TokenUsage] | None = None,
     ) -> AsyncIterator[str]:
         """Stream response text deltas.
 
@@ -56,5 +57,16 @@ class LLMProvider(Protocol):
         `async for chunk in provider.stream_chat(...)` directly. The
         first iteration may perform the network connect; adapters
         should NOT do I/O before iteration begins.
+
+        When `usage_sink` is non-None, adapters MUST request usage
+        accounting from the upstream (vendors honour
+        `stream_options.include_usage=true` on OpenAI-compatible APIs)
+        and append the parsed `TokenUsage` to the list. Callers can
+        then read `sink[0]` after the stream is fully consumed and
+        forward it to Langfuse for cost analytics. When `usage_sink`
+        is None, adapters MUST NOT request usage (saves a small bit
+        of upstream cost on every call). Tests stubs MAY ignore the
+        kwarg entirely — the sink stays empty and the caller falls
+        back to no-usage behaviour.
         """
         ...

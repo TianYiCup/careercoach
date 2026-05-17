@@ -527,3 +527,60 @@ def test_add_tags_swallows_underlying_failure() -> None:
 
     trace = begin_turn_trace(client, input={}, metadata={}, tags=["surface:sandbox"])
     trace.add_tags(["verdict:allow"])  # No raise.
+
+
+# --- A-27: token usage forwarded to Langfuse generation ---
+
+
+def test_record_generation_forwards_usage_when_provided() -> None:
+    """When `usage` is passed, the underlying generation receives a
+    Langfuse-shaped `{input, output, total}` dict so the dashboard's
+    cost view picks it up."""
+    from unittest.mock import MagicMock
+
+    from app.llm import TokenUsage
+    from app.observability.langfuse import begin_turn_trace
+
+    client = MagicMock(name="langfuse")
+    inner_trace = MagicMock(name="trace")
+    inner_gen = MagicMock(name="generation")
+    inner_trace.generation.return_value = inner_gen
+    client.trace.return_value = inner_trace
+
+    trace = begin_turn_trace(client, input={}, metadata={})
+    trace.record_generation(
+        name="roleplay",
+        model="deepseek",
+        input=[{"role": "user", "content": "hi"}],
+        output="reply",
+        usage=TokenUsage(prompt_tokens=15, completion_tokens=8, total_tokens=23),
+    )
+
+    _args, kwargs = inner_trace.generation.call_args
+    assert kwargs["usage"] == {"input": 15, "output": 8, "total": 23}
+
+
+def test_record_generation_omits_usage_kwarg_when_none() -> None:
+    """The legacy code path (no usage available) must NOT send a
+    `usage=None` to Langfuse — its SDK sometimes clobbers a real
+    upstream usage with an explicit None."""
+    from unittest.mock import MagicMock
+
+    from app.observability.langfuse import begin_turn_trace
+
+    client = MagicMock(name="langfuse")
+    inner_trace = MagicMock(name="trace")
+    inner_gen = MagicMock(name="generation")
+    inner_trace.generation.return_value = inner_gen
+    client.trace.return_value = inner_trace
+
+    trace = begin_turn_trace(client, input={}, metadata={})
+    trace.record_generation(
+        name="g",
+        model="m",
+        input={},
+        output="ok",
+    )
+
+    _args, kwargs = inner_trace.generation.call_args
+    assert "usage" not in kwargs

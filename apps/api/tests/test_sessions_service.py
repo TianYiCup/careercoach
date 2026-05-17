@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 
 import pytest
 from app.agents.state import TurnScore, Verdict
-from app.llm import LLMAuthError, Message
+from app.llm import LLMAuthError, Message, TokenUsage
 from app.schemas.sessions import CreateSessionRequest
 from app.services.sessions import (
     InMemorySessionRepository,
@@ -54,8 +54,9 @@ class _StubLLM:
         *,
         temperature: float = 0.7,
         timeout: float = 30.0,
+        usage_sink: list[TokenUsage] | None = None,
     ) -> AsyncIterator[str]:
-        del messages, temperature, timeout
+        del messages, temperature, timeout, usage_sink
         yield self.output
 
 
@@ -71,8 +72,9 @@ class _FailingLLM:
         *,
         temperature: float = 0.7,
         timeout: float = 30.0,
+        usage_sink: list[TokenUsage] | None = None,
     ) -> AsyncIterator[str]:
-        del messages, temperature, timeout
+        del messages, temperature, timeout, usage_sink
         raise LLMAuthError("no creds in test", provider=self.name)
         yield ""  # pragma: no cover — unreachable
 

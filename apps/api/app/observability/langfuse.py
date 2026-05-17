@@ -41,6 +41,7 @@ import structlog
 from langfuse import Langfuse
 
 from app.config import get_settings
+from app.llm.types import TokenUsage
 
 if TYPE_CHECKING:
     from app.agents import SessionState
@@ -135,23 +136,30 @@ class TurnTrace:
         input: Any,
         output: Any,
         metadata: dict[str, Any] | None = None,
+        usage: TokenUsage | None = None,
     ) -> None:
         """Record one LLM call as a `generation` under this trace.
 
         Generations show up on the Langfuse UI as a span with its own
-        latency, model, and token-count breakdown. We don't currently
-        pass token usage — the streaming `LLMProvider` interface
-        doesn't surface it. Adding it later is a non-breaking change.
+        latency, model, and token-count breakdown. When `usage` is
+        supplied (A-27), it's forwarded as the Langfuse generation's
+        `usage` field — `{input, output, total}` — which powers the
+        per-trace cost view on the Langfuse dashboard. Pass `None`
+        when the provider didn't surface token counts (e.g. a stub
+        in tests, or an upstream that refused `include_usage`).
         """
         if self._trace is None:
             return
         try:
-            gen = self._trace.generation(
-                name=name,
-                model=model,
-                input=input,
-                metadata=metadata or {},
-            )
+            gen_kwargs: dict[str, Any] = {
+                "name": name,
+                "model": model,
+                "input": input,
+                "metadata": metadata or {},
+            }
+            if usage is not None:
+                gen_kwargs["usage"] = usage.to_langfuse_usage()
+            gen = self._trace.generation(**gen_kwargs)
             gen.end(output=output)
         except Exception:
             # An observability failure must NEVER take down the SSE

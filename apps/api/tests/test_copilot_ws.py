@@ -33,7 +33,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from app.asr import get_asr_provider
-from app.llm import LLMAuthError, Message
+from app.llm import LLMAuthError, Message, TokenUsage
 from app.llm.factory import get_llm_router
 from app.llm.provider import DEFAULT_TEMPERATURE, DEFAULT_TIMEOUT_SECONDS
 from app.main import app
@@ -102,8 +102,9 @@ class _StubLLMRouter:
         *,
         temperature: float = DEFAULT_TEMPERATURE,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        usage_sink: list[TokenUsage] | None = None,
     ) -> AsyncIterator[str]:
-        _ = (messages, temperature, timeout)
+        _ = (messages, temperature, timeout, usage_sink)
         if self._raises is not None:
             raise self._raises
             yield ""  # unreachable; keeps this an async generator

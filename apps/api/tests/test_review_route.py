@@ -32,7 +32,7 @@ from datetime import UTC, datetime
 from itertools import count
 
 import pytest
-from app.llm import Message
+from app.llm import Message, TokenUsage
 from app.llm.errors import LLMUpstreamError
 from app.main import app
 from app.schemas.moderation import ModerationContext
@@ -80,7 +80,9 @@ class _FakeProvider:
         *,
         temperature: float = 0.7,
         timeout: float = 8.0,
+        usage_sink: list[TokenUsage] | None = None,
     ) -> AsyncIterator[str]:
+        _ = usage_sink
         self.call_count += 1
         return self._chunks()
 
@@ -100,7 +102,9 @@ class _RaisingProvider:
         *,
         temperature: float = 0.7,
         timeout: float = 8.0,
+        usage_sink: list[TokenUsage] | None = None,
     ) -> AsyncIterator[str]:
+        _ = usage_sink
         return self._raise()
 
     async def _raise(self) -> AsyncIterator[str]:
