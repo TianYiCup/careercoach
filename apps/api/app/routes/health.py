@@ -5,11 +5,21 @@ alive. Use this for k8s livenessProbe / load-balancer health checks
 where a 200 means "don't kill me".
 
 `/health/ready` (A-35) is the readiness probe — returns 200 only
-when all critical external dependencies (LLM router, ASR, moderation)
-are reachable. Use this for k8s readinessProbe / deployment platform
-"is this instance OK to receive traffic" gates. A failed readiness
-check should remove the instance from the LB pool without killing
-the process — transient outages auto-recover when the dep comes back.
+when all critical external dependencies are reachable. Use this for
+k8s readinessProbe / deployment platform "is this instance OK to
+receive traffic" gates. A failed readiness check should remove the
+instance from the LB pool without killing the process — transient
+outages auto-recover when the dep comes back.
+
+Dependency matrix (A-35 + A-36)
+
+  llm_router  — primary LLM provider has credentials (no network)
+  asr         — Aliyun NLS token cache exercise (skipped on dummy)
+  moderation  — backend type inspection (no network)
+  db_postgres — `SELECT 1` against the async engine (skipped when
+                no repo backend is configured to use postgres)  [A-36]
+  db_redis    — `PING` against the configured redis URL (skipped
+                when no backend is configured to use redis)     [A-36]
 
 Why the split
 
@@ -24,7 +34,8 @@ Check semantics
   Each dependency check returns a `ReadinessCheck` with a status:
     ok       — dep responded as expected within budget
     skipped  — dep not configured in this env (e.g. asr_backend=dummy
-               in dev); doesn't count as failure
+               in dev, or every repo backend is `memory`); doesn't
+               count as failure
     fail     — dep didn't respond, returned an error, or timed out
 
   Top-level status:
@@ -45,11 +56,17 @@ from typing import Literal
 import structlog
 from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel, Field
+from redis.asyncio import Redis
+from redis.exceptions import RedisError
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app import __version__
 from app.asr import ASRError, ASRProvider, get_asr_provider
 from app.asr.aliyun import AliyunASRProvider
 from app.config import Settings, get_settings
+from app.db.session import engine as _module_engine
 from app.llm.factory import get_llm_router
 from app.llm.router import LLMRouter
 from app.services.moderation import (
@@ -143,11 +160,15 @@ async def ready(
         _check_llm(llm_router),
         _check_asr(asr_provider, settings),
         _check_moderation(moderation_service),
+        _check_postgres(settings),
+        _check_redis(settings),
     )
     checks = {
         "llm_router": check_results[0],
         "asr": check_results[1],
         "moderation": check_results[2],
+        "db_postgres": check_results[3],
+        "db_redis": check_results[4],
     }
     overall: ReadinessStatus = (
         "degraded" if any(c.status == "fail" for c in checks.values()) else "ready"
@@ -250,6 +271,146 @@ async def _check_moderation(service: ModerationService) -> ReadinessCheck:
     if isinstance(backend, CascadingBackend):
         return _build_check("ok", start, detail=f"{backend_name} (cloud + local)")
     return _build_check("ok", start, detail=f"{backend_name} (local-only)")
+
+
+async def _check_postgres(settings: Settings) -> ReadinessCheck:
+    """Postgres readiness (A-36).
+
+    Skips entirely when every repo backend is `memory` — Postgres isn't
+    actually a dependency in that config, so a missing DB shouldn't
+    flip the instance to `degraded`. When ANY repo backend is wired
+    to `postgres`, runs a `SELECT 1` against the async engine with a
+    2s timeout.
+
+    `engine.connect()` re-uses the pool (no per-probe TCP handshake
+    once warm), so steady-state cost is effectively a single round-
+    trip to the DB. First hit after deploy pays the pool-warm latency
+    which is exactly what readiness is for.
+    """
+    start = time.monotonic()
+    consumers = _postgres_consumers(settings)
+    if not consumers:
+        return _build_check(
+            "skipped",
+            start,
+            detail="no backend uses postgres (all repos = memory)",
+        )
+    engine = _get_engine()
+    try:
+        async with asyncio.timeout(_READINESS_CHECK_TIMEOUT_S):
+            async with engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
+    except TimeoutError:
+        return _build_check(
+            "fail",
+            start,
+            detail=f"postgres SELECT 1 exceeded {_READINESS_CHECK_TIMEOUT_S}s",
+        )
+    except SQLAlchemyError as exc:
+        return _build_check(
+            "fail",
+            start,
+            detail=f"{type(exc).__name__}: {exc}",
+        )
+    return _build_check(
+        "ok",
+        start,
+        detail=f"postgres OK (consumers={','.join(consumers)})",
+    )
+
+
+async def _check_redis(settings: Settings) -> ReadinessCheck:
+    """Redis readiness (A-36).
+
+    Skips when no backend is configured to use Redis (v0: only the
+    SMS code store). When wired, opens a transient client via
+    `Redis.from_url` and runs `PING` under a 2s timeout. The client
+    is closed in `finally` so a failure doesn't leak a connection
+    into the pool.
+
+    A transient client is the right choice here — Redis.from_url is
+    cheap (lazy-connecting) and the readiness check shouldn't share
+    a connection with the request-path limiter / code-store: a stuck
+    probe shouldn't be able to starve real traffic.
+    """
+    start = time.monotonic()
+    consumers = _redis_consumers(settings)
+    if not consumers:
+        return _build_check(
+            "skipped",
+            start,
+            detail="no backend uses redis",
+        )
+    client = _make_redis_client(settings.redis_url)
+    try:
+        async with asyncio.timeout(_READINESS_CHECK_TIMEOUT_S):
+            await client.ping()
+    except TimeoutError:
+        return _build_check(
+            "fail",
+            start,
+            detail=f"redis PING exceeded {_READINESS_CHECK_TIMEOUT_S}s",
+        )
+    except RedisError as exc:
+        return _build_check(
+            "fail",
+            start,
+            detail=f"{type(exc).__name__}: {exc}",
+        )
+    finally:
+        # `aclose` is the redis-py 5.x replacement for `close`; safe
+        # to call even when the client never connected (lazy).
+        await client.aclose()
+    return _build_check(
+        "ok",
+        start,
+        detail=f"redis OK (consumers={','.join(consumers)})",
+    )
+
+
+def _postgres_consumers(settings: Settings) -> list[str]:
+    """Names of backends currently wired to `postgres`.
+
+    Surfaced in the `ok` detail so an analyst can see which features
+    a Postgres outage would actually impact (vs `memory`, which keeps
+    working through the outage).
+    """
+    mapping = {
+        "sessions": settings.sessions_repo_backend,
+        "review": settings.review_repo_backend,
+        "copilot": settings.copilot_repo_backend,
+        "auth": settings.auth_repo_backend,
+        "sharecards_score": settings.sharecards_score_repo_backend,
+    }
+    return [name for name, backend in mapping.items() if backend == "postgres"]
+
+
+def _redis_consumers(settings: Settings) -> list[str]:
+    """Names of backends currently wired to `redis`.
+
+    v0 has one consumer (the SMS code store / rate limiter pair, which
+    share a backend choice). Listed here so the matrix is greppable
+    when more land — every redis-using backend MUST register here so
+    its outage flips readiness.
+    """
+    if settings.auth_code_store_backend == "redis":
+        return ["auth_code_store"]
+    return []
+
+
+def _get_engine() -> AsyncEngine:
+    """Indirection so tests can monkeypatch this without poking at
+    the module-level engine attribute."""
+    return _module_engine
+
+
+def _make_redis_client(url: str) -> Redis:
+    """Indirection so tests can monkeypatch this without patching
+    `Redis.from_url` globally (which would affect unrelated callers
+    sharing the same module import)."""
+    # redis-py's `from_url` stubs return `Any`; narrowing here so the
+    # contract surfaces a typed Redis to callers.
+    return Redis.from_url(url)  # type: ignore[no-any-return]
 
 
 def _build_check(
