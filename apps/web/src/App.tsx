@@ -12,6 +12,7 @@ import {
 
 import { useSandboxSession } from './features/sandbox/useSandboxSession'
 import { ScorePage } from './features/sandbox/ScorePage'
+import { useShareCard } from './features/sandbox/useShareCard'
 import type { Score } from './api/v1/types'
 import type { MascotExpression } from './components/mascot/types'
 import { AuthProvider, LoginPage, AgeGatePage, useAuth } from './features/auth'
@@ -35,7 +36,7 @@ function SandboxRoom({
   onScore,
 }: {
   onExit: () => void
-  onScore: (score: Score, expression: 'godlike' | 'crashed' | 'confident') => void
+  onScore: (score: Score, expression: 'godlike' | 'crashed' | 'confident', sessionId: string | null) => void
 }) {
   const {
     state,
@@ -237,7 +238,7 @@ function SandboxRoom({
           <div className="flex justify-center mt-6">
             <button
               type="button"
-              onClick={() => onScore(state.score!.score, toScoreExpression(state.mascotExpression))}
+              onClick={() => onScore(state.score!.score, toScoreExpression(state.mascotExpression), state.sessionId)}
               className="px-6 py-3 rounded-radius-pill gradient-vivid text-white text-sm font-body font-medium hover:scale-105 transition-transform"
             >
               查看评分
@@ -383,24 +384,107 @@ function UserBubble({ text }: { text: string }) {
   )
 }
 
-/** Wrapped 卡演示页 — design-spec §10 */
-function WrappedPage() {
+/** Wrapped 卡页 — design-spec §10 */
+function WrappedPage({ onBack }: { onBack: () => void }) {
+  const { state: shareState, generateWeeklyCard, generateWrappedCard, dismissError } = useWrappedPage()
+  const currentYear = new Date().getFullYear()
+
   return (
-    <div className="relative min-h-screen flex flex-col items-center justify-center px-4 py-12 overflow-hidden">
+    <div className="relative min-h-screen flex flex-col items-center px-4 py-12 overflow-hidden">
       <BlobBackground />
-      <div className="relative z-10 w-full max-w-md space-y-8 text-center">
-        <h1 className="text-3xl font-display text-ink-text mb-2">Wrapped 战报</h1>
-        <p className="text-sm text-ink-text-2">Canvas 渲染 + PNG 下载 spike</p>
-        <GlassCard className="space-y-6">
-          <WrappedCard score={8.9} comment="今天的你 我 都 服 了" expression="✨" />
-          <WrappedCard score={4.2} comment="翻车了，但还能救" expression="😅" gradient="crash" />
-        </GlassCard>
-        <p className="text-xs text-ink-text-3">
-          design-spec §10.1 — 正式版将接入 Canvas 绘制完整卡片
+
+      <div className="relative z-10 w-full max-w-md space-y-6 text-center">
+        <button
+          type="button"
+          onClick={onBack}
+          className="self-start text-ink-text-2 text-sm hover:text-ink-text transition-colors"
+        >
+          &larr; 返回
+        </button>
+
+        <MascotReaction expression="godlike" size="md" showLabel />
+        <h1 className="text-3xl font-display text-ink-text mb-2">战报中心</h1>
+        <p className="text-sm text-ink-text-2 font-body">
+          把你的高光时刻变成一张可分享的卡
         </p>
+
+        {/* Error banner */}
+        {shareState.error && (
+          <div className="flex items-center justify-between px-4 py-2 bg-vivid-orange/15 border border-vivid-orange/40 rounded-radius-md">
+            <span className="text-sm text-vivid-orange font-body">{shareState.error}</span>
+            <button type="button" onClick={dismissError} className="text-vivid-orange/80 text-lg">&times;</button>
+          </div>
+        )}
+
+        {/* Weekly card */}
+        <GlassCard className="space-y-3">
+          <p className="text-sm text-ink-text font-body font-medium">周报卡</p>
+          <p className="text-xs text-ink-text-3 font-body">过去 7 天的训练总结</p>
+          <button
+            type="button"
+            onClick={() => generateWeeklyCard({ include_qrcode: false })}
+            disabled={shareState.isGenerating}
+            className="px-5 py-2 rounded-radius-pill gradient-vivid text-white font-body text-sm font-medium hover:scale-105 transition-transform disabled:opacity-50"
+          >
+            {shareState.isGenerating && shareState.mode === 'weekly' ? '生成中...' : '生成本周战报'}
+          </button>
+        </GlassCard>
+
+        {/* Annual Wrapped */}
+        <GlassCard glow className="space-y-3">
+          <p className="text-sm text-ink-text font-body font-medium">年度 Wrapped</p>
+          <p className="text-xs text-ink-text-3 font-body">
+            {currentYear} 年的完整回顾
+          </p>
+          <button
+            type="button"
+            onClick={() => generateWrappedCard(currentYear, { include_qrcode: true })}
+            disabled={shareState.isGenerating}
+            className="px-5 py-2 rounded-radius-pill gradient-glory text-ink-bg font-body text-sm font-medium hover:scale-105 transition-transform disabled:opacity-50"
+          >
+            {shareState.isGenerating && shareState.mode === 'wrapped' ? '生成中...' : `生成 ${currentYear} Wrapped`}
+          </button>
+        </GlassCard>
+
+        {/* Server-rendered card preview */}
+        {shareState.card && (
+          <GlassCard className="space-y-3 animate-fade-in">
+            <p className="text-xs text-ink-text-3 font-body">战报已生成</p>
+            <div className="space-y-2">
+              <a
+                href={shareState.card.png_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-block px-5 py-2 rounded-radius-pill gradient-vivid text-white font-body text-sm font-medium hover:scale-105 transition-transform"
+              >
+                查看高清图
+              </a>
+              <a
+                href={shareState.card.share_links.save_local}
+                download
+                className="inline-block ml-2 px-5 py-2 rounded-radius-pill bg-ink-card border border-ink-line text-ink-text font-body text-sm hover:bg-ink-card-2 transition-colors"
+              >
+                保存到相册
+              </a>
+            </div>
+          </GlassCard>
+        )}
+
+        {/* Demo cards — Canvas client-side render */}
+        <GlassCard className="space-y-4">
+          <p className="text-xs text-ink-text-3 font-body">本地预览</p>
+          <WrappedCard score={8.9} comment="今天的你 我 都 服 了" expression="✨" badges={['封神时刻', '气场+1']} />
+          <WrappedCard score={4.2} comment="翻车了，但还能救" expression="😅" gradient="crash" badges={['继续努力']} />
+        </GlassCard>
       </div>
     </div>
   )
+}
+
+/** Helper hook for WrappedPage */
+function useWrappedPage() {
+  const { state, generateWeeklyCard, generateWrappedCard, dismissError } = useShareCard()
+  return { state, generateWeeklyCard, generateWrappedCard, dismissError }
 }
 
 /** 首页 — design-spec §9.2 */
@@ -500,14 +584,15 @@ function AppGate() {
   const [scoreData, setScoreData] = useState<{
     score: Score
     expression: 'godlike' | 'crashed' | 'confident'
+    sessionId: string | null
   } | null>(null)
   const [reviewUploadId, setReviewUploadId] = useState<string | null>(null)
 
   if (!isAuthenticated) return <LoginPage />
   if (needsAge) return <AgeGatePage />
 
-  const handleScore = (score: Score, expression: 'godlike' | 'crashed' | 'confident') => {
-    setScoreData({ score, expression })
+  const handleScore = (score: Score, expression: 'godlike' | 'crashed' | 'confident', sessionId: string | null) => {
+    setScoreData({ score, expression, sessionId })
     setPage('score')
   }
 
@@ -520,7 +605,7 @@ function AppGate() {
           onScore={handleScore}
         />
       )}
-      {page === 'wrapped' && <WrappedPage />}
+      {page === 'wrapped' && <WrappedPage onBack={() => setPage('home')} />}
       {page === 'reviewUpload' && (
         <ReviewUploadPage
           onResult={(uploadId) => {
@@ -540,6 +625,7 @@ function AppGate() {
         <ScorePage
           score={scoreData.score}
           mascotExpression={scoreData.expression}
+          sessionId={scoreData.sessionId ?? undefined}
           onBack={() => {
             setScoreData(null)
             setPage('home')
