@@ -68,6 +68,7 @@ def _moderation(
     verdict: str | None = None,
     output_verdict: str | None = None,
     output_backend_fails: bool = False,
+    input_backend_fails: bool = False,
 ) -> ModerationService:
     """Default returns `allow`. `block=True` short-hand for `verdict='block'`.
 
@@ -81,8 +82,18 @@ def _moderation(
         `ai_output` call so the silent-allow-but-no-tag path is
         exercised. The input call still succeeds with the normal
         `verdict` so we don't accidentally fail the precheck.
+
+    A-37 adds the symmetric input-side option:
+      * `input_backend_fails` — raise ModerationBackendError on the
+        `user_input` call to exercise the fail-open path.
     """
-    if not block and verdict is None and output_verdict is None and not output_backend_fails:
+    if (
+        not block
+        and verdict is None
+        and output_verdict is None
+        and not output_backend_fails
+        and not input_backend_fails
+    ):
         return ModerationService(backend=NoopBackend(), event_sink=LogOnlyEventSink())
 
     input_verdict = "block" if block else (verdict or "allow")
@@ -105,6 +116,13 @@ def _moderation(
                     )
                 effective = out_verdict
             else:
+                if input_backend_fails:
+                    from app.services.moderation.backend import ModerationBackendError
+
+                    raise ModerationBackendError(
+                        "scripted input backend failure",
+                        backend="test_scripted",
+                    )
                 effective = input_verdict
             categories: tuple[str, ...] = ("other",) if effective != "allow" else ()
             # `redirect` mandates a non-None RedirectResource per the
@@ -134,6 +152,7 @@ def _service(
     moderation_verdict: str | None = None,
     output_moderation_verdict: str | None = None,
     output_moderation_backend_fails: bool = False,
+    input_moderation_backend_fails: bool = False,
     langfuse_client: object | None = None,
 ) -> tuple[TurnService, InMemorySessionRepository, InMemoryTurnRepository]:
     if llm_provider is None:
@@ -151,6 +170,7 @@ def _service(
             verdict=moderation_verdict,
             output_verdict=output_moderation_verdict,
             output_backend_fails=output_moderation_backend_fails,
+            input_backend_fails=input_moderation_backend_fails,
         ),
         session_repo=session_repo,
         turn_repo=turn_repo,
@@ -854,6 +874,52 @@ async def test_output_backend_failure_tags_backend_failed_sentinel() -> None:
     # Original text passes through unchanged (treat-as-allow UX).
     done = next(f for f in frames if f.event == "opponent.done")
     assert done.data["full_text"] == "什么安排比工作还重要？"
+
+
+async def test_input_backend_failure_fails_open_and_tags_backend_failed() -> None:
+    """A-37: symmetric with the A-34 output-side handling. When the
+    moderation backend itself fails on the user_input call (e.g. Aliyun
+    is down), `validate_turn_request` MUST NOT raise — that would
+    deny service to legit users during ops issues outside their
+    control. Instead the turn proceeds and the Langfuse trace gets
+    tagged `verdict_input:backend_failed` so the outage window is
+    greppable in dashboards."""
+    from unittest.mock import MagicMock
+
+    client = MagicMock(name="langfuse")
+    inner_trace = MagicMock(name="trace")
+    client.trace.return_value = inner_trace
+
+    svc, session_repo, turn_repo = _service(
+        langfuse_client=client,
+        input_moderation_backend_fails=True,
+    )
+    await session_repo.save(_active_session())
+
+    # MUST NOT raise — fail-open is the whole point.
+    validated = await svc.validate_turn_request(
+        session_id="ses_aaaa1111",
+        content="hi",
+        user_id="u",
+        trace_id="t1",
+    )
+    assert validated.input_verdict == "backend_failed"
+
+    frames = await _collect(svc.stream_turn(validated))
+
+    # Trace tagged at creation time with the sentinel — analysts can
+    # filter `verdict_input:backend_failed` to count outage exposure.
+    _args, kwargs = client.trace.call_args
+    assert "verdict_input:backend_failed" in kwargs["tags"]
+
+    # Roleplay still ran and emitted opponent text (input wasn't blocked).
+    done = next(f for f in frames if f.event == "opponent.done")
+    assert done.data["full_text"] == "什么安排比工作还重要？"
+
+    # Turn record persisted normally (fail-open lets the practice
+    # session continue uninterrupted).
+    persisted = await turn_repo.list_for_session("ses_aaaa1111")
+    assert len(persisted) == 1
 
 
 async def test_empty_fallback_reply_skips_output_moderation() -> None:

@@ -200,24 +200,51 @@ class TurnService:
         if session.status != "active":
             raise SessionEndedForTurnError(session_id)
 
-        decision = await self._moderation.check(
-            ModerationCheckRequest(
-                content=content,
-                context="user_input",
-                session_id=session_id,
-            ),
-            user_id=user_id,
-            is_minor=is_minor,
-            trace_id=trace_id,
-        )
-        if decision.verdict == "block":
-            logger.info(
-                "turn_user_input_blocked",
+        try:
+            decision = await self._moderation.check(
+                ModerationCheckRequest(
+                    content=content,
+                    context="user_input",
+                    session_id=session_id,
+                ),
+                user_id=user_id,
+                is_minor=is_minor,
+                trace_id=trace_id,
+            )
+        except ModerationBackendError as exc:
+            # A-37: fail-open mirror of A-34's output-side handling. The
+            # moderation backend (Aliyun + local-dict cascade) was down
+            # for THIS request, so we'd either have to 5xx the user
+            # (worst UX during an outage that's already not their
+            # fault) or let the content through unscored. We pick the
+            # latter and rely on the `verdict_input:backend_failed`
+            # Langfuse tag so analysts can count exposure during a
+            # mod-backend incident without scraping logs.
+            #
+            # Why not block-by-default: PRD §3.0.5 reserves block for
+            # the six red lines; treating a transport outage as a red-
+            # line hit would distort the audit signal and would also
+            # leave legit users unable to practice during ops issues
+            # entirely outside their control. Output-side moderation
+            # (A-29) still runs on the roleplay reply.
+            logger.warning(
+                "turn_input_moderation_unavailable",
                 session_id=session_id,
                 trace_id=trace_id,
-                categories=list(decision.categories),
+                backend=exc.backend,
+                error=str(exc),
             )
-            raise UserInputBlockedError(categories=tuple(decision.categories))
+            input_verdict = "backend_failed"
+        else:
+            if decision.verdict == "block":
+                logger.info(
+                    "turn_user_input_blocked",
+                    session_id=session_id,
+                    trace_id=trace_id,
+                    categories=list(decision.categories),
+                )
+                raise UserInputBlockedError(categories=tuple(decision.categories))
+            input_verdict = decision.verdict
 
         prior_turns = await self._turn_repo.list_for_session(session_id)
         return ValidatedTurn(
@@ -227,7 +254,7 @@ class TurnService:
             trace_id=trace_id,
             prior_turns=prior_turns,
             is_minor=is_minor,
-            input_verdict=decision.verdict,
+            input_verdict=input_verdict,
         )
 
     async def stream_turn(self, validated: ValidatedTurn) -> AsyncIterator[SseFrame]:
