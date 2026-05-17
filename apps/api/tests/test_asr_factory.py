@@ -7,6 +7,8 @@ calling `get_asr_provider()` and the settings flip decides the impl.
 
 from __future__ import annotations
 
+from collections.abc import Generator
+
 import pytest
 from app.asr import (
     ASRProvider,
@@ -16,11 +18,19 @@ from app.asr import (
 
 
 @pytest.fixture(autouse=True)
-def _clear_factory_cache() -> None:
-    """The factory is `lru_cache`-decorated for production singleton
-    behavior. Tests must clear it so a settings tweak from one test
-    doesn't leak into the next."""
+def _clear_caches() -> Generator[None, None, None]:
+    """Both the ASR factory AND the settings loader are `lru_cache`-d
+    for production singleton behavior. Clear both before AND after
+    each test — `setenv` updates the env but a stale cached
+    `Settings` object will hide it, and a polluted cache survives
+    into the next test file if we only clear before."""
+    from app.config import get_settings
+
     get_asr_provider.cache_clear()
+    get_settings.cache_clear()
+    yield
+    get_asr_provider.cache_clear()
+    get_settings.cache_clear()
 
 
 def test_factory_returns_dummy_by_default() -> None:
@@ -47,3 +57,58 @@ def test_factory_return_type_satisfies_protocol() -> None:
     at the call sites."""
     provider = get_asr_provider()
     assert isinstance(provider, ASRProvider)
+
+
+# --- A-28: aliyun backend selection ---
+
+
+def test_factory_returns_aliyun_when_backend_and_keys_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`asr_backend=aliyun` + all three credentials present must wire
+    the real Aliyun adapter, not the dummy."""
+    from app.asr import AliyunASRProvider
+    from app.config import get_settings
+
+    monkeypatch.setenv("ASR_BACKEND", "aliyun")
+    monkeypatch.setenv("ALIYUN_ACCESS_KEY_ID", "ak-test")
+    monkeypatch.setenv("ALIYUN_ACCESS_KEY_SECRET", "secret-test")
+    monkeypatch.setenv("ALIYUN_ASR_APP_KEY", "app-test")
+    get_settings.cache_clear()
+
+    provider = get_asr_provider()
+    assert isinstance(provider, AliyunASRProvider)
+
+
+def test_factory_refuses_aliyun_when_ak_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Misconfigured prod must fail loudly at construction time.
+    A silent fallback to dummy would let a deploy 'succeed' and then
+    transcribe nothing in production."""
+    from app.config import get_settings
+
+    monkeypatch.setenv("ASR_BACKEND", "aliyun")
+    monkeypatch.setenv("ALIYUN_ACCESS_KEY_ID", "")
+    monkeypatch.setenv("ALIYUN_ACCESS_KEY_SECRET", "")
+    monkeypatch.setenv("ALIYUN_ASR_APP_KEY", "app-test")
+    get_settings.cache_clear()
+
+    with pytest.raises(ValueError, match="ALIYUN_ACCESS_KEY_ID"):
+        get_asr_provider()
+
+
+def test_factory_refuses_aliyun_when_app_key_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same loud-failure rule for the project-level NLS app key."""
+    from app.config import get_settings
+
+    monkeypatch.setenv("ASR_BACKEND", "aliyun")
+    monkeypatch.setenv("ALIYUN_ACCESS_KEY_ID", "ak-test")
+    monkeypatch.setenv("ALIYUN_ACCESS_KEY_SECRET", "secret-test")
+    monkeypatch.setenv("ALIYUN_ASR_APP_KEY", "")
+    get_settings.cache_clear()
+
+    with pytest.raises(ValueError, match="ALIYUN_ASR_APP_KEY"):
+        get_asr_provider()

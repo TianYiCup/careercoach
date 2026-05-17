@@ -99,14 +99,16 @@ class Settings(BaseSettings):
         ),
     )
 
-    # ASR backend selection — A-17 ships only `dummy` (UTF-8 echo for
-    # tests + dev). A future PR widens this Literal with `aliyun`
-    # and/or `tencent` and flips the production default. The Literal
-    # type guarantees an unsupported value fails at config load.
-    asr_backend: Literal["dummy"] = Field(
+    # ASR backend selection — `dummy` (UTF-8 echo) for tests + dev,
+    # `aliyun` for the real NLS streaming ASR (A-28). The factory
+    # refuses to wire `aliyun` if the AK/secret/app_key are unset
+    # so a misconfigured prod boot fails loudly rather than silently
+    # falling back to a non-functional dummy.
+    asr_backend: Literal["dummy", "aliyun"] = Field(
         default="dummy",
         description=(
-            "ASR provider backend. v0.17 only supports `dummy`; real vendors land in a follow-up."
+            "ASR provider backend. `dummy` for dev/tests, `aliyun` for prod (requires "
+            "ALIYUN_ACCESS_KEY_ID/SECRET + ALIYUN_ASR_APP_KEY)."
         ),
     )
 
@@ -166,6 +168,27 @@ class Settings(BaseSettings):
     aliyun_moderation_timeout_s: float = Field(
         default=0.8,
         description="Per-request budget. CascadingBackend falls back to local dict on timeout.",
+    )
+
+    # Aliyun NLS streaming ASR (A-28). Reuses the shared AK/secret
+    # above. AppKey is project-specific (registered per app on the
+    # Aliyun console). Endpoint defaults to Shanghai because that's
+    # the lowest-latency region from our planned deploy zone.
+    aliyun_asr_app_key: SecretStr = Field(
+        default=SecretStr(""),
+        description="Aliyun NLS app key (per-project, separate from the account-level AK).",
+    )
+    aliyun_asr_ws_url: str = Field(
+        default="wss://nls-gateway-cn-shanghai.aliyuncs.com/ws/v1",
+        description="Aliyun NLS realtime streaming endpoint.",
+    )
+    aliyun_asr_token_url: str = Field(
+        default="https://nls-meta.cn-shanghai.aliyuncs.com/",
+        description="Aliyun NLS access-token issuer (STS-style, HMAC-SHA1 signed).",
+    )
+    aliyun_asr_timeout_s: float = Field(
+        default=8.0,
+        description="Per-utterance budget end-to-end (connect + stream + final).",
     )
 
     # Share-card storage. `dir` is where the LocalFilesystemStorage drops
