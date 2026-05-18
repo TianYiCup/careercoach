@@ -278,35 +278,120 @@
   color: #fff33c;
 }
 
-/* ── Score card ─────────────── */
+/* ── Score page ─────────────── */
 
-.sandbox-score-card {
-  margin: 48rpx auto;
-  padding: 48rpx;
+.sandbox-score {
+  margin: 32rpx 0;
+  padding: 0;
+}
+
+.sandbox-score-header {
+  text-align: center;
+  padding: 32rpx 0 24rpx;
+}
+
+.sandbox-score-emoji {
+  font-size: 80rpx;
+  display: block;
+  margin-bottom: 12rpx;
+}
+
+.sandbox-score-verdict {
+  font-size: 40rpx;
+  font-weight: 700;
+  color: #6c4dff;
+}
+
+.sandbox-score-dims {
   background: rgba(26, 24, 46, 0.9);
   border: 1px solid rgba(108, 77, 255, 0.2);
   border-radius: 24rpx;
-  text-align: center;
-  max-width: 560rpx;
+  padding: 28rpx 32rpx;
+  margin: 0 16rpx 24rpx;
 }
 
-.sandbox-score-result {
-  font-size: 56rpx;
-  font-weight: 700;
-  color: #6c4dff;
-  display: block;
-  margin-bottom: 24rpx;
+.sandbox-score-dim {
+  display: flex;
+  align-items: center;
+  margin-bottom: 16rpx;
 }
 
-.sandbox-score-highlight {
-  font-size: 28rpx;
+.sandbox-score-dim:last-child {
+  margin-bottom: 0;
+}
+
+.sandbox-score-dim-label {
+  font-size: 26rpx;
   color: #a8a3c2;
+  width: 72rpx;
+  flex-shrink: 0;
+}
+
+.sandbox-score-dim-bar {
+  flex: 1;
+  height: 12rpx;
+  background: #252246;
+  border-radius: 6rpx;
+  margin: 0 16rpx;
+  overflow: hidden;
+}
+
+.sandbox-score-dim-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #6c4dff, #b0ff3c);
+  border-radius: 6rpx;
+  transition: width 0.4s ease;
+}
+
+.sandbox-score-dim-value {
+  font-size: 26rpx;
+  color: #f5f0ff;
+  width: 48rpx;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.sandbox-score-card {
+  margin: 0 16rpx 16rpx;
+  padding: 24rpx 28rpx;
+  border-radius: 20rpx;
+  border: 1px solid rgba(108, 77, 255, 0.2);
+}
+
+.sandbox-score-card--green {
+  background: rgba(60, 255, 232, 0.08);
+  border-color: rgba(60, 255, 232, 0.25);
+}
+
+.sandbox-score-card--orange {
+  background: rgba(255, 107, 53, 0.08);
+  border-color: rgba(255, 107, 53, 0.25);
+}
+
+.sandbox-score-card-label {
+  font-size: 24rpx;
+  color: #a8a3c2;
+  margin-bottom: 8rpx;
+  display: block;
+}
+
+.sandbox-score-card--green .sandbox-score-card-label {
+  color: #3cffe8;
+}
+
+.sandbox-score-card--orange .sandbox-score-card-label {
+  color: #ff6b35;
+}
+
+.sandbox-score-card-text {
+  font-size: 28rpx;
+  color: #f5f0ff;
   line-height: 1.6;
   display: block;
-  margin-bottom: 32rpx;
 }
 
 .sandbox-score-btn {
+  margin: 32rpx auto;
   padding: 20rpx 48rpx;
   background: linear-gradient(135deg, #6c4dff, #8b6fff);
   border-radius: 999rpx;

@@ -1,6 +1,7 @@
 import { View, Text } from '@tarojs/components'
 import { Button } from '@nutui/nutui-react-taro'
 import Taro from '@tarojs/taro'
+import { getAuthUser } from '../../utils/auth-user'
 import './index.scss'
 
 /** 首页 — 设计还原 design-spec §9.2
@@ -18,6 +19,8 @@ const SCENARIOS = [
 ]
 
 export default function Index() {
+  const user = getAuthUser()
+  const isMinor = user?.is_minor ?? false
   return (
     <View className="home">
       {/* ── 顶栏 ──────────────────── */}
@@ -95,13 +98,15 @@ export default function Index() {
 
       {/* ── 跨端引导 ────────────────
        *  CLAUDE.md #12: 副驾仅 Web/EXE,小程序版不做副驾(录音 API 限制)。
-       *  小程序首页不推副驾,改提示用户去 App/电脑端体验。
+       *  PRD §1.5: 未成年人禁副驾 — 不展示跨端引导。
        */}
-      <View className="home-cross-platform-hint">
-        <Text className="home-cross-platform-hint-text">
-          想体验实战副驾？App / 电脑端见 →
-        </Text>
-      </View>
+      {!isMinor && (
+        <View className="home-cross-platform-hint">
+          <Text className="home-cross-platform-hint-text">
+            想体验实战副驾？App / 电脑端见 →
+          </Text>
+        </View>
+      )}
     </View>
   )
 }
