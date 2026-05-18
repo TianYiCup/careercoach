@@ -33,6 +33,8 @@ REQUIRED_ENDPOINTS: set[tuple[str, str]] = {
     # gate — every new endpoint surfaces on B's side of the
     # contract, even ones B never calls.
     ("get", "/v1/ops/token-cost"),
+    # A-43: ops-only moderation tail. Same gate, same rationale.
+    ("get", "/v1/ops/moderation-events"),
 }
 
 # Endpoints intentionally shipped as 501 stubs so the compliance gates

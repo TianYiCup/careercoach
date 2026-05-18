@@ -94,6 +94,13 @@ class Settings(BaseSettings):
     # when the backend has no history.
     llm_calls_repo_backend: Literal["memory", "postgres"] = Field(default="memory")
 
+    # Moderation-event read-side repo (A-43). The write path is
+    # `DbEventSink` which is unconditional Postgres in prod; this
+    # flag only switches the *read* impl used by the ops tail
+    # endpoint. Memory backend is for dev/tests where the ops
+    # surface is exercised against in-memory seed data.
+    moderation_events_repo_backend: Literal["memory", "postgres"] = Field(default="memory")
+
     # Static bearer-style token the `/v1/ops/*` endpoints check via
     # `X-Ops-Token` header. Empty (the default) means ops endpoints
     # are DISABLED in this deployment — the dep returns 503 rather

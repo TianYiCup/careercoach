@@ -662,6 +662,108 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /v1/ops/moderation-events:
+    get:
+      tags:
+      - ops
+      summary: Recent moderation decisions (audit tail)
+      description: Returns the most recent `moderation_events` rows, newest first. Filters compose (`user_id`,
+        `verdict`, `since`, `until`); omit them for an unfiltered tail. Raw content is never returned
+        — only the SHA-256 hash and length. The per-page cap is 500.
+      operationId: list_moderation_events_v1_ops_moderation_events_get
+      parameters:
+      - name: user_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            minLength: 1
+          - type: 'null'
+          description: Filter to a single user. Omit for tenant-wide tail.
+          examples:
+          - u_018f3a8b1c2d7e3a
+          title: User Id
+        description: Filter to a single user. Omit for tenant-wide tail.
+      - name: verdict
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - enum:
+            - allow
+            - warn
+            - redirect
+            - block
+            type: string
+          - type: 'null'
+          description: Filter to one verdict (`allow` / `warn` / `redirect` / `block`). Omit to include
+            every verdict.
+          title: Verdict
+        description: Filter to one verdict (`allow` / `warn` / `redirect` / `block`). Omit to include
+          every verdict.
+      - name: since
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          description: Inclusive lower bound on `created_at`. ISO-8601, timezone-aware. Omit for no lower
+            bound.
+          title: Since
+        description: Inclusive lower bound on `created_at`. ISO-8601, timezone-aware. Omit for no lower
+          bound.
+      - name: until
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          description: Exclusive upper bound on `created_at` (half-open `[since, until)` matches the rollup
+            window semantics). Omit for no upper bound.
+          title: Until
+        description: Exclusive upper bound on `created_at` (half-open `[since, until)` matches the rollup
+          window semantics). Omit for no upper bound.
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 500
+          minimum: 1
+          description: Per-page cap on rows returned. Default 50 (typical ops tail render); hard max 500.
+          default: 50
+          title: Limit
+        description: Per-page cap on rows returned. Default 50 (typical ops tail render); hard max 500.
+      - name: X-Ops-Token
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Ops-Token
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModerationEventsResponse'
+        '401':
+          description: missing or wrong X-Ops-Token header
+        '503':
+          description: ops endpoints disabled (OPS_API_TOKEN unset)
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
     CoachHintEvent:
@@ -998,6 +1100,184 @@ components:
       - score
       - trace_id
       title: ModerationCheckResponse
+    ModerationEventEntry:
+      properties:
+        id:
+          type: string
+          minLength: 1
+          title: Id
+          description: UUID hex of the audit row.
+        user_id:
+          type: string
+          minLength: 1
+          title: User Id
+        session_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Session Id
+          description: Set when the moderation call came from inside a Session/Turn.
+        content_hash:
+          type: string
+          maxLength: 64
+          minLength: 64
+          title: Content Hash
+          description: SHA-256 hex of the raw content. Raw text is never returned.
+        content_length:
+          type: integer
+          minimum: 0.0
+          title: Content Length
+          description: Length of the original UTF-8 string — lets ops see size without the body.
+        context:
+          type: string
+          enum:
+          - user_input
+          - ai_output
+          - scenario_custom
+          title: Context
+        verdict:
+          type: string
+          enum:
+          - allow
+          - warn
+          - redirect
+          - block
+          title: Verdict
+        categories:
+          items:
+            type: string
+            enum:
+            - self_harm
+            - violence
+            - loan
+            - harassment
+            - political
+            - other
+          type: array
+          title: Categories
+        score:
+          type: number
+          maximum: 1.0
+          minimum: 0.0
+          title: Score
+        backend:
+          type: string
+          minLength: 1
+          title: Backend
+          description: Which backend produced the decision (e.g. `aliyun`, `local_dict`).
+        trace_id:
+          type: string
+          minLength: 1
+          title: Trace Id
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      additionalProperties: false
+      type: object
+      required:
+      - id
+      - user_id
+      - content_hash
+      - content_length
+      - context
+      - verdict
+      - categories
+      - score
+      - backend
+      - trace_id
+      - created_at
+      title: ModerationEventEntry
+      description: 'One audit row as it appears in the ops tail.
+
+
+        `content_hash` is the SHA-256 hex of the original request body
+
+        (always 64 chars). Raw content is never returned — see
+
+        `event_sink.py` for why: the audit log itself would otherwise
+
+        become a red-line corpus the moment we hand it back over HTTP.
+
+
+        `context`, `verdict`, `categories` reuse the user-facing Literals
+
+        from `app.schemas.moderation` so a schema drift on either side
+
+        surfaces in one place — the moderation pipeline and the audit
+
+        surface stay aligned by construction.'
+    ModerationEventsResponse:
+      properties:
+        since:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Since
+        until:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Until
+        user_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: User Id
+          description: Echoes the user_id filter when one was applied. Null = unfiltered.
+        verdict:
+          anyOf:
+          - type: string
+            enum:
+            - allow
+            - warn
+            - redirect
+            - block
+          - type: 'null'
+          title: Verdict
+          description: Echoes the verdict filter when one was applied. Null = unfiltered.
+        limit:
+          type: integer
+          maximum: 500.0
+          minimum: 1.0
+          title: Limit
+        count:
+          type: integer
+          minimum: 0.0
+          title: Count
+        events:
+          items:
+            $ref: '#/components/schemas/ModerationEventEntry'
+          type: array
+          title: Events
+        generated_at:
+          type: string
+          format: date-time
+          title: Generated At
+      additionalProperties: false
+      type: object
+      required:
+      - since
+      - until
+      - limit
+      - count
+      - events
+      - generated_at
+      title: ModerationEventsResponse
+      description: 'Page of recent moderation decisions, newest first.
+
+
+        `since` / `until` / `user_id` / `verdict` echo the resolved
+
+        filters so the renderer doesn''t have to re-derive them from the
+
+        query string (and so a downstream cache key can be built off the
+
+        response alone). `limit` is the cap the route applied; `count`
+
+        is how many rows actually came back (≤ limit).'
     OpponentDeltaEvent:
       properties:
         text:
