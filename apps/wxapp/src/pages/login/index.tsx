@@ -173,7 +173,11 @@ function _humanizeSendError(e: unknown): string {
   if (e instanceof Error && 'status' in e) {
     const apiErr = e as { status: number; body?: { code?: string } }
     if (apiErr.status === 400) return '手机号格式不对'
-    if (apiErr.status === 429) return '发送太频繁，稍后再试'
+    if (apiErr.status === 429) {
+      const code = apiErr.body?.code
+      if (code === 'SMS_SEND_COOLDOWN') return '发送太频繁，请稍后再试'
+      return '请求太频繁，稍后再试'
+    }
   }
   return '发送失败，请稍后再试'
 }
@@ -182,7 +186,11 @@ function _humanizeVerifyError(e: unknown): string {
   if (e instanceof Error && 'status' in e) {
     const apiErr = e as { status: number; body?: { code?: string } }
     if (apiErr.status === 400) return '验证码错了，再试一次'
-    if (apiErr.status === 429) return '请求太频繁，稍后再试'
+    if (apiErr.status === 429) {
+      const code = apiErr.body?.code
+      if (code === 'SMS_VERIFY_LOCKED') return '验证次数过多，请稍后再试'
+      return '请求太频繁，稍后再试'
+    }
   }
   return '登录失败，请稍后再试'
 }
