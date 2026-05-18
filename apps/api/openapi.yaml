@@ -896,6 +896,120 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /v1/ops/llm-calls:
+    get:
+      tags:
+      - ops
+      summary: Recent LLM calls (drill-down tail)
+      description: Returns the most recent `llm_calls` rows, newest first. The drill-down companion to
+        `/token-cost` and `/token-cost-daily` — a chart spike in those endpoints typically leads here
+        to see which specific traces drove it. Filters compose (`user_id`, `surface`, `model`, `since`,
+        `until`); omit them for an unfiltered tail. Per-page cap is 500.
+      operationId: list_llm_calls_v1_ops_llm_calls_get
+      parameters:
+      - name: user_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            minLength: 1
+          - type: 'null'
+          description: Filter to a single user. Omit for tenant-wide tail.
+          examples:
+          - u_018f3a8b1c2d7e3a
+          title: User Id
+        description: Filter to a single user. Omit for tenant-wide tail.
+      - name: surface
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - enum:
+            - sandbox
+            - review
+            - copilot
+            - agent
+            type: string
+          - type: 'null'
+          description: Filter to one surface (`sandbox` / `review` / `copilot` / `agent`). Omit to include
+            every surface.
+          title: Surface
+        description: Filter to one surface (`sandbox` / `review` / `copilot` / `agent`). Omit to include
+          every surface.
+      - name: model
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            minLength: 1
+          - type: 'null'
+          description: Filter to one vendor model id (e.g. `deepseek-chat`, `qwen-max`). String match
+            against the recorded value.
+          title: Model
+        description: Filter to one vendor model id (e.g. `deepseek-chat`, `qwen-max`). String match against
+          the recorded value.
+      - name: since
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          description: Inclusive lower bound on `created_at`. ISO-8601, timezone-aware.
+          title: Since
+        description: Inclusive lower bound on `created_at`. ISO-8601, timezone-aware.
+      - name: until
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          description: Exclusive upper bound on `created_at` (half-open `[since, until)` matches the rollup
+            window semantics).
+          title: Until
+        description: Exclusive upper bound on `created_at` (half-open `[since, until)` matches the rollup
+          window semantics).
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 500
+          minimum: 1
+          description: Per-page cap on rows returned. Default 50 (typical ops tail render); hard max 500.
+          default: 50
+          title: Limit
+        description: Per-page cap on rows returned. Default 50 (typical ops tail render); hard max 500.
+      - name: X-Ops-Token
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Ops-Token
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LLMCallsResponse'
+        '401':
+          description: missing or wrong X-Ops-Token header
+        '503':
+          description: ops endpoints disabled (OPS_API_TOKEN unset)
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
     CoachHintEvent:
@@ -1138,6 +1252,152 @@ components:
       - version
       - env
       title: HealthResponse
+    LLMCallEntry:
+      properties:
+        id:
+          type: string
+          minLength: 1
+          title: Id
+          description: UUID hex of the llm_calls row.
+        trace_id:
+          type: string
+          minLength: 1
+          title: Trace Id
+        user_id:
+          type: string
+          minLength: 1
+          title: User Id
+        surface:
+          type: string
+          enum:
+          - sandbox
+          - review
+          - copilot
+          - agent
+          title: Surface
+        model:
+          type: string
+          minLength: 1
+          title: Model
+          description: Vendor model id (e.g. `deepseek-chat`).
+        prompt_tokens:
+          type: integer
+          minimum: 0.0
+          title: Prompt Tokens
+        completion_tokens:
+          type: integer
+          minimum: 0.0
+          title: Completion Tokens
+        total_tokens:
+          type: integer
+          minimum: 0.0
+          title: Total Tokens
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      additionalProperties: false
+      type: object
+      required:
+      - id
+      - trace_id
+      - user_id
+      - surface
+      - model
+      - prompt_tokens
+      - completion_tokens
+      - total_tokens
+      - created_at
+      title: LLMCallEntry
+      description: 'One LLM call as it appears in the ops tail.
+
+
+        `id` and `trace_id` together let ops jump from this drill-down
+
+        into Langfuse to inspect the prompt and the response. Token
+
+        counts mirror the `llm_calls` schema 1:1 — there''s no content
+
+        field by construction (we never persist the prompt/response in
+
+        our own table; that lives in Langfuse).'
+    LLMCallsResponse:
+      properties:
+        since:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Since
+        until:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Until
+        user_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: User Id
+          description: Echoes the user_id filter when one was applied. Null = unfiltered.
+        surface:
+          anyOf:
+          - type: string
+            enum:
+            - sandbox
+            - review
+            - copilot
+            - agent
+          - type: 'null'
+          title: Surface
+          description: Echoes the surface filter when one was applied.
+        model:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Model
+          description: Echoes the model filter when one was applied.
+        limit:
+          type: integer
+          maximum: 500.0
+          minimum: 1.0
+          title: Limit
+        count:
+          type: integer
+          minimum: 0.0
+          title: Count
+        calls:
+          items:
+            $ref: '#/components/schemas/LLMCallEntry'
+          type: array
+          title: Calls
+        generated_at:
+          type: string
+          format: date-time
+          title: Generated At
+      additionalProperties: false
+      type: object
+      required:
+      - since
+      - until
+      - limit
+      - count
+      - calls
+      - generated_at
+      title: LLMCallsResponse
+      description: 'Page of recent LLM calls, newest first.
+
+
+        `since` / `until` / `user_id` / `surface` / `model` echo the
+
+        resolved filters so a renderer doesn''t have to re-derive them
+
+        (and so a downstream cache key can be built off the response
+
+        alone). `limit` is the cap the route applied; `count` is how
+
+        many rows actually came back (≤ limit).'
     MetaEvent:
       properties:
         turns_used:

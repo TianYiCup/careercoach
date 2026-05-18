@@ -380,3 +380,135 @@ async def test_daily_aggregate_single_day_window() -> None:
 
     assert len(agg.daily) == 1
     assert agg.daily[0].day == until.date()
+
+
+# --- list_calls (A-46) ---
+
+
+async def test_list_calls_returns_inserted_records() -> None:
+    repo = InMemoryLLMCallRepository()
+    rec = _record()
+    await repo.insert(rec)
+
+    calls = await repo.list_calls()
+
+    assert len(calls) == 1
+    assert calls[0].id == rec.id
+    assert calls[0].trace_id == rec.trace_id
+
+
+async def test_list_calls_empty_repo_returns_empty_list() -> None:
+    repo = InMemoryLLMCallRepository()
+
+    calls = await repo.list_calls()
+
+    assert calls == []
+
+
+async def test_list_calls_orders_newest_first() -> None:
+    """Most recent on top — the ops tail contract. A regression that
+    swapped sort direction would silently flip every dashboard tail."""
+    repo = InMemoryLLMCallRepository()
+    old = _NOW - timedelta(hours=5)
+    mid = _NOW - timedelta(hours=2)
+    new = _NOW - timedelta(minutes=10)
+    await repo.insert(_record(trace_id="t_old", created_at=old))
+    await repo.insert(_record(trace_id="t_mid", created_at=mid))
+    await repo.insert(_record(trace_id="t_new", created_at=new))
+
+    calls = await repo.list_calls()
+
+    assert [c.trace_id for c in calls] == ["t_new", "t_mid", "t_old"]
+
+
+async def test_list_calls_respects_limit() -> None:
+    repo = InMemoryLLMCallRepository()
+    for i in range(10):
+        await repo.insert(_record(trace_id=f"t_{i}", created_at=_NOW - timedelta(minutes=i)))
+
+    calls = await repo.list_calls(limit=3)
+
+    # Limit applies AFTER sort — 3 newest, not 3 random.
+    assert len(calls) == 3
+    assert [c.trace_id for c in calls] == ["t_0", "t_1", "t_2"]
+
+
+async def test_list_calls_filters_by_user_id() -> None:
+    """Cross-tenant isolation on the tail — same pin as the
+    aggregate path, but at the per-row drill-down."""
+    repo = InMemoryLLMCallRepository()
+    await repo.insert(_record(user_id="u_alice"))
+    await repo.insert(_record(user_id="u_bob"))
+    await repo.insert(_record(user_id="u_alice"))
+
+    calls = await repo.list_calls(user_id="u_alice")
+
+    assert len(calls) == 2
+    assert all(c.user_id == "u_alice" for c in calls)
+
+
+async def test_list_calls_filters_by_surface() -> None:
+    repo = InMemoryLLMCallRepository()
+    await repo.insert(_record(surface="sandbox", trace_id="t_sb"))
+    await repo.insert(_record(surface="review", trace_id="t_rv"))
+    await repo.insert(_record(surface="copilot", trace_id="t_cp"))
+
+    calls = await repo.list_calls(surface="review")
+
+    assert [c.trace_id for c in calls] == ["t_rv"]
+
+
+async def test_list_calls_filters_by_model() -> None:
+    """Drill-down lets ops answer "which generations used the
+    expensive model"."""
+    repo = InMemoryLLMCallRepository()
+    await repo.insert(_record(model="deepseek-chat", trace_id="t_ds"))
+    await repo.insert(_record(model="qwen-max", trace_id="t_qw"))
+    await repo.insert(_record(model="qwen-max", trace_id="t_qw2"))
+
+    calls = await repo.list_calls(model="qwen-max")
+
+    assert len(calls) == 2
+    assert all(c.model == "qwen-max" for c in calls)
+
+
+async def test_list_calls_filters_compose() -> None:
+    """Filters AND together — pin so a future flip to OR-semantics
+    surfaces here rather than silently widening every tail."""
+    repo = InMemoryLLMCallRepository()
+    await repo.insert(
+        _record(user_id="u_alice", surface="copilot", model="qwen-max", trace_id="t_match")
+    )
+    await repo.insert(
+        _record(user_id="u_alice", surface="sandbox", model="qwen-max", trace_id="t_surface_off")
+    )
+    await repo.insert(
+        _record(user_id="u_bob", surface="copilot", model="qwen-max", trace_id="t_user_off")
+    )
+    await repo.insert(
+        _record(user_id="u_alice", surface="copilot", model="deepseek-chat", trace_id="t_model_off")
+    )
+
+    calls = await repo.list_calls(user_id="u_alice", surface="copilot", model="qwen-max")
+
+    assert [c.trace_id for c in calls] == ["t_match"]
+
+
+async def test_list_calls_time_window_half_open() -> None:
+    """Half-open `[since, until)` matches the rollup window
+    semantics so consecutive ops pages can be chained without
+    overlap or gap."""
+    repo = InMemoryLLMCallRepository()
+    before = _NOW - timedelta(days=2)
+    inside = _NOW - timedelta(hours=12)
+    on_until = _NOW
+    after = _NOW + timedelta(hours=1)
+    await repo.insert(_record(trace_id="t_before", created_at=before))
+    await repo.insert(_record(trace_id="t_inside", created_at=inside))
+    await repo.insert(_record(trace_id="t_on_until", created_at=on_until))
+    await repo.insert(_record(trace_id="t_after", created_at=after))
+
+    calls = await repo.list_calls(since=_NOW - timedelta(days=1), until=_NOW)
+
+    # `until=_NOW` excludes records with created_at == _NOW.
+    assert [c.trace_id for c in calls] == ["t_inside"]

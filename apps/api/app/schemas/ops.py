@@ -169,6 +169,78 @@ class ModerationEventsResponse(BaseModel):
     generated_at: datetime
 
 
+# --- A-46 LLM call tail ---
+
+
+# Hard cap on a single page. 500 mirrors moderation-events (A-43);
+# pinning a ceiling keeps a runaway query from pulling 100k rows
+# in one go.
+MAX_LLM_CALLS_LIMIT = 500
+
+
+# Surface enum — pinned here as a Literal so a future surface
+# addition is forced through a schema review (and downstream codegen
+# regenerates). Today's surfaces are the four `record_generation`
+# call sites: sandbox (turn_service), review (review service),
+# copilot (copilot route), agent (planner/critic chains).
+LLMCallSurface = Literal["sandbox", "review", "copilot", "agent"]
+
+
+class LLMCallEntry(BaseModel):
+    """One LLM call as it appears in the ops tail.
+
+    `id` and `trace_id` together let ops jump from this drill-down
+    into Langfuse to inspect the prompt and the response. Token
+    counts mirror the `llm_calls` schema 1:1 — there's no content
+    field by construction (we never persist the prompt/response in
+    our own table; that lives in Langfuse).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1, description="UUID hex of the llm_calls row.")
+    trace_id: str = Field(min_length=1)
+    user_id: str = Field(min_length=1)
+    surface: LLMCallSurface
+    model: str = Field(min_length=1, description="Vendor model id (e.g. `deepseek-chat`).")
+    prompt_tokens: int = Field(ge=0)
+    completion_tokens: int = Field(ge=0)
+    total_tokens: int = Field(ge=0)
+    created_at: datetime
+
+
+class LLMCallsResponse(BaseModel):
+    """Page of recent LLM calls, newest first.
+
+    `since` / `until` / `user_id` / `surface` / `model` echo the
+    resolved filters so a renderer doesn't have to re-derive them
+    (and so a downstream cache key can be built off the response
+    alone). `limit` is the cap the route applied; `count` is how
+    many rows actually came back (≤ limit).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    since: datetime | None
+    until: datetime | None
+    user_id: str | None = Field(
+        default=None,
+        description="Echoes the user_id filter when one was applied. Null = unfiltered.",
+    )
+    surface: LLMCallSurface | None = Field(
+        default=None,
+        description="Echoes the surface filter when one was applied.",
+    )
+    model: str | None = Field(
+        default=None,
+        description="Echoes the model filter when one was applied.",
+    )
+    limit: int = Field(ge=1, le=MAX_LLM_CALLS_LIMIT)
+    count: int = Field(ge=0)
+    calls: list[LLMCallEntry]
+    generated_at: datetime
+
+
 # --- A-45 token-cost daily time series ---
 
 
@@ -294,8 +366,12 @@ class ModerationStatsResponse(BaseModel):
 
 
 __all__ = [
+    "MAX_LLM_CALLS_LIMIT",
     "MAX_MODERATION_EVENTS_LIMIT",
     "MAX_TOKEN_COST_DAILY_DAYS",
+    "LLMCallEntry",
+    "LLMCallSurface",
+    "LLMCallsResponse",
     "ModerationEventEntry",
     "ModerationEventsResponse",
     "ModerationStatsBreakdownEntry",
