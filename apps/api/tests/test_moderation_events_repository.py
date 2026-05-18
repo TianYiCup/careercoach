@@ -246,3 +246,191 @@ async def test_repository_protocol_runtime_checkable() -> None:
     `isinstance(repo, ModerationEventRepository)` for diagnostics."""
     repo = InMemoryModerationEventRepository()
     assert isinstance(repo, ModerationEventRepository)
+
+
+# --- aggregate (A-44) ---
+
+
+async def test_aggregate_empty_repo_returns_zero_totals() -> None:
+    """Empty window → all counters zero, breakdowns empty (except
+    by_verdict which always lists 4). Pins that the route can render
+    a "no events yet" dashboard honestly without a special case."""
+    repo = InMemoryModerationEventRepository()
+
+    agg = await repo.aggregate()
+
+    assert agg.totals.event_count == 0
+    assert agg.totals.allow_count == 0
+    assert agg.totals.block_count == 0
+    assert len(agg.by_verdict) == 4  # always 4, even when zero
+    assert all(e.count == 0 for e in agg.by_verdict)
+    assert agg.by_context == ()
+    assert agg.by_category == ()
+    assert agg.by_backend == ()
+
+
+async def test_aggregate_counts_verdicts_correctly() -> None:
+    repo = InMemoryModerationEventRepository()
+    await repo.insert(_record(verdict="allow"))
+    await repo.insert(_record(verdict="allow"))
+    await repo.insert(_record(verdict="allow"))
+    await repo.insert(_record(verdict="warn"))
+    await repo.insert(_record(verdict="block"))
+
+    agg = await repo.aggregate()
+
+    assert agg.totals.event_count == 5
+    assert agg.totals.allow_count == 3
+    assert agg.totals.warn_count == 1
+    assert agg.totals.redirect_count == 0
+    assert agg.totals.block_count == 1
+
+
+async def test_aggregate_by_verdict_always_includes_all_four_in_canonical_order() -> None:
+    """Pin the contract: by_verdict is ALWAYS 4 entries in the order
+    (allow, warn, redirect, block) regardless of which verdicts the
+    window contains. Gives dashboards a stable column layout — a
+    zero-allow window still renders the allow column."""
+    repo = InMemoryModerationEventRepository()
+    await repo.insert(_record(verdict="block"))
+    # Only block events — but by_verdict must still surface all 4 keys
+    # so the dashboard stays self-consistent.
+
+    agg = await repo.aggregate()
+
+    keys = [e.key for e in agg.by_verdict]
+    assert keys == ["allow", "warn", "redirect", "block"]
+    counts = {e.key: e.count for e in agg.by_verdict}
+    assert counts == {"allow": 0, "warn": 0, "redirect": 0, "block": 1}
+
+
+async def test_aggregate_by_context_counts_each_context() -> None:
+    repo = InMemoryModerationEventRepository()
+    await repo.insert(_record(context="user_input"))
+    await repo.insert(_record(context="user_input"))
+    await repo.insert(_record(context="ai_output"))
+    await repo.insert(_record(context="scenario_custom"))
+
+    agg = await repo.aggregate()
+
+    entries = {e.key: e.count for e in agg.by_context}
+    assert entries == {"user_input": 2, "ai_output": 1, "scenario_custom": 1}
+
+
+async def test_aggregate_by_context_sorted_by_count_desc() -> None:
+    """Most-frequent first — the read most ops queries are looking
+    for is "what's on top"."""
+    repo = InMemoryModerationEventRepository()
+    await repo.insert(_record(context="ai_output"))
+    await repo.insert(_record(context="ai_output"))
+    await repo.insert(_record(context="ai_output"))
+    await repo.insert(_record(context="user_input"))
+
+    agg = await repo.aggregate()
+
+    keys = [e.key for e in agg.by_context]
+    assert keys == ["ai_output", "user_input"]
+
+
+async def test_aggregate_by_category_counts_each_tag_per_row() -> None:
+    """Critical invariant: a row tagged with (self_harm, violence)
+    contributes ONCE to each bucket. The reading is "how often did
+    category X fire", not "how many rows had exactly one category".
+    Without this, a dashboard showing "self_harm: 10" could hide
+    that 8 of those were also violence — and ops needs to see both."""
+    repo = InMemoryModerationEventRepository()
+    await repo.insert(_record(categories=("self_harm", "violence")))
+    await repo.insert(_record(categories=("self_harm",)))
+    await repo.insert(_record(categories=("violence",)))
+    await repo.insert(_record(categories=()))  # allow row — no categories
+
+    agg = await repo.aggregate()
+
+    counts = {e.key: e.count for e in agg.by_category}
+    assert counts == {"self_harm": 2, "violence": 2}
+    # And empty-category rows don't introduce a phantom "" bucket.
+    assert "" not in counts
+
+
+async def test_aggregate_by_backend_counts_each_backend() -> None:
+    """Lets ops estimate how often the cloud-mod cascade fell through
+    to the local dict (PRD §7.8.5 cost-control)."""
+    repo = InMemoryModerationEventRepository()
+    await repo.insert(_record(backend="aliyun"))
+    await repo.insert(_record(backend="aliyun"))
+    await repo.insert(_record(backend="local_dict"))
+
+    agg = await repo.aggregate()
+
+    counts = {e.key: e.count for e in agg.by_backend}
+    assert counts == {"aliyun": 2, "local_dict": 1}
+
+
+async def test_aggregate_filters_by_user_id() -> None:
+    """Cross-tenant isolation at the aggregate path — same pin as
+    list_events but for the stats query."""
+    repo = InMemoryModerationEventRepository()
+    await repo.insert(_record(user_id="u_alice", verdict="block"))
+    await repo.insert(_record(user_id="u_alice", verdict="allow"))
+    await repo.insert(_record(user_id="u_bob", verdict="block"))
+
+    agg = await repo.aggregate(user_id="u_alice")
+
+    assert agg.totals.event_count == 2
+    assert agg.totals.allow_count == 1
+    assert agg.totals.block_count == 1
+
+
+async def test_aggregate_filters_by_time_window() -> None:
+    repo = InMemoryModerationEventRepository()
+    too_old = _NOW - timedelta(days=10)
+    inside = _NOW - timedelta(days=2)
+    too_new = _NOW + timedelta(days=1)
+    await repo.insert(_record(verdict="block", created_at=too_old))
+    await repo.insert(_record(verdict="allow", created_at=inside))
+    await repo.insert(_record(verdict="warn", created_at=too_new))
+
+    agg = await repo.aggregate(since=_NOW - timedelta(days=7), until=_NOW)
+
+    assert agg.totals.event_count == 1
+    assert agg.totals.allow_count == 1
+    assert agg.totals.block_count == 0  # the old block row is filtered out
+
+
+async def test_aggregate_totals_match_sum_of_verdicts() -> None:
+    """The headline `event_count` MUST equal the sum of the four
+    per-verdict counts — dashboard loses trust the moment they
+    disagree."""
+    repo = InMemoryModerationEventRepository()
+    await repo.insert(_record(verdict="allow"))
+    await repo.insert(_record(verdict="warn"))
+    await repo.insert(_record(verdict="block"))
+    await repo.insert(_record(verdict="redirect"))
+    await repo.insert(_record(verdict="block"))
+
+    agg = await repo.aggregate()
+
+    by_verdict_sum = sum(e.count for e in agg.by_verdict)
+    assert agg.totals.event_count == 5
+    assert by_verdict_sum == 5
+    assert (
+        agg.totals.allow_count
+        + agg.totals.warn_count
+        + agg.totals.redirect_count
+        + agg.totals.block_count
+        == agg.totals.event_count
+    )
+
+
+async def test_aggregate_echoes_filters_back() -> None:
+    """Bounds + user_id echo back so a serializer doesn't have to
+    re-derive them and so `None` surfaces honestly as `null`."""
+    repo = InMemoryModerationEventRepository()
+    since = _NOW - timedelta(days=7)
+    until = _NOW
+
+    agg = await repo.aggregate(since=since, until=until, user_id="u_demo")
+
+    assert agg.since == since
+    assert agg.until == until
+    assert agg.user_id == "u_demo"

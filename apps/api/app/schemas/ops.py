@@ -169,10 +169,86 @@ class ModerationEventsResponse(BaseModel):
     generated_at: datetime
 
 
+# --- A-44 moderation rate stats ---
+
+
+class ModerationStatsTotals(BaseModel):
+    """Headline counts across the window.
+
+    Per-verdict counts are first-class fields (not a generic dict) so
+    the response shape stays self-describing — an ops dashboard can
+    type-check against the schema and know exactly which counters
+    exist without iterating a map. `event_count` is the sum of the
+    four verdict counts (and equals `len(events)` over the same window
+    in /moderation-events).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    event_count: int = Field(ge=0)
+    allow_count: int = Field(ge=0)
+    warn_count: int = Field(ge=0)
+    redirect_count: int = Field(ge=0)
+    block_count: int = Field(ge=0)
+
+
+class ModerationStatsBreakdownEntry(BaseModel):
+    """One row in a by-verdict / by-context / by-category / by-backend
+    breakdown.
+
+    `key` is the grouping value:
+      * for `by_verdict`  — `allow` / `warn` / `redirect` / `block`
+        (always present in this order, zero-counts included)
+      * for `by_context`  — `user_input` / `ai_output` / `scenario_custom`
+      * for `by_category` — `self_harm` / `violence` / etc (only
+        categories actually triggered in the window)
+      * for `by_backend`  — `aliyun` / `local_dict` / etc
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    key: str = Field(min_length=1)
+    count: int = Field(ge=0)
+
+
+class ModerationStatsResponse(BaseModel):
+    """Per-window moderation rate rollup.
+
+    `by_verdict` is always 4 entries in the canonical
+    (allow, warn, redirect, block) order — even when a verdict had
+    zero events in the window. The other three breakdowns are sorted
+    by count desc (most-frequent first) and only include keys that
+    actually appeared.
+
+    Category counts intentionally count each row once per category
+    it carries — a row tagged `(self_harm, violence)` contributes to
+    both buckets. The reading is "how often did category X fire",
+    not "how many single-category rows existed".
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    since: datetime | None
+    until: datetime | None
+    user_id: str | None = Field(
+        default=None,
+        description="Echoes the user_id filter when one was applied. Null = unfiltered.",
+    )
+    totals: ModerationStatsTotals
+    by_verdict: list[ModerationStatsBreakdownEntry]
+    by_context: list[ModerationStatsBreakdownEntry]
+    by_category: list[ModerationStatsBreakdownEntry]
+    by_backend: list[ModerationStatsBreakdownEntry]
+    generated_at: datetime
+
+
 __all__ = [
     "MAX_MODERATION_EVENTS_LIMIT",
     "ModerationEventEntry",
     "ModerationEventsResponse",
+    "ModerationStatsBreakdownEntry",
+    "ModerationStatsResponse",
+    "ModerationStatsTotals",
     "TokenCostBreakdownEntry",
     "TokenCostResponse",
     "TokenCostTotals",

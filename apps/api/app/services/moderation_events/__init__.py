@@ -19,8 +19,11 @@ from app.config import get_settings
 from app.db.session import async_session_factory
 from app.services.moderation_events.repository import (
     InMemoryModerationEventRepository,
+    ModerationEventAggregate,
     ModerationEventRecord,
     ModerationEventRepository,
+    ModerationStatsBreakdownEntry,
+    ModerationStatsTotals,
     PostgresModerationEventRepository,
 )
 
@@ -42,8 +45,11 @@ def get_moderation_event_repository() -> ModerationEventRepository:
 
 __all__ = [
     "InMemoryModerationEventRepository",
+    "ModerationEventAggregate",
     "ModerationEventRecord",
     "ModerationEventRepository",
+    "ModerationStatsBreakdownEntry",
+    "ModerationStatsTotals",
     "PostgresModerationEventRepository",
     "get_moderation_event_repository",
 ]
