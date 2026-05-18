@@ -4,6 +4,7 @@ Endpoints in this namespace (all gated by `require_ops_token`, A-41):
 
   * GET /v1/ops/token-cost            (A-42) — per-user LLM spend rollup
   * GET /v1/ops/moderation-events     (A-43) — moderation decision tail
+  * GET /v1/ops/moderation-stats      (A-44) — moderation rate rollup
 
 Every endpoint here is gated by `require_ops_token` (A-41), which
 checks the `X-Ops-Token` header. The dep fails closed when
@@ -25,6 +26,9 @@ from app.schemas.ops import (
     MAX_MODERATION_EVENTS_LIMIT,
     ModerationEventEntry,
     ModerationEventsResponse,
+    ModerationStatsBreakdownEntry,
+    ModerationStatsResponse,
+    ModerationStatsTotals,
     TokenCostBreakdownEntry,
     TokenCostResponse,
     TokenCostTotals,
@@ -37,9 +41,13 @@ from app.services.llm_calls import (
     get_llm_call_repository,
 )
 from app.services.moderation_events import (
+    ModerationEventAggregate,
     ModerationEventRecord,
     ModerationEventRepository,
     get_moderation_event_repository,
+)
+from app.services.moderation_events import (
+    ModerationStatsBreakdownEntry as RepoStatsBreakdownEntry,
 )
 from app.services.ops import require_ops_token
 
@@ -266,6 +274,88 @@ def _event_entry(record: ModerationEventRecord) -> ModerationEventEntry:
         trace_id=record.trace_id,
         created_at=record.created_at,
     )
+
+
+# --- A-44 moderation rate stats ---
+
+
+@router.get(
+    "/moderation-stats",
+    response_model=ModerationStatsResponse,
+    summary="Rate rollup over moderation decisions",
+    description=(
+        "Aggregates `moderation_events` over a window. Returns "
+        "totals plus by-verdict (always 4 entries in canonical "
+        "order), by-context, by-category and by-backend breakdowns. "
+        "`by_category` counts each row once per category it carries — "
+        "the reading is 'how often did category X fire', not 'how "
+        "many single-category rows'."
+    ),
+    responses={
+        401: {"description": "missing or wrong X-Ops-Token header"},
+        503: {"description": "ops endpoints disabled (OPS_API_TOKEN unset)"},
+    },
+    dependencies=[Depends(require_ops_token)],
+)
+async def get_moderation_stats(
+    user_id: str | None = Query(
+        default=None,
+        min_length=1,
+        description="Filter to a single user. Omit for tenant-wide rollup.",
+        examples=["u_018f3a8b1c2d7e3a"],
+    ),
+    since: datetime | None = Query(
+        default=None,
+        description="Inclusive lower bound on `created_at`. ISO-8601, timezone-aware.",
+    ),
+    until: datetime | None = Query(
+        default=None,
+        description=(
+            "Exclusive upper bound on `created_at` (half-open "
+            "`[since, until)` matches /moderation-events + /token-cost)."
+        ),
+    ),
+    repo: ModerationEventRepository = Depends(_get_events_repo),
+) -> ModerationStatsResponse:
+    """Resolve filters, call the repo, repackage the aggregate as
+    the wire schema, stamp `generated_at`."""
+    now = datetime.now(UTC)
+    aggregate = await repo.aggregate(since=since, until=until, user_id=user_id)
+    return _build_stats_response(aggregate=aggregate, generated_at=now)
+
+
+def _build_stats_response(
+    *,
+    aggregate: ModerationEventAggregate,
+    generated_at: datetime,
+) -> ModerationStatsResponse:
+    """Repackage the repo's aggregate dataclass as the wire schema.
+
+    Pulled into a helper so the route stays a thin pass-through and
+    a future caller (CLI, internal dashboard) can reuse the same
+    transformation without re-implementing it.
+    """
+    return ModerationStatsResponse(
+        since=aggregate.since,
+        until=aggregate.until,
+        user_id=aggregate.user_id,
+        totals=ModerationStatsTotals(
+            event_count=aggregate.totals.event_count,
+            allow_count=aggregate.totals.allow_count,
+            warn_count=aggregate.totals.warn_count,
+            redirect_count=aggregate.totals.redirect_count,
+            block_count=aggregate.totals.block_count,
+        ),
+        by_verdict=[_stats_entry(e) for e in aggregate.by_verdict],
+        by_context=[_stats_entry(e) for e in aggregate.by_context],
+        by_category=[_stats_entry(e) for e in aggregate.by_category],
+        by_backend=[_stats_entry(e) for e in aggregate.by_backend],
+        generated_at=generated_at,
+    )
+
+
+def _stats_entry(entry: RepoStatsBreakdownEntry) -> ModerationStatsBreakdownEntry:
+    return ModerationStatsBreakdownEntry(key=entry.key, count=entry.count)
 
 
 __all__ = ["router"]

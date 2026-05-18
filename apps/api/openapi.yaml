@@ -764,6 +764,79 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /v1/ops/moderation-stats:
+    get:
+      tags:
+      - ops
+      summary: Rate rollup over moderation decisions
+      description: Aggregates `moderation_events` over a window. Returns totals plus by-verdict (always
+        4 entries in canonical order), by-context, by-category and by-backend breakdowns. `by_category`
+        counts each row once per category it carries — the reading is 'how often did category X fire',
+        not 'how many single-category rows'.
+      operationId: get_moderation_stats_v1_ops_moderation_stats_get
+      parameters:
+      - name: user_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            minLength: 1
+          - type: 'null'
+          description: Filter to a single user. Omit for tenant-wide rollup.
+          examples:
+          - u_018f3a8b1c2d7e3a
+          title: User Id
+        description: Filter to a single user. Omit for tenant-wide rollup.
+      - name: since
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          description: Inclusive lower bound on `created_at`. ISO-8601, timezone-aware.
+          title: Since
+        description: Inclusive lower bound on `created_at`. ISO-8601, timezone-aware.
+      - name: until
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          description: Exclusive upper bound on `created_at` (half-open `[since, until)` matches /moderation-events
+            + /token-cost).
+          title: Until
+        description: Exclusive upper bound on `created_at` (half-open `[since, until)` matches /moderation-events
+          + /token-cost).
+      - name: X-Ops-Token
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Ops-Token
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModerationStatsResponse'
+        '401':
+          description: missing or wrong X-Ops-Token header
+        '503':
+          description: ops endpoints disabled (OPS_API_TOKEN unset)
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
     CoachHintEvent:
@@ -1278,6 +1351,152 @@ components:
         response alone). `limit` is the cap the route applied; `count`
 
         is how many rows actually came back (≤ limit).'
+    ModerationStatsBreakdownEntry:
+      properties:
+        key:
+          type: string
+          minLength: 1
+          title: Key
+        count:
+          type: integer
+          minimum: 0.0
+          title: Count
+      additionalProperties: false
+      type: object
+      required:
+      - key
+      - count
+      title: ModerationStatsBreakdownEntry
+      description: "One row in a by-verdict / by-context / by-category / by-backend\nbreakdown.\n\n`key`\
+        \ is the grouping value:\n  * for `by_verdict`  — `allow` / `warn` / `redirect` / `block`\n  \
+        \  (always present in this order, zero-counts included)\n  * for `by_context`  — `user_input`\
+        \ / `ai_output` / `scenario_custom`\n  * for `by_category` — `self_harm` / `violence` / etc (only\n\
+        \    categories actually triggered in the window)\n  * for `by_backend`  — `aliyun` / `local_dict`\
+        \ / etc"
+    ModerationStatsResponse:
+      properties:
+        since:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Since
+        until:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Until
+        user_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: User Id
+          description: Echoes the user_id filter when one was applied. Null = unfiltered.
+        totals:
+          $ref: '#/components/schemas/ModerationStatsTotals'
+        by_verdict:
+          items:
+            $ref: '#/components/schemas/ModerationStatsBreakdownEntry'
+          type: array
+          title: By Verdict
+        by_context:
+          items:
+            $ref: '#/components/schemas/ModerationStatsBreakdownEntry'
+          type: array
+          title: By Context
+        by_category:
+          items:
+            $ref: '#/components/schemas/ModerationStatsBreakdownEntry'
+          type: array
+          title: By Category
+        by_backend:
+          items:
+            $ref: '#/components/schemas/ModerationStatsBreakdownEntry'
+          type: array
+          title: By Backend
+        generated_at:
+          type: string
+          format: date-time
+          title: Generated At
+      additionalProperties: false
+      type: object
+      required:
+      - since
+      - until
+      - totals
+      - by_verdict
+      - by_context
+      - by_category
+      - by_backend
+      - generated_at
+      title: ModerationStatsResponse
+      description: 'Per-window moderation rate rollup.
+
+
+        `by_verdict` is always 4 entries in the canonical
+
+        (allow, warn, redirect, block) order — even when a verdict had
+
+        zero events in the window. The other three breakdowns are sorted
+
+        by count desc (most-frequent first) and only include keys that
+
+        actually appeared.
+
+
+        Category counts intentionally count each row once per category
+
+        it carries — a row tagged `(self_harm, violence)` contributes to
+
+        both buckets. The reading is "how often did category X fire",
+
+        not "how many single-category rows existed".'
+    ModerationStatsTotals:
+      properties:
+        event_count:
+          type: integer
+          minimum: 0.0
+          title: Event Count
+        allow_count:
+          type: integer
+          minimum: 0.0
+          title: Allow Count
+        warn_count:
+          type: integer
+          minimum: 0.0
+          title: Warn Count
+        redirect_count:
+          type: integer
+          minimum: 0.0
+          title: Redirect Count
+        block_count:
+          type: integer
+          minimum: 0.0
+          title: Block Count
+      additionalProperties: false
+      type: object
+      required:
+      - event_count
+      - allow_count
+      - warn_count
+      - redirect_count
+      - block_count
+      title: ModerationStatsTotals
+      description: 'Headline counts across the window.
+
+
+        Per-verdict counts are first-class fields (not a generic dict) so
+
+        the response shape stays self-describing — an ops dashboard can
+
+        type-check against the schema and know exactly which counters
+
+        exist without iterating a map. `event_count` is the sum of the
+
+        four verdict counts (and equals `len(events)` over the same window
+
+        in /moderation-events).'
     OpponentDeltaEvent:
       properties:
         text:
