@@ -37,6 +37,8 @@ REQUIRED_ENDPOINTS: set[tuple[str, str]] = {
     ("get", "/v1/ops/moderation-events"),
     # A-44: ops-only moderation rate stats. Same gate.
     ("get", "/v1/ops/moderation-stats"),
+    # A-45: ops-only per-day token spend time series. Same gate.
+    ("get", "/v1/ops/token-cost-daily"),
 }
 
 # Endpoints intentionally shipped as 501 stubs so the compliance gates

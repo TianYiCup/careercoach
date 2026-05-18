@@ -837,6 +837,65 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /v1/ops/token-cost-daily:
+    get:
+      tags:
+      - ops
+      summary: Per-user token spend bucketed by UTC day
+      description: Returns N consecutive UTC-day buckets ending today (the today bucket is partial, with
+        `until` set to request time). Days with no calls appear with zero totals so a chart line renders
+        without gaps. The headline `totals` equals the sum across the daily buckets. Max `days` is 90.
+      operationId: get_token_cost_daily_v1_ops_token_cost_daily_get
+      parameters:
+      - name: user_id
+        in: query
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          description: The user whose daily spend to roll up.
+          examples:
+          - u_018f3a8b1c2d7e3a
+          title: User Id
+        description: The user whose daily spend to roll up.
+      - name: days
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 90
+          minimum: 1
+          description: Number of UTC-day buckets to return, ending today. 1 = today only; default 7 =
+            week view; max 90.
+          default: 7
+          title: Days
+        description: Number of UTC-day buckets to return, ending today. 1 = today only; default 7 = week
+          view; max 90.
+      - name: X-Ops-Token
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Ops-Token
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenCostDailyResponse'
+        '401':
+          description: missing or wrong X-Ops-Token header
+        '503':
+          description: ops endpoints disabled (OPS_API_TOKEN unset)
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
     CoachHintEvent:
@@ -2139,6 +2198,92 @@ components:
         \ * for `by_model` — the vendor model id verbatim (e.g.\n    `\"deepseek-chat\"`, `\"qwen-max\"\
         `)\n  * for `by_surface` — `sandbox` / `review` / `copilot` / `agent`\n\nSorted by `total_tokens`\
         \ desc (the rollup endpoint surfaces\nmost-expensive first so ops tooling renders without re-sorting)."
+    TokenCostDailyEntry:
+      properties:
+        day:
+          type: string
+          format: date
+          title: Day
+        totals:
+          $ref: '#/components/schemas/TokenCostTotals'
+      additionalProperties: false
+      type: object
+      required:
+      - day
+      - totals
+      title: TokenCostDailyEntry
+      description: 'One UTC-day bucket in a daily time series.
+
+
+        `day` serializes as `YYYY-MM-DD` (Pydantic''s default for `date`)
+
+        — calendar boundaries are the unit the dashboard chart renders,
+
+        keeping JSON consumers from having to slice ISO timestamps. The
+
+        timezone is always UTC; the PRD''s display-in-Asia/Shanghai rule
+
+        is a render-side concern, not a wire-shape one.'
+    TokenCostDailyResponse:
+      properties:
+        user_id:
+          type: string
+          minLength: 1
+          title: User Id
+        days:
+          type: integer
+          maximum: 90.0
+          minimum: 1.0
+          title: Days
+        since:
+          type: string
+          format: date-time
+          title: Since
+        until:
+          type: string
+          format: date-time
+          title: Until
+        totals:
+          $ref: '#/components/schemas/TokenCostTotals'
+        daily:
+          items:
+            $ref: '#/components/schemas/TokenCostDailyEntry'
+          type: array
+          title: Daily
+        generated_at:
+          type: string
+          format: date-time
+          title: Generated At
+      additionalProperties: false
+      type: object
+      required:
+      - user_id
+      - days
+      - since
+      - until
+      - totals
+      - daily
+      - generated_at
+      title: TokenCostDailyResponse
+      description: 'Per-day token spend over a rolling N-day window.
+
+
+        `daily` always contains exactly `days` entries — one per UTC day
+
+        in `[since, until)` — in chronological order. Days with no calls
+
+        appear with zeroed totals so the chart line has a stable x-axis
+
+        from day one (no gaps where the user happened to be quiet).
+
+
+        `totals` is the sum across all daily buckets. Pinned invariant:
+
+        `totals.total_tokens == sum(d.totals.total_tokens for d in daily)`.
+
+        Without this the headline number and the chart sum can drift
+
+        apart, and the dashboard loses trust the moment they disagree.'
     TokenCostResponse:
       properties:
         user_id:

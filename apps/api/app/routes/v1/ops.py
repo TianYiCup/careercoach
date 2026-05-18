@@ -5,6 +5,7 @@ Endpoints in this namespace (all gated by `require_ops_token`, A-41):
   * GET /v1/ops/token-cost            (A-42) — per-user LLM spend rollup
   * GET /v1/ops/moderation-events     (A-43) — moderation decision tail
   * GET /v1/ops/moderation-stats      (A-44) — moderation rate rollup
+  * GET /v1/ops/token-cost-daily      (A-45) — token spend per UTC day
 
 Every endpoint here is gated by `require_ops_token` (A-41), which
 checks the `X-Ops-Token` header. The dep fails closed when
@@ -17,19 +18,22 @@ files under the same prefix.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 
 from fastapi import APIRouter, Depends, Query
 
 from app.schemas.moderation import ModerationVerdict
 from app.schemas.ops import (
     MAX_MODERATION_EVENTS_LIMIT,
+    MAX_TOKEN_COST_DAILY_DAYS,
     ModerationEventEntry,
     ModerationEventsResponse,
     ModerationStatsBreakdownEntry,
     ModerationStatsResponse,
     ModerationStatsTotals,
     TokenCostBreakdownEntry,
+    TokenCostDailyEntry,
+    TokenCostDailyResponse,
     TokenCostResponse,
     TokenCostTotals,
     TokenCostWindow,
@@ -37,6 +41,8 @@ from app.schemas.ops import (
 from app.services.llm_calls import (
     LLMCallAggregate,
     LLMCallBreakdownEntry,
+    LLMCallDailyAggregate,
+    LLMCallDailyEntry,
     LLMCallRepository,
     get_llm_call_repository,
 )
@@ -356,6 +362,100 @@ def _build_stats_response(
 
 def _stats_entry(entry: RepoStatsBreakdownEntry) -> ModerationStatsBreakdownEntry:
     return ModerationStatsBreakdownEntry(key=entry.key, count=entry.count)
+
+
+# --- A-45 token-cost daily time series ---
+
+
+@router.get(
+    "/token-cost-daily",
+    response_model=TokenCostDailyResponse,
+    summary="Per-user token spend bucketed by UTC day",
+    description=(
+        "Returns N consecutive UTC-day buckets ending today (the "
+        "today bucket is partial, with `until` set to request time). "
+        "Days with no calls appear with zero totals so a chart line "
+        "renders without gaps. The headline `totals` equals the sum "
+        f"across the daily buckets. Max `days` is {MAX_TOKEN_COST_DAILY_DAYS}."
+    ),
+    responses={
+        401: {"description": "missing or wrong X-Ops-Token header"},
+        503: {"description": "ops endpoints disabled (OPS_API_TOKEN unset)"},
+    },
+    dependencies=[Depends(require_ops_token)],
+)
+async def get_token_cost_daily(
+    user_id: str = Query(
+        ...,
+        min_length=1,
+        description="The user whose daily spend to roll up.",
+        examples=["u_018f3a8b1c2d7e3a"],
+    ),
+    days: int = Query(
+        default=7,
+        ge=1,
+        le=MAX_TOKEN_COST_DAILY_DAYS,
+        description=(
+            "Number of UTC-day buckets to return, ending today. "
+            f"1 = today only; default 7 = week view; max {MAX_TOKEN_COST_DAILY_DAYS}."
+        ),
+    ),
+    repo: LLMCallRepository = Depends(_get_repo),
+) -> TokenCostDailyResponse:
+    """Resolve the window to UTC-midnight-aligned `since` + `until=now`,
+    call the repo, repackage the per-day aggregate as the wire schema,
+    stamp `generated_at`."""
+    now = datetime.now(UTC)
+    # Align `since` to UTC midnight `days-1` days back so the window
+    # covers exactly `days` buckets. The today bucket is partial — that
+    # matches what an ops dashboard expects ("today so far").
+    start_date = now.date() - timedelta(days=days - 1)
+    since = datetime.combine(start_date, time.min, tzinfo=UTC)
+    until = now
+
+    aggregate = await repo.aggregate_by_user_per_day(user_id, since=since, until=until)
+    return _build_daily_response(aggregate=aggregate, days=days, generated_at=now)
+
+
+def _build_daily_response(
+    *,
+    aggregate: LLMCallDailyAggregate,
+    days: int,
+    generated_at: datetime,
+) -> TokenCostDailyResponse:
+    """Repackage the repo's daily aggregate as the wire schema.
+
+    `days` is the requested-and-resolved bucket count from the route.
+    It matches `len(aggregate.daily)` by construction (the repo
+    zero-fills missing days across `[since.date(), until.date()]`),
+    so we surface the caller's input verbatim in the response.
+    """
+    return TokenCostDailyResponse(
+        user_id=aggregate.user_id,
+        days=days,
+        since=aggregate.since,
+        until=aggregate.until,
+        totals=TokenCostTotals(
+            call_count=aggregate.totals.call_count,
+            prompt_tokens=aggregate.totals.prompt_tokens,
+            completion_tokens=aggregate.totals.completion_tokens,
+            total_tokens=aggregate.totals.total_tokens,
+        ),
+        daily=[_daily_entry(e) for e in aggregate.daily],
+        generated_at=generated_at,
+    )
+
+
+def _daily_entry(entry: LLMCallDailyEntry) -> TokenCostDailyEntry:
+    return TokenCostDailyEntry(
+        day=entry.day,
+        totals=TokenCostTotals(
+            call_count=entry.totals.call_count,
+            prompt_tokens=entry.totals.prompt_tokens,
+            completion_tokens=entry.totals.completion_tokens,
+            total_tokens=entry.totals.total_tokens,
+        ),
+    )
 
 
 __all__ = ["router"]

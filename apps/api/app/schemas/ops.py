@@ -17,7 +17,7 @@ the JSON field at the same time.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -169,6 +169,57 @@ class ModerationEventsResponse(BaseModel):
     generated_at: datetime
 
 
+# --- A-45 token-cost daily time series ---
+
+
+# Hard cap on the requested window. 90 covers a quarterly view, which
+# is the longest range an ops chart typically renders before falling
+# back to monthly aggregates. Pinning a ceiling keeps a runaway
+# `?days=10000` from hauling years of history into one response.
+MAX_TOKEN_COST_DAILY_DAYS = 90
+
+
+class TokenCostDailyEntry(BaseModel):
+    """One UTC-day bucket in a daily time series.
+
+    `day` serializes as `YYYY-MM-DD` (Pydantic's default for `date`)
+    — calendar boundaries are the unit the dashboard chart renders,
+    keeping JSON consumers from having to slice ISO timestamps. The
+    timezone is always UTC; the PRD's display-in-Asia/Shanghai rule
+    is a render-side concern, not a wire-shape one.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    day: date
+    totals: TokenCostTotals
+
+
+class TokenCostDailyResponse(BaseModel):
+    """Per-day token spend over a rolling N-day window.
+
+    `daily` always contains exactly `days` entries — one per UTC day
+    in `[since, until)` — in chronological order. Days with no calls
+    appear with zeroed totals so the chart line has a stable x-axis
+    from day one (no gaps where the user happened to be quiet).
+
+    `totals` is the sum across all daily buckets. Pinned invariant:
+    `totals.total_tokens == sum(d.totals.total_tokens for d in daily)`.
+    Without this the headline number and the chart sum can drift
+    apart, and the dashboard loses trust the moment they disagree.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: str = Field(min_length=1)
+    days: int = Field(ge=1, le=MAX_TOKEN_COST_DAILY_DAYS)
+    since: datetime
+    until: datetime
+    totals: TokenCostTotals
+    daily: list[TokenCostDailyEntry]
+    generated_at: datetime
+
+
 # --- A-44 moderation rate stats ---
 
 
@@ -244,12 +295,15 @@ class ModerationStatsResponse(BaseModel):
 
 __all__ = [
     "MAX_MODERATION_EVENTS_LIMIT",
+    "MAX_TOKEN_COST_DAILY_DAYS",
     "ModerationEventEntry",
     "ModerationEventsResponse",
     "ModerationStatsBreakdownEntry",
     "ModerationStatsResponse",
     "ModerationStatsTotals",
     "TokenCostBreakdownEntry",
+    "TokenCostDailyEntry",
+    "TokenCostDailyResponse",
     "TokenCostResponse",
     "TokenCostTotals",
     "TokenCostWindow",
