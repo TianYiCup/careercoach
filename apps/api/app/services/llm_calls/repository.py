@@ -168,6 +168,17 @@ class LLMCallRepository(Protocol):
         until: datetime,
     ) -> LLMCallDailyAggregate: ...
 
+    async def list_calls(
+        self,
+        *,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        user_id: str | None = None,
+        surface: str | None = None,
+        model: str | None = None,
+        limit: int = 50,
+    ) -> list[LLMCallRecord]: ...
+
 
 class InMemoryLLMCallRepository:
     """List-backed store. Single uvicorn worker is the only writer in
@@ -217,6 +228,32 @@ class InMemoryLLMCallRepository:
             if rec.user_id == user_id and _within_window(rec.created_at, since, until)
         ]
         return _build_daily_aggregate(matching, user_id=user_id, since=since, until=until)
+
+    async def list_calls(
+        self,
+        *,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        user_id: str | None = None,
+        surface: str | None = None,
+        model: str | None = None,
+        limit: int = 50,
+    ) -> list[LLMCallRecord]:
+        matching = [
+            rec
+            for rec in self._records
+            if _matches_call_filters(
+                rec,
+                since=since,
+                until=until,
+                user_id=user_id,
+                surface=surface,
+                model=model,
+            )
+        ]
+        # Newest-first to match the Postgres ORDER BY contract.
+        matching.sort(key=lambda r: r.created_at, reverse=True)
+        return matching[:limit]
 
 
 class PostgresLLMCallRepository:
@@ -313,6 +350,31 @@ class PostgresLLMCallRepository:
         records = [_model_to_record(row) for row in rows]
         return _build_daily_aggregate(records, user_id=user_id, since=since, until=until)
 
+    async def list_calls(
+        self,
+        *,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        user_id: str | None = None,
+        surface: str | None = None,
+        model: str | None = None,
+        limit: int = 50,
+    ) -> list[LLMCallRecord]:
+        stmt = select(LLMCall).order_by(LLMCall.created_at.desc()).limit(limit)
+        if since is not None:
+            stmt = stmt.where(LLMCall.created_at >= since)
+        if until is not None:
+            stmt = stmt.where(LLMCall.created_at < until)
+        if user_id is not None:
+            stmt = stmt.where(LLMCall.user_id == user_id)
+        if surface is not None:
+            stmt = stmt.where(LLMCall.surface == surface)
+        if model is not None:
+            stmt = stmt.where(LLMCall.model == model)
+        async with self._session_factory() as session:
+            rows = (await session.execute(stmt)).scalars().all()
+        return [_model_to_record(row) for row in rows]
+
     async def _query_breakdown(
         self,
         session: AsyncSession,
@@ -363,6 +425,31 @@ def _within_window(
     if since is not None and created_at < since:
         return False
     return not (until is not None and created_at >= until)
+
+
+def _matches_call_filters(
+    record: LLMCallRecord,
+    *,
+    since: datetime | None,
+    until: datetime | None,
+    user_id: str | None,
+    surface: str | None,
+    model: str | None,
+) -> bool:
+    """Composable AND-filter for the in-memory `list_calls` path.
+
+    Mirrors the WHERE-clause set on the Postgres impl so both
+    backends return the same matches regardless of which one the
+    factory wires up. Empty filters (None) match everything for
+    that dimension.
+    """
+    if not _within_window(record.created_at, since, until):
+        return False
+    if user_id is not None and record.user_id != user_id:
+        return False
+    if surface is not None and record.surface != surface:
+        return False
+    return not (model is not None and record.model != model)
 
 
 def _sum_totals(records: list[LLMCallRecord]) -> LLMCallTotals:

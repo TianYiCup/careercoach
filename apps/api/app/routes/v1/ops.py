@@ -6,6 +6,7 @@ Endpoints in this namespace (all gated by `require_ops_token`, A-41):
   * GET /v1/ops/moderation-events     (A-43) — moderation decision tail
   * GET /v1/ops/moderation-stats      (A-44) — moderation rate rollup
   * GET /v1/ops/token-cost-daily      (A-45) — token spend per UTC day
+  * GET /v1/ops/llm-calls             (A-46) — LLM call tail (drill-down)
 
 Every endpoint here is gated by `require_ops_token` (A-41), which
 checks the `X-Ops-Token` header. The dep fails closed when
@@ -24,8 +25,12 @@ from fastapi import APIRouter, Depends, Query
 
 from app.schemas.moderation import ModerationVerdict
 from app.schemas.ops import (
+    MAX_LLM_CALLS_LIMIT,
     MAX_MODERATION_EVENTS_LIMIT,
     MAX_TOKEN_COST_DAILY_DAYS,
+    LLMCallEntry,
+    LLMCallsResponse,
+    LLMCallSurface,
     ModerationEventEntry,
     ModerationEventsResponse,
     ModerationStatsBreakdownEntry,
@@ -43,6 +48,7 @@ from app.services.llm_calls import (
     LLMCallBreakdownEntry,
     LLMCallDailyAggregate,
     LLMCallDailyEntry,
+    LLMCallRecord,
     LLMCallRepository,
     get_llm_call_repository,
 )
@@ -455,6 +461,119 @@ def _daily_entry(entry: LLMCallDailyEntry) -> TokenCostDailyEntry:
             completion_tokens=entry.totals.completion_tokens,
             total_tokens=entry.totals.total_tokens,
         ),
+    )
+
+
+# --- A-46 LLM call tail ---
+
+
+@router.get(
+    "/llm-calls",
+    response_model=LLMCallsResponse,
+    summary="Recent LLM calls (drill-down tail)",
+    description=(
+        "Returns the most recent `llm_calls` rows, newest first. "
+        "The drill-down companion to `/token-cost` and `/token-cost-daily` "
+        "— a chart spike in those endpoints typically leads here to "
+        "see which specific traces drove it. Filters compose "
+        "(`user_id`, `surface`, `model`, `since`, `until`); omit them "
+        f"for an unfiltered tail. Per-page cap is {MAX_LLM_CALLS_LIMIT}."
+    ),
+    responses={
+        401: {"description": "missing or wrong X-Ops-Token header"},
+        503: {"description": "ops endpoints disabled (OPS_API_TOKEN unset)"},
+    },
+    dependencies=[Depends(require_ops_token)],
+)
+async def list_llm_calls(
+    user_id: str | None = Query(
+        default=None,
+        min_length=1,
+        description="Filter to a single user. Omit for tenant-wide tail.",
+        examples=["u_018f3a8b1c2d7e3a"],
+    ),
+    surface: LLMCallSurface | None = Query(
+        default=None,
+        description=(
+            "Filter to one surface (`sandbox` / `review` / `copilot` / "
+            "`agent`). Omit to include every surface."
+        ),
+    ),
+    model: str | None = Query(
+        default=None,
+        min_length=1,
+        description=(
+            "Filter to one vendor model id (e.g. `deepseek-chat`, "
+            "`qwen-max`). String match against the recorded value."
+        ),
+    ),
+    since: datetime | None = Query(
+        default=None,
+        description="Inclusive lower bound on `created_at`. ISO-8601, timezone-aware.",
+    ),
+    until: datetime | None = Query(
+        default=None,
+        description=(
+            "Exclusive upper bound on `created_at` (half-open "
+            "`[since, until)` matches the rollup window semantics)."
+        ),
+    ),
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=MAX_LLM_CALLS_LIMIT,
+        description=(
+            "Per-page cap on rows returned. Default 50 (typical ops "
+            f"tail render); hard max {MAX_LLM_CALLS_LIMIT}."
+        ),
+    ),
+    repo: LLMCallRepository = Depends(_get_repo),
+) -> LLMCallsResponse:
+    """Query the repo, repackage each record as the wire schema,
+    echo back filters, stamp `generated_at`."""
+    now = datetime.now(UTC)
+    records = await repo.list_calls(
+        since=since,
+        until=until,
+        user_id=user_id,
+        surface=surface,
+        model=model,
+        limit=limit,
+    )
+    calls = [_call_entry(r) for r in records]
+    return LLMCallsResponse(
+        since=since,
+        until=until,
+        user_id=user_id,
+        surface=surface,
+        model=model,
+        limit=limit,
+        count=len(calls),
+        calls=calls,
+        generated_at=now,
+    )
+
+
+def _call_entry(record: LLMCallRecord) -> LLMCallEntry:
+    """Repackage a repo record as the wire schema.
+
+    `id` serializes as the UUID's plain hex form (the JSON spec
+    doesn't have a UUID type — keeping it a string everywhere
+    avoids round-trip drift). `surface` is widened to `str` at the
+    dataclass level but constrained back to the Literal at the
+    schema layer; values landed in the table by the
+    `record_generation` callsites and are already from the enum.
+    """
+    return LLMCallEntry(
+        id=str(record.id),
+        trace_id=record.trace_id,
+        user_id=record.user_id,
+        surface=record.surface,
+        model=record.model,
+        prompt_tokens=record.prompt_tokens,
+        completion_tokens=record.completion_tokens,
+        total_tokens=record.total_tokens,
+        created_at=record.created_at,
     )
 
 
