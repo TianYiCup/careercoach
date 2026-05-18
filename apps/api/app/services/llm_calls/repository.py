@@ -20,7 +20,7 @@ from __future__ import annotations
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Protocol, runtime_checkable
 
 from sqlalchemy import Select, func, select
@@ -103,6 +103,43 @@ class LLMCallAggregate:
     by_surface: tuple[LLMCallBreakdownEntry, ...]
 
 
+@dataclass(frozen=True)
+class LLMCallDailyEntry:
+    """One UTC-day bucket in a daily time-series rollup.
+
+    `day` is a calendar date in UTC (PRD §0 stores in UTC, displays in
+    Asia/Shanghai — the time-series uses UTC days as the canonical
+    bucket boundary so dashboards can shift to the local view client-
+    side without re-aggregating).
+    """
+
+    day: date
+    totals: LLMCallTotals
+
+
+@dataclass(frozen=True)
+class LLMCallDailyAggregate:
+    """Per-day rollup across one user × a window covering N UTC days.
+
+    `daily` always contains exactly N entries — one per UTC day in
+    `[since.date(), until.date()]` — in chronological order. Days
+    with no calls appear with `LLMCallTotals.zero()` so a dashboard
+    line chart has a stable x-axis from day one (no gaps where the
+    user happened to be quiet).
+
+    `totals` is the sum across all daily buckets; equals
+    `sum(daily[i].totals.total_tokens)` etc. Pinned as an invariant
+    in tests so the headline number and the chart sum can never
+    drift apart.
+    """
+
+    user_id: str
+    since: datetime
+    until: datetime
+    totals: LLMCallTotals
+    daily: tuple[LLMCallDailyEntry, ...]
+
+
 @runtime_checkable
 class LLMCallRepository(Protocol):
     """Persistence seam — both InMemory and Postgres impls below.
@@ -122,6 +159,14 @@ class LLMCallRepository(Protocol):
         since: datetime | None = None,
         until: datetime | None = None,
     ) -> LLMCallAggregate: ...
+
+    async def aggregate_by_user_per_day(
+        self,
+        user_id: str,
+        *,
+        since: datetime,
+        until: datetime,
+    ) -> LLMCallDailyAggregate: ...
 
 
 class InMemoryLLMCallRepository:
@@ -158,6 +203,20 @@ class InMemoryLLMCallRepository:
             by_model=by_model,
             by_surface=by_surface,
         )
+
+    async def aggregate_by_user_per_day(
+        self,
+        user_id: str,
+        *,
+        since: datetime,
+        until: datetime,
+    ) -> LLMCallDailyAggregate:
+        matching = [
+            rec
+            for rec in self._records
+            if rec.user_id == user_id and _within_window(rec.created_at, since, until)
+        ]
+        return _build_daily_aggregate(matching, user_id=user_id, since=since, until=until)
 
 
 class PostgresLLMCallRepository:
@@ -223,6 +282,36 @@ class PostgresLLMCallRepository:
             completion_tokens=int(row[2]),
             total_tokens=int(row[3]),
         )
+
+    async def aggregate_by_user_per_day(
+        self,
+        user_id: str,
+        *,
+        since: datetime,
+        until: datetime,
+    ) -> LLMCallDailyAggregate:
+        # Fetch matching rows, then bucket in Python.
+        #
+        # Why not SQL DATE_TRUNC: bucketing semantics need timezone-
+        # explicit alignment (UTC midnight) and zero-fill for empty
+        # days. DATE_TRUNC handles the first but not the second, and
+        # the zero-fill loop is the same shape regardless of backend
+        # — so the two paths share `_build_daily_aggregate` for free.
+        # At v0 daily volume (~hundreds of LLM calls per ops query)
+        # the haul-and-bucket cost is negligible. When per-user
+        # volume crosses ~50k rows/query the SUM-by-truncated-day
+        # GROUP BY should land here with the zero-fill staying in
+        # Python.
+        stmt = (
+            select(LLMCall)
+            .where(LLMCall.user_id == user_id)
+            .where(LLMCall.created_at >= since)
+            .where(LLMCall.created_at < until)
+        )
+        async with self._session_factory() as session:
+            rows = (await session.execute(stmt)).scalars().all()
+        records = [_model_to_record(row) for row in rows]
+        return _build_daily_aggregate(records, user_id=user_id, since=since, until=until)
 
     async def _query_breakdown(
         self,
@@ -338,4 +427,70 @@ def _record_to_model(record: LLMCallRecord) -> LLMCall:
         completion_tokens=record.completion_tokens,
         total_tokens=record.total_tokens,
         created_at=record.created_at,
+    )
+
+
+def _model_to_record(model: LLMCall) -> LLMCallRecord:
+    """Inverse of `_record_to_model` — used by the daily aggregate
+    path, which hauls rows and buckets them in Python rather than
+    pushing the bucketing into SQL (see `aggregate_by_user_per_day`
+    docstring on the Postgres impl for the rationale)."""
+    return LLMCallRecord(
+        id=model.id,
+        trace_id=model.trace_id,
+        user_id=model.user_id,
+        surface=model.surface,
+        model=model.model,
+        prompt_tokens=int(model.prompt_tokens),
+        completion_tokens=int(model.completion_tokens),
+        total_tokens=int(model.total_tokens),
+        created_at=model.created_at,
+    )
+
+
+def _build_daily_aggregate(
+    records: list[LLMCallRecord],
+    *,
+    user_id: str,
+    since: datetime,
+    until: datetime,
+) -> LLMCallDailyAggregate:
+    """Bucket records into per-UTC-day totals + zero-fill missing days.
+
+    Both InMemory and Postgres impls call this so a future fix to
+    the bucketing semantics (boundary handling, zero-fill range)
+    lands in both backends at once.
+    """
+    # `until` is exclusive in the WHERE clause; for the bucket range
+    # we want the last day to be the one containing `until` even when
+    # `until` falls on midnight exactly (since the day boundary itself
+    # belongs to the next bucket). The simpler reading: iterate from
+    # the day of `since` to the day of `until - epsilon`, where
+    # epsilon is the smallest representable timedelta.
+    start_day = since.date()
+    # `until - 1 microsecond` is what was in the half-open window. For
+    # a midnight-aligned `until` this is yesterday; for any other
+    # `until` it's the same calendar day. Either way it's the last
+    # bucket that could legitimately contain a record.
+    end_day = (until - timedelta(microseconds=1)).date()
+
+    # Group records by UTC date.
+    by_day: dict[date, list[LLMCallRecord]] = defaultdict(list)
+    for rec in records:
+        by_day[rec.created_at.date()].append(rec)
+
+    # Zero-fill from start_day to end_day inclusive.
+    entries: list[LLMCallDailyEntry] = []
+    cursor = start_day
+    while cursor <= end_day:
+        bucket = by_day.get(cursor, [])
+        entries.append(LLMCallDailyEntry(day=cursor, totals=_sum_totals(bucket)))
+        cursor += timedelta(days=1)
+
+    return LLMCallDailyAggregate(
+        user_id=user_id,
+        since=since,
+        until=until,
+        totals=_sum_totals(records),
+        daily=tuple(entries),
     )

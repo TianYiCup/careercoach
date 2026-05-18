@@ -12,7 +12,7 @@ endpoint with a real DB.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from app.services.llm_calls import (
     InMemoryLLMCallRepository,
@@ -241,3 +241,142 @@ async def test_aggregate_protocol_runtime_checkable() -> None:
 
     repo = InMemoryLLMCallRepository()
     assert isinstance(repo, LLMCallRepository)
+
+
+# --- daily aggregate (A-45) ---
+
+
+def _utc_midnight(d: datetime) -> datetime:
+    """Test helper — derive a clean midnight from any datetime."""
+    return datetime(d.year, d.month, d.day, tzinfo=UTC)
+
+
+async def test_daily_aggregate_returns_exactly_one_entry_per_day_in_window() -> None:
+    """The repo zero-fills every UTC day in `[since.date(),
+    until.date()]` — no gaps. Pinned so a regression that only
+    returned active days would surface here, not in a dashboard
+    chart with a broken x-axis."""
+    repo = InMemoryLLMCallRepository()
+    since = _utc_midnight(_NOW) - timedelta(days=6)  # 7 days ending today
+    until = _NOW
+
+    agg = await repo.aggregate_by_user_per_day("u_demo", since=since, until=until)
+
+    assert len(agg.daily) == 7
+    # Chronological order: oldest first.
+    days = [e.day for e in agg.daily]
+    assert days == sorted(days)
+    assert days[0] == since.date()
+    assert days[-1] == until.date()
+
+
+async def test_daily_aggregate_empty_user_returns_all_zero_buckets() -> None:
+    """No calls → N zero-totals entries. The chart line stays flat at
+    zero rather than 404-ing or missing the days."""
+    repo = InMemoryLLMCallRepository()
+    since = _utc_midnight(_NOW) - timedelta(days=2)
+    until = _NOW
+
+    agg = await repo.aggregate_by_user_per_day("u_demo", since=since, until=until)
+
+    assert len(agg.daily) == 3
+    assert all(e.totals == LLMCallTotals.zero() for e in agg.daily)
+    assert agg.totals == LLMCallTotals.zero()
+
+
+async def test_daily_aggregate_buckets_records_by_utc_date() -> None:
+    repo = InMemoryLLMCallRepository()
+    day_a = datetime(2026, 5, 15, 8, 0, tzinfo=UTC)
+    day_b = datetime(2026, 5, 17, 12, 0, tzinfo=UTC)
+    await repo.insert(_record(prompt=100, completion=50, created_at=day_a))
+    await repo.insert(_record(prompt=200, completion=100, created_at=day_a))
+    await repo.insert(_record(prompt=30, completion=20, created_at=day_b))
+
+    agg = await repo.aggregate_by_user_per_day(
+        "u_demo",
+        since=datetime(2026, 5, 15, 0, 0, tzinfo=UTC),
+        until=datetime(2026, 5, 18, 0, 0, tzinfo=UTC),
+    )
+
+    by_date = {e.day: e.totals for e in agg.daily}
+    # Day A: 2 calls, 450 tokens; Day B (5-17): 1 call, 50 tokens;
+    # Day in-between (5-16): zero-filled.
+    assert by_date[date(2026, 5, 15)].call_count == 2
+    assert by_date[date(2026, 5, 15)].total_tokens == 450
+    assert by_date[date(2026, 5, 16)] == LLMCallTotals.zero()
+    assert by_date[date(2026, 5, 17)].call_count == 1
+    assert by_date[date(2026, 5, 17)].total_tokens == 50
+
+
+async def test_daily_aggregate_totals_equal_sum_of_daily_buckets() -> None:
+    """Headline invariant: the rollup `totals` MUST equal the sum
+    of the per-day totals. Dashboards lose trust the moment the
+    headline number disagrees with the chart sum."""
+    repo = InMemoryLLMCallRepository()
+    base = datetime(2026, 5, 15, 12, 0, tzinfo=UTC)
+    await repo.insert(_record(prompt=10, completion=5, created_at=base))
+    await repo.insert(_record(prompt=20, completion=10, created_at=base + timedelta(days=1)))
+    await repo.insert(_record(prompt=30, completion=15, created_at=base + timedelta(days=2)))
+
+    agg = await repo.aggregate_by_user_per_day(
+        "u_demo",
+        since=datetime(2026, 5, 15, 0, 0, tzinfo=UTC),
+        until=datetime(2026, 5, 18, 0, 0, tzinfo=UTC),
+    )
+
+    daily_sum = sum(e.totals.total_tokens for e in agg.daily)
+    assert agg.totals.total_tokens == daily_sum == 90
+    daily_call_sum = sum(e.totals.call_count for e in agg.daily)
+    assert agg.totals.call_count == daily_call_sum == 3
+
+
+async def test_daily_aggregate_filters_other_users() -> None:
+    """Cross-tenant isolation at the daily path — same pin as
+    `aggregate_by_user` but for the time-series query."""
+    repo = InMemoryLLMCallRepository()
+    when = datetime(2026, 5, 17, 12, 0, tzinfo=UTC)
+    await repo.insert(_record(user_id="u_alice", prompt=100, completion=50, created_at=when))
+    await repo.insert(_record(user_id="u_bob", prompt=999, completion=999, created_at=when))
+
+    agg = await repo.aggregate_by_user_per_day(
+        "u_alice",
+        since=datetime(2026, 5, 17, 0, 0, tzinfo=UTC),
+        until=datetime(2026, 5, 18, 0, 0, tzinfo=UTC),
+    )
+
+    assert agg.totals.total_tokens == 150
+    assert agg.daily[0].totals.total_tokens == 150
+
+
+async def test_daily_aggregate_excludes_records_outside_window() -> None:
+    """Half-open `[since, until)` matches `aggregate_by_user` semantics."""
+    repo = InMemoryLLMCallRepository()
+    before = datetime(2026, 5, 10, 12, 0, tzinfo=UTC)
+    inside = datetime(2026, 5, 16, 12, 0, tzinfo=UTC)
+    on_until = datetime(2026, 5, 18, 0, 0, tzinfo=UTC)  # exactly the until boundary
+    await repo.insert(_record(prompt=999, completion=999, created_at=before))
+    await repo.insert(_record(prompt=10, completion=10, created_at=inside))
+    await repo.insert(_record(prompt=888, completion=888, created_at=on_until))
+
+    agg = await repo.aggregate_by_user_per_day(
+        "u_demo",
+        since=datetime(2026, 5, 15, 0, 0, tzinfo=UTC),
+        until=datetime(2026, 5, 18, 0, 0, tzinfo=UTC),
+    )
+
+    # Only the inside record contributes.
+    assert agg.totals.call_count == 1
+    assert agg.totals.total_tokens == 20
+
+
+async def test_daily_aggregate_single_day_window() -> None:
+    """`days=1` is the smallest legal window. Pin that the math
+    doesn't off-by-one — should return 1 bucket covering today."""
+    repo = InMemoryLLMCallRepository()
+    since = _utc_midnight(_NOW)
+    until = _NOW
+
+    agg = await repo.aggregate_by_user_per_day("u_demo", since=since, until=until)
+
+    assert len(agg.daily) == 1
+    assert agg.daily[0].day == until.date()
