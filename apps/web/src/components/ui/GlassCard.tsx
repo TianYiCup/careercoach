@@ -16,7 +16,7 @@ interface GlassCardProps {
 export function GlassCard({ children, className, glow = false, style }: GlassCardProps) {
   return (
     <div
-      className={clsx('glass rounded-radius-md p-4', glow && 'glow-purple', className)}
+      className={clsx('glass rounded-radius-md p-4 glass-hover', glow && 'glow-purple', className)}
       style={style}
     >
       {children}
