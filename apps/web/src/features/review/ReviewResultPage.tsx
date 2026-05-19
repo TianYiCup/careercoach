@@ -84,6 +84,10 @@ export function ReviewResultPage({
   const opponentTurns = data.turns.filter((t) => t.speaker === 'opponent')
   const loseTurns = data.turns.filter((t) => t.verdict === 'lose')
 
+  // Dynamic mascot: high score → godlike, many losses → caring, mixed → thinking
+  const loseRatio = data.turns.length > 0 ? loseTurns.length / data.turns.length : 0
+  const resultExpression = loseRatio > 0.4 ? 'caring' : loseRatio === 0 ? 'godlike' : 'confident'
+
   return (
     <div className="relative min-h-screen flex flex-col overflow-hidden">
       <BlobBackground />
@@ -98,7 +102,7 @@ export function ReviewResultPage({
           ← 返回
         </button>
         <div className="flex items-center gap-2">
-          <MascotReaction expression="confident" size="sm" />
+          <MascotReaction expression={resultExpression} size="sm" />
           <span className="text-sm font-body text-ink-text">
             K 来扒一扒
           </span>
