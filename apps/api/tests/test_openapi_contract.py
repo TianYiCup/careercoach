@@ -43,6 +43,8 @@ REQUIRED_ENDPOINTS: set[tuple[str, str]] = {
     ("get", "/v1/ops/llm-calls"),
     # R3-1: daily mood check-in (PRD §7.11). Plain JWT auth, no LLM path.
     ("post", "/v1/vibe/today"),
+    # R3-2: practice-streak counter (PRD §7.11). Read-only, plain JWT.
+    ("get", "/v1/streak"),
 }
 
 # Endpoints intentionally shipped as 501 stubs so the compliance gates
