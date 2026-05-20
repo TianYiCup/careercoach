@@ -356,7 +356,7 @@ function OpponentBubble({
   isStreaming?: boolean
 }) {
   return (
-    <div className="flex items-start gap-2 max-w-[80%]">
+    <div className="flex items-start gap-2 max-w-[80%] animate-slide-in-left">
       <div className="w-8 h-8 rounded-full bg-ink-card-2 flex items-center justify-center text-xs flex-shrink-0">
         👔
       </div>
@@ -375,7 +375,7 @@ function OpponentBubble({
 /** User chat bubble */
 function UserBubble({ text }: { text: string }) {
   return (
-    <div className="flex items-start gap-2 max-w-[80%] ml-auto flex-row-reverse">
+    <div className="flex items-start gap-2 max-w-[80%] ml-auto flex-row-reverse animate-slide-in-right">
       <div className="w-8 h-8 rounded-full gradient-vivid flex items-center justify-center text-xs flex-shrink-0">
         我
       </div>
@@ -555,7 +555,7 @@ function HomePage({
 
       {/* Top-right: nickname + 退出 */}
       {user && (
-        <div className="relative z-10 self-end flex items-center gap-3 text-xs font-body">
+        <div className="relative z-10 self-end flex items-center gap-3 text-xs font-body animate-fade-in">
           <span className="text-ink-text-2">{user.nickname}</span>
           <button
             type="button"
@@ -567,7 +567,7 @@ function HomePage({
         </div>
       )}
 
-      <div className="relative z-10 text-center max-w-lg mt-8">
+      <div className="relative z-10 text-center max-w-lg mt-8 animate-slide-up" style={{ animationDelay: '0ms' }}>
         <MascotReaction expression="confident" size="lg" showLabel />
         <h1 className="mt-6 text-5xl md:text-6xl font-display italic tracking-tight text-gradient-vivid">
           CareerCoach AI
@@ -584,7 +584,7 @@ function HomePage({
           <StreakFire days={12} />
         </div>
       </div>
-      <div className="relative z-10 mt-12 w-full max-w-3xl space-y-6">
+      <div className="relative z-10 mt-12 w-full max-w-3xl space-y-6 animate-slide-up" style={{ animationDelay: '150ms' }}>
         <GlassCard className="text-center">
           <p className="text-sm text-ink-text-2 mb-3">选择体验</p>
           <div className="flex flex-wrap items-center justify-center gap-3">

@@ -167,3 +167,60 @@
 @utility animate-fade-in {
   animation: fadeIn 200ms var(--ease-out) both;
 }
+
+/* ── Stagger entrance for page sections ── */
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@utility animate-slide-up {
+  animation: slideUp 400ms var(--ease-out) both;
+}
+
+/* ── Chat bubble slide-in from side ── */
+@keyframes slideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@utility animate-slide-in-left {
+  animation: slideInLeft 250ms var(--ease-out) both;
+}
+
+@utility animate-slide-in-right {
+  animation: slideInRight 250ms var(--ease-out) both;
+}
+
+/* ── GlassCard hover glow ── */
+@utility glass-hover {
+  transition: box-shadow 200ms ease, border-color 200ms ease;
+}
+
+.glass-hover:hover {
+  box-shadow: 0 0 24px rgba(108, 77, 255, 0.3);
+  border-color: rgba(108, 77, 255, 0.3);
+}
