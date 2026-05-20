@@ -16,6 +16,8 @@ repository protocol where it's not needed.
 
 from functools import lru_cache
 
+from app.llm.factory import get_llm_router
+from app.observability.langfuse import get_langfuse_client
 from app.services.moderation import get_moderation_service
 from app.services.scenarios.custom import (
     CustomScenarioBlockedError,
@@ -45,8 +47,14 @@ def get_scenario_service() -> ScenarioService:
 @lru_cache(maxsize=1)
 def get_custom_scenario_service() -> CustomScenarioService:
     """Default wiring for `POST /v1/scenarios/custom`. Singleton so the
-    per-user daily quota counter is shared across requests."""
-    return CustomScenarioService(moderation=get_moderation_service())
+    per-user daily quota counter is shared across requests. `langfuse_
+    client` is `None` when LANGFUSE_* keys are unset — the trace path
+    is a no-op then, same as the sandbox/turn services."""
+    return CustomScenarioService(
+        moderation=get_moderation_service(),
+        llm=get_llm_router(),
+        langfuse_client=get_langfuse_client(),
+    )
 
 
 __all__ = [
