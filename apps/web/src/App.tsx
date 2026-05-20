@@ -549,6 +549,7 @@ function HomePage({
   onNavigate: (page: Page) => void
 }) {
   const { user, logout } = useAuth()
+  const isMinor = user?.is_minor ?? false
   return (
     <div className="relative min-h-screen flex flex-col items-center px-4 py-12 overflow-hidden">
       <BlobBackground />
@@ -595,13 +596,23 @@ function HomePage({
             >
               🥊 沙盘对练
             </button>
-            <button
-              type="button"
-              onClick={() => onNavigate('copilot')}
-              className="px-6 py-3 rounded-radius-md gradient-vivid text-white font-body font-medium hover:scale-105 transition-transform shadow-[0_0_20px_rgba(124,58,237,0.3)]"
-            >
-              🎧 实战副驾
-            </button>
+            {/* PRD §1.5: minors cannot use copilot (real-time audio recording) */}
+            {isMinor ? (
+              <span
+                className="px-6 py-3 rounded-radius-md bg-ink-card/40 border border-ink-line text-ink-text-3 font-body font-medium cursor-not-allowed"
+                title="未成年人暂不开放此功能"
+              >
+                🎧 实战副驾（未开放）
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onNavigate('copilot')}
+                className="px-6 py-3 rounded-radius-md gradient-vivid text-white font-body font-medium hover:scale-105 transition-transform shadow-[0_0_20px_rgba(124,58,237,0.3)]"
+              >
+                🎧 实战副驾
+              </button>
+            )}
             <button
               type="button"
               onClick={() => onNavigate('reviewUpload' as Page)}

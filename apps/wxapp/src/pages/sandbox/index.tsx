@@ -339,15 +339,55 @@ export default function SandboxPage() {
           </View>
         )}
 
-        {/* Score result */}
+        {/* Score result — B-9 aligned with web ScorePage */}
         {state.score && (
-          <View className="sandbox-score-card">
-            <Text className="sandbox-score-result">
-              {state.score.score.result === 'shenfeng' ? '✨ 封神' : state.score.score.result === 'fanche' ? '💥 翻车' : '🌀 路过'}
-            </Text>
-            <Text className="sandbox-score-highlight">
-              {state.score.score.highlights}
-            </Text>
+          <View className="sandbox-score">
+            {/* Result emoji + verdict */}
+            <View className="sandbox-score-header">
+              <Text className="sandbox-score-emoji">
+                {state.score.score.result === 'shenfeng' ? '✨' : state.score.score.result === 'fanche' ? '💥' : '🌀'}
+              </Text>
+              <Text className="sandbox-score-verdict">
+                {state.score.score.result === 'shenfeng' ? '封神' : state.score.score.result === 'fanche' ? '翻车' : '路过'}
+              </Text>
+            </View>
+
+            {/* Five-dimension score bars — replacement for radar chart */}
+            <View className="sandbox-score-dims">
+              {[
+                { label: '气场', value: state.score.score.aura },
+                { label: '逻辑', value: state.score.score.logic },
+                { label: '共情', value: state.score.score.emotion },
+                { label: '专业', value: state.score.score.professionalism },
+                { label: '目标', value: state.score.score.goal_achieve },
+              ].map((dim) => (
+                <View key={dim.label} className="sandbox-score-dim">
+                  <Text className="sandbox-score-dim-label">{dim.label}</Text>
+                  <View className="sandbox-score-dim-bar">
+                    <View
+                      className="sandbox-score-dim-fill"
+                      style={{ width: `${dim.value * 10}%` }}
+                    />
+                  </View>
+                  <Text className="sandbox-score-dim-value">{dim.value}</Text>
+                </View>
+              ))}
+            </View>
+
+            {/* Highlights & failures */}
+            {state.score.score.highlights && (
+              <View className="sandbox-score-card sandbox-score-card--green">
+                <Text className="sandbox-score-card-label">K 说你棒的地方</Text>
+                <Text className="sandbox-score-card-text">{state.score.score.highlights}</Text>
+              </View>
+            )}
+            {state.score.score.failures && (
+              <View className="sandbox-score-card sandbox-score-card--orange">
+                <Text className="sandbox-score-card-label">可以更好的地方</Text>
+                <Text className="sandbox-score-card-text">{state.score.score.failures}</Text>
+              </View>
+            )}
+
             <View className="sandbox-score-btn" onClick={() => Taro.navigateBack()}>
               <Text className="sandbox-score-btn-text">返回首页</Text>
             </View>
