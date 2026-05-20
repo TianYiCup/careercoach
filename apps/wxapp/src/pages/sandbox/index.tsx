@@ -41,6 +41,8 @@ interface SessionState {
   score: EndSessionResponse | null
   started: boolean
   error: string | null
+  /** Moderation redirect resource (crisis hotline) — PRD §3.0.5 */
+  redirectResource: { title: string; url: string } | null
 }
 
 const INITIAL_STATE: SessionState = {
@@ -55,6 +57,7 @@ const INITIAL_STATE: SessionState = {
   score: null,
   started: false,
   error: null,
+  redirectResource: null,
 }
 
 // --- Component ---
@@ -142,6 +145,28 @@ export default function SandboxPage() {
                 turnsUsed: frame.data.turns_used,
                 turnsLeft: frame.data.turns_left,
               }
+            case 'moderation': {
+              if (frame.data.verdict === 'redirect' && frame.data.redirect_resource) {
+                return {
+                  ...s,
+                  isStreaming: false,
+                  streamingText: '',
+                  redirectResource: frame.data.redirect_resource,
+                }
+              }
+              if (frame.data.verdict === 'block') {
+                return {
+                  ...s,
+                  isStreaming: false,
+                  streamingText: '',
+                  messages: [
+                    ...s.messages,
+                    { role: 'opponent' as const, text: '（对话内容未通过审核，请换一个话题）' },
+                  ],
+                }
+              }
+              return s
+            }
             default:
               return s
           }
@@ -423,6 +448,28 @@ export default function SandboxPage() {
             onClick={handleSend}
           >
             <Text className="sandbox-send-btn-text">🎤</Text>
+          </View>
+        </View>
+      )}
+
+      {/* Moderation redirect — crisis hotline. PRD §3.0.5 */}
+      {state.redirectResource && (
+        <View className="sandbox-modal-overlay">
+          <View className="sandbox-modal">
+            <Text className="sandbox-modal-title">{state.redirectResource.title}</Text>
+            <Text className="sandbox-modal-desc" onClick={() => {
+              Taro.setClipboardData({ data: state.redirectResource!.url })
+            }}>
+              复制求助链接
+            </Text>
+            <View className="sandbox-modal-actions">
+              <View
+                className="sandbox-modal-confirm"
+                onClick={() => setState((s) => ({ ...s, redirectResource: null }))}
+              >
+                <Text>关闭</Text>
+              </View>
+            </View>
           </View>
         </View>
       )}

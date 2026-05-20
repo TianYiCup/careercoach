@@ -17,6 +17,8 @@ import { clearAuthUser } from '../utils/auth-user'
 
 export type ToneLevel = 'safe' | 'aggro' | 'fun'
 export type ScoreResult = 'shenfeng' | 'guolu' | 'fanche'
+export type ModerationVerdict = 'allow' | 'warn' | 'redirect' | 'block'
+export type ModerationCategory = 'self_harm' | 'violence' | 'loan' | 'harassment' | 'political' | 'other'
 
 export interface CreateSessionResponse {
   session_id: string
@@ -39,11 +41,19 @@ export interface EndSessionResponse {
   weakness_updates: { tag: string; delta: number }[]
 }
 
+export interface ModerationFrameData {
+  verdict: ModerationVerdict
+  categories: ModerationCategory[]
+  score: number
+  redirect_resource?: { title: string; url: string } | null
+}
+
 export type SseEventFrame =
   | { event: 'opponent.delta'; data: { text: string } }
   | { event: 'opponent.done'; data: { turn_id: string; full_text: string } }
   | { event: 'coach.hint'; data: { safe: string; aggressive: string; humor: string } }
   | { event: 'meta'; data: { turns_used: number; turns_left: number } }
+  | { event: 'moderation'; data: ModerationFrameData }
 
 export interface ChatMessage {
   role: 'opponent' | 'user'
@@ -167,6 +177,8 @@ export function parseSseChunk(chunk: string): SseEventFrame[] {
         frames.push({ event: 'coach.hint', data: data as { safe: string; aggressive: string; humor: string } })
       } else if (eventName === 'meta') {
         frames.push({ event: 'meta', data: data as { turns_used: number; turns_left: number } })
+      } else if (eventName === 'moderation') {
+        frames.push({ event: 'moderation', data: data as ModerationFrameData })
       }
     } catch {
       // Skip unparseable chunks silently
