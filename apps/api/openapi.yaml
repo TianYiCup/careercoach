@@ -262,9 +262,10 @@ paths:
       responses:
         '200':
           description: Server-Sent Events stream. Each `data:` line is a JSON `SseEventEnvelope.frame`
-            — a discriminated union over the four event types (`opponent.delta` / `opponent.done` / `coach.hint`
-            / `meta`). Frontend should switch on `event` to pick the matching `data` shape. Wire example
-            in PRD §7.4.
+            — a discriminated union over the five event types (`opponent.delta` / `opponent.done` / `coach.hint`
+            / `meta` / `moderation`). Frontend should switch on `event` to pick the matching `data` shape.
+            A `moderation` frame (PRD §3.0.5 red-line interception) is the sole frame in the stream when
+            it fires. Wire example in PRD §7.4.
           content:
             application/json:
               schema:
@@ -1010,6 +1011,36 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /v1/vibe/today:
+    post:
+      tags:
+      - vibe
+      summary: Record the caller's mood for today
+      description: 'One check-in per Asia/Shanghai day — a re-POST overwrites it.
+
+        `user_id` comes from the JWT, never the request body.'
+      operationId: set_today_vibe_v1_vibe_today_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetVibeRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VibeResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - JWT: []
 components:
   schemas:
     CoachHintEvent:
@@ -1670,6 +1701,55 @@ components:
         response alone). `limit` is the cap the route applied; `count`
 
         is how many rows actually came back (≤ limit).'
+    ModerationInterceptEvent:
+      properties:
+        verdict:
+          type: string
+          enum:
+          - allow
+          - warn
+          - redirect
+          - block
+          title: Verdict
+          description: Moderation verdict on the user input. `redirect` for crisis content.
+          examples:
+          - redirect
+        categories:
+          items:
+            type: string
+            enum:
+            - self_harm
+            - violence
+            - loan
+            - harassment
+            - political
+            - other
+          type: array
+          title: Categories
+          description: Moderation categories the input tripped.
+          examples:
+          - - self_harm
+        redirect_resource:
+          anyOf:
+          - $ref: '#/components/schemas/RedirectResource'
+          - type: 'null'
+          description: Crisis-line / help resource. Present when verdict == 'redirect'.
+      type: object
+      required:
+      - verdict
+      title: ModerationInterceptEvent
+      description: 'Red-line interception frame (PRD §3.0.5).
+
+
+        Emitted *instead of* a roleplay turn when the user input trips a
+
+        `redirect` verdict — e.g. self-harm content force-interrupts the
+
+        practice (§3.0.5 A) and surfaces a crisis-line resource. When this
+
+        frame fires it is the ONLY frame in the stream: no opponent /
+
+        coach / meta frames follow, and no turn is persisted.'
     ModerationStatsBreakdownEntry:
       properties:
         key:
@@ -2235,6 +2315,25 @@ components:
         `session_id` itself rides in the URL path so frontend can use
 
         `useShareCardForSession(id)` patterns without juggling bodies.'
+    SetVibeRequest:
+      properties:
+        vibe:
+          type: string
+          enum:
+          - fire
+          - tired
+          - anxious
+          - excited
+          - meh
+          title: Vibe
+          description: Today's mood. One of fire / tired / anxious / excited / meh.
+          examples:
+          - fire
+      type: object
+      required:
+      - vibe
+      title: SetVibeRequest
+      description: '`POST /v1/vibe/today` body — PRD §7.11 `{ "vibe": "fire" }`.'
     ShareCardResponse:
       properties:
         card_id:
@@ -2408,6 +2507,7 @@ components:
           - $ref: '#/components/schemas/_OpponentDoneFrame'
           - $ref: '#/components/schemas/_CoachHintFrame'
           - $ref: '#/components/schemas/_MetaFrame'
+          - $ref: '#/components/schemas/_ModerationFrame'
           title: Frame
           description: One frame of the /sessions/{id}/turns SSE stream. The `event` tag selects the matching
             `data` shape.
@@ -2416,6 +2516,7 @@ components:
             mapping:
               coach.hint: '#/components/schemas/_CoachHintFrame'
               meta: '#/components/schemas/_MetaFrame'
+              moderation: '#/components/schemas/_ModerationFrame'
               opponent.delta: '#/components/schemas/_OpponentDeltaFrame'
               opponent.done: '#/components/schemas/_OpponentDoneFrame'
       type: object
@@ -2739,6 +2840,35 @@ components:
       - msg
       - type
       title: ValidationError
+    VibeResponse:
+      properties:
+        vibe:
+          type: string
+          enum:
+          - fire
+          - tired
+          - anxious
+          - excited
+          - meh
+          title: Vibe
+          description: The mood just recorded.
+          examples:
+          - fire
+        logged_date:
+          type: string
+          format: date
+          title: Logged Date
+          description: Asia/Shanghai calendar date the check-in is filed under.
+          examples:
+          - '2026-05-20'
+      type: object
+      required:
+      - vibe
+      - logged_date
+      title: VibeResponse
+      description: 'Confirms the recorded check-in. The home screen uses `vibe` to
+
+        pick 教练 K''s expression and bias scenario recommendations.'
     WeaknessUpdate:
       properties:
         tag:
@@ -2823,6 +2953,19 @@ components:
       required:
       - data
       title: _MetaFrame
+    _ModerationFrame:
+      properties:
+        event:
+          type: string
+          const: moderation
+          title: Event
+          default: moderation
+        data:
+          $ref: '#/components/schemas/ModerationInterceptEvent'
+      type: object
+      required:
+      - data
+      title: _ModerationFrame
     _OpponentDeltaFrame:
       properties:
         event:

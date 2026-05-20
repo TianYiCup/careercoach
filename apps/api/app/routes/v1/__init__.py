@@ -17,6 +17,7 @@ from app.routes.v1 import (
     sessions,
     sharecards,
     users,
+    vibe,
 )
 
 router = APIRouter(prefix="/v1")
@@ -34,5 +35,7 @@ router.include_router(review.router)
 # A-42: ops-only surface (X-Ops-Token gated). First endpoint is
 # /v1/ops/token-cost for per-user LLM spend rollups.
 router.include_router(ops.router)
+# R3-1: daily mood check-in. Plain JWT auth — no age gate (no LLM path).
+router.include_router(vibe.router)
 
 __all__ = ["router"]
