@@ -86,6 +86,9 @@ class Settings(BaseSettings):
     # mark_ended on this same repo.
     copilot_repo_backend: Literal["memory", "postgres"] = Field(default="memory")
 
+    # Vibe (daily mood check-in) persistence — same defaulting rule.
+    vibe_repo_backend: Literal["memory", "postgres"] = Field(default="memory")
+
     # LLM call (per-generation token accounting) persistence — same
     # defaulting rule. A-39 ships the schema + repo; A-40 wires the
     # observability `record_generation` callsites to actually insert.
