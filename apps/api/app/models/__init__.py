@@ -15,6 +15,7 @@ from app.models.streak import Streak
 from app.models.turn import Turn
 from app.models.user import PersonaType, User
 from app.models.vibe_log import VibeLog
+from app.models.weakness import Weakness
 
 __all__ = [
     "CopilotSession",
@@ -31,4 +32,5 @@ __all__ = [
     "Turn",
     "User",
     "VibeLog",
+    "Weakness",
 ]

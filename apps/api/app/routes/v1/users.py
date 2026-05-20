@@ -15,6 +15,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.schemas.auth import SmsVerifyResponse, UpdateBirthYearRequest
+from app.schemas.weakness import WeaknessItem, WeaknessProfileResponse
 from app.services.auth import (
     AuthService,
     CurrentUser,
@@ -22,6 +23,13 @@ from app.services.auth import (
     get_auth_service,
     get_current_user,
 )
+from app.services.scenarios import get_scenario_service
+from app.services.scenarios.service import ScenarioService
+from app.services.weakness import WeaknessService, get_weakness_service
+
+# US-C3: how many scenarios to surface on the weakness profile — a
+# short "train these next" strip, not the full catalog.
+_MAX_RECOMMENDATIONS = 3
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -61,3 +69,30 @@ async def update_birth_year(
                 "message": "user account not found",
             },
         ) from exc
+
+
+@router.get(
+    "/me/weaknesses",
+    response_model=WeaknessProfileResponse,
+    summary="Get the caller's weakness profile + recommended training scenarios",
+)
+async def get_my_weaknesses(
+    weakness_service: WeaknessService = Depends(get_weakness_service),
+    scenario_service: ScenarioService = Depends(get_scenario_service),
+    current: CurrentUser = Depends(get_current_user),
+) -> WeaknessProfileResponse:
+    """弱点画像 (PRD §7.7 / US-C3). The weakness list is empty until the
+    caller's first scored session; `POST /v1/sessions/{id}/end` folds
+    each session's per-tag deltas in. Recommendations fall back to
+    catalog scenarios — weakness-targeted matching is a follow-up.
+
+    No age gate: reading a profile touches no LLM path. `user_id`
+    comes from the JWT."""
+    records = await weakness_service.get_weaknesses(current.user_id)
+    catalog = await scenario_service.list_scenarios(category=None, query=None)
+    return WeaknessProfileResponse(
+        weaknesses=[
+            WeaknessItem(tag=r.tag, frequency=r.frequency, last_seen=r.last_seen) for r in records
+        ],
+        recommended_scenarios=catalog.items[:_MAX_RECOMMENDATIONS],
+    )

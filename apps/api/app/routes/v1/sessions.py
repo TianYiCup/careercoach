@@ -43,6 +43,7 @@ from app.services.sessions import (
 )
 from app.services.sessions.sse import SseFrame, encode_frame
 from app.services.streak import StreakService, get_streak_service
+from app.services.weakness import WeaknessService, get_weakness_service
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -165,10 +166,11 @@ async def post_turn(
 async def end_session(
     session_id: str = Path(..., description="Session id from POST /v1/sessions."),
     service: SessionService = Depends(get_session_service),
+    weakness: WeaknessService = Depends(get_weakness_service),
     user_id: str = Depends(get_current_user_id),
 ) -> EndSessionResponse:
     try:
-        return await service.end_session(session_id, user_id=user_id)
+        result = await service.end_session(session_id, user_id=user_id)
     except SessionNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -185,6 +187,15 @@ async def end_session(
                 "message": f"session {session_id} has already been ended",
             },
         ) from exc
+
+    # R3-3: fold the session's per-tag weakness deltas into the profile
+    # so GET /v1/users/me/weaknesses reflects it. Best-effort — a
+    # weakness-store hiccup must never fail the scorecard return.
+    await weakness.apply_safe(
+        user_id=user_id,
+        tag_deltas={u.tag: u.delta for u in result.weakness_updates},
+    )
+    return result
 
 
 async def _wrap_sse_stream(frames: AsyncIterator[SseFrame]) -> AsyncIterator[bytes]:
