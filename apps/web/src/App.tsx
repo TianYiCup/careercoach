@@ -48,6 +48,7 @@ function SandboxRoom({
     setTone,
     dismissError,
     dismissQuietHours,
+    dismissModeration,
   } = useSandboxSession()
 
   const [input, setInput] = useState('')
@@ -340,6 +341,33 @@ function SandboxRoom({
                 我知道了
               </button>
             </div>
+          </GlassCard>
+        </div>
+      )}
+
+      {/* Moderation redirect — crisis hotline. PRD §3.0.5 red lines. */}
+      {state.redirectResource && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-bg/70 backdrop-blur-sm">
+          <GlassCard className="mx-4 max-w-sm w-full space-y-4 text-center">
+            <MascotReaction expression="caring" size="md" showLabel />
+            <p className="text-lg font-body text-ink-text">
+              {state.redirectResource.title}
+            </p>
+            <a
+              href={state.redirectResource.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-block px-5 py-2 rounded-radius-pill gradient-vivid text-white text-sm font-body font-medium hover:scale-105 transition-transform"
+            >
+              查看求助资源
+            </a>
+            <button
+              type="button"
+              onClick={dismissModeration}
+              className="block mx-auto text-sm text-ink-text-2 hover:text-ink-text transition-colors"
+            >
+              关闭
+            </button>
           </GlassCard>
         </div>
       )}

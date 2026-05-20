@@ -41,11 +41,19 @@ export interface TurnRequest {
 }
 
 // --- SSE Frames ---
+export interface ModerationFrameData {
+  verdict: ModerationVerdict
+  categories: ModerationCategory[]
+  score: number
+  redirect_resource?: { title: string; url: string } | null
+}
+
 export type SseEventFrame =
   | { event: 'opponent.delta'; data: { text: string } }
   | { event: 'opponent.done'; data: { turn_id: string; full_text: string } }
   | { event: 'coach.hint'; data: { safe: string; aggressive: string; humor: string } }
   | { event: 'meta'; data: { turns_used: number; turns_left: number } }
+  | { event: 'moderation'; data: ModerationFrameData }
 
 // --- End Session ---
 export interface Score {

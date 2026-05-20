@@ -39,13 +39,17 @@ export interface SandboxState {
   mascotExpression: MascotExpression
   /** Minor is in quiet hours (22:00-08:00 Asia/Shanghai) — PRD §3.0.5 C */
   isQuietHours: boolean
-  /**
-   * Last user-visible error from startSession / endSession (non-401).
+  /** Last user-visible error from startSession / endSession (non-401).
    * Null when no error is showing. 401s are handled globally by
    * AuthProvider — we skip them here so we don't double-render the
    * "session expired" UI.
    */
   error: string | null
+  /** Moderation redirect resource (crisis hotline, etc.).
+   * Set when SSE delivers a moderation frame with verdict 'redirect'.
+   * PRD §3.0.5 — self_harm / violence red lines.
+   */
+  redirectResource: { title: string; url: string } | null
 }
 
 const INITIAL_STATE: SandboxState = {
@@ -62,6 +66,7 @@ const INITIAL_STATE: SandboxState = {
   mascotExpression: 'confident',
   isQuietHours: false,
   error: null,
+  redirectResource: null,
 }
 
 /**
@@ -212,6 +217,31 @@ export function useSandboxSession() {
                     turnsUsed: frame.data.turns_used,
                     turnsLeft: frame.data.turns_left,
                   }
+                case 'moderation': {
+                  // H-1: Consume moderation frame — show crisis hotline on redirect
+                  if (frame.data.verdict === 'redirect' && frame.data.redirect_resource) {
+                    return {
+                      ...s,
+                      isStreaming: false,
+                      streamingText: '',
+                      redirectResource: frame.data.redirect_resource,
+                    }
+                  }
+                  // 'block' verdict: stop streaming, show generic message
+                  if (frame.data.verdict === 'block') {
+                    return {
+                      ...s,
+                      isStreaming: false,
+                      streamingText: '',
+                      messages: [
+                        ...s.messages,
+                        { role: 'opponent', text: '（对话内容未通过审核，请换一个话题）' },
+                      ],
+                    }
+                  }
+                  // 'allow' / other: no-op
+                  return s
+                }
                 default:
                   return s
               }
@@ -279,6 +309,11 @@ export function useSandboxSession() {
     setState((s) => (s.isQuietHours ? { ...s, isQuietHours: false } : s))
   }, [setState])
 
+  /** Dismiss the moderation redirect banner — user acknowledged. */
+  const dismissModeration = useCallback(() => {
+    setState((s) => (s.redirectResource ? { ...s, redirectResource: null } : s))
+  }, [setState])
+
   /** Set active tone */
   const setTone = useCallback(
     (tone: ToneLevel) => {
@@ -302,5 +337,6 @@ export function useSandboxSession() {
     reset,
     dismissError,
     dismissQuietHours,
+    dismissModeration,
   }
 }
