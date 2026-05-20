@@ -273,17 +273,45 @@ jobs:
         run: echo "::notice::apps/web 还没初始化，跳过 vitest"
 
   # ============================================================
-  # TODO（W1D2 之后启用）
+  # 红线闸门：§3.0.5 200 对抗样本回归（独立命名 job）
   # ============================================================
-  # build-web:
-  #   name: Build Web
-  #   ...
-  # build-wxapp:
-  #   name: Build Wxapp (主包 ≤ 1.5MB)
-  #   ...
-  # red-line-test:
-  #   name: Red-line 200 Adversarial Samples
-  #   ...
-  # llm-regression:
-  #   name: LLM 30-scenario Regression
-  #   ...
+  # The 200-sample moderation regression also runs inside `test-api`
+  # as one of the pytest suite. This job names it as a first-class
+  # gate so a red-line recall regression shows as "Red-line ..." ❌
+  # rather than hiding in a generic "Test API" ❌ among 800+ tests —
+  # and so it can be added to branch protection's required-checks
+  # list explicitly (engineering §3.2 / §3.4). Pure local-dict eval —
+  # no DB / Redis services, ~1s.
+  red-line-test:
+    name: Red-line 200 Adversarial Samples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        run: |
+          if [ -f apps/api/pyproject.toml ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+      - uses: astral-sh/setup-uv@v3
+        if: steps.check.outputs.exists == 'true'
+      - name: Install
+        if: steps.check.outputs.exists == 'true'
+        working-directory: apps/api
+        run: uv sync --frozen
+      - name: Red-line regression (§3.0.5 — recall ≥ 99.5% / FP ≤ 3%)
+        if: steps.check.outputs.exists == 'true'
+        working-directory: apps/api
+        run: uv run --frozen pytest -q --strict-markers tests/test_moderation_regression.py
+      - name: Skip notice
+        if: steps.check.outputs.exists == 'false'
+        run: echo "::notice::apps/api 还没初始化，跳过红线回归"
+
+  # ============================================================
+  # TODO（B 端 / 运维决策后启用）
+  # ============================================================
+  # build-web:      产物 ≤ 2MB — B 端 (apps/web)
+  # build-wxapp:    主包 ≤ 1.5MB（约束 #13）— B 端 (apps/wxapp)，
+  #                 启用前需 B 端确认 wxapp 能干净构建，否则会卡死所有 PR
+  # llm-regression: 30 场景 LLM-judge — 需 CI 配 LLM key + 每次 PR 调用成本
