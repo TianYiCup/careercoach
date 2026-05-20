@@ -11,6 +11,7 @@ from app.models.scenario import Scenario
 from app.models.session import Session
 from app.models.session_score import SessionScore
 from app.models.sharecard import ShareCard
+from app.models.streak import Streak
 from app.models.turn import Turn
 from app.models.user import PersonaType, User
 from app.models.vibe_log import VibeLog
@@ -26,6 +27,7 @@ __all__ = [
     "Session",
     "SessionScore",
     "ShareCard",
+    "Streak",
     "Turn",
     "User",
     "VibeLog",

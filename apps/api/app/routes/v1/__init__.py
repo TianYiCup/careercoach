@@ -16,6 +16,7 @@ from app.routes.v1 import (
     scenarios,
     sessions,
     sharecards,
+    streak,
     users,
     vibe,
 )
@@ -37,5 +38,7 @@ router.include_router(review.router)
 router.include_router(ops.router)
 # R3-1: daily mood check-in. Plain JWT auth — no age gate (no LLM path).
 router.include_router(vibe.router)
+# R3-2: practice-streak counter. Read-only here; advanced by POST /sessions.
+router.include_router(streak.router)
 
 __all__ = ["router"]

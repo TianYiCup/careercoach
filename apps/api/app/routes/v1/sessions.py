@@ -42,6 +42,7 @@ from app.services.sessions import (
     get_turn_service,
 )
 from app.services.sessions.sse import SseFrame, encode_frame
+from app.services.streak import StreakService, get_streak_service
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -54,13 +55,19 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 async def create_session(
     payload: CreateSessionRequest,
     service: SessionService = Depends(get_session_service),
+    streak: StreakService = Depends(get_streak_service),
     current: CurrentUser = Depends(block_minor_quiet_hours),
 ) -> CreateSessionResponse:
     """Starting a session means about to send user content into the
     LLM, so the compulsory age gate fires here. End-session is NOT
     gated — sessions already started must be end-able even if the
     user's age claim somehow regresses."""
-    return await service.create_session(payload, user_id=current.user_id)
+    result = await service.create_session(payload, user_id=current.user_id)
+    # R3-2: starting a session counts as practising today — advance the
+    # streak. Best-effort: a streak-store hiccup must never fail the
+    # session create.
+    await streak.touch_safe(user_id=current.user_id)
+    return result
 
 
 @router.post(

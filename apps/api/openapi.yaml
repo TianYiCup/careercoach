@@ -1041,6 +1041,24 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
       security:
       - JWT: []
+  /v1/streak:
+    get:
+      tags:
+      - streak
+      summary: Get the caller's practice streak
+      description: 'A user who has never practised gets `{current_days: 0, max_days:
+
+        0}`, not a 404. `user_id` comes from the JWT.'
+      operationId: get_streak_v1_streak_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StreakResponse'
+      security:
+      - JWT: []
 components:
   schemas:
     CoachHintEvent:
@@ -2524,6 +2542,28 @@ components:
       - frame
       title: SseEventEnvelope
       description: Wrapper that lets FastAPI register `SseEventFrame` in components/schemas.
+    StreakResponse:
+      properties:
+        current_days:
+          type: integer
+          minimum: 0.0
+          title: Current Days
+          description: Consecutive practice days up to and including today.
+          examples:
+          - 12
+        max_days:
+          type: integer
+          minimum: 0.0
+          title: Max Days
+          description: All-time best streak.
+          examples:
+          - 27
+      type: object
+      required:
+      - current_days
+      - max_days
+      title: StreakResponse
+      description: '`GET /v1/streak` — drives the home screen''s StreakFire counter.'
     TokenCostBreakdownEntry:
       properties:
         key:
