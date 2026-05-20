@@ -14,6 +14,7 @@ from collections.abc import AsyncIterator, Iterator
 
 import pytest
 from app.main import app
+from app.schemas.moderation import RedirectResource
 from app.services.auth import mint_token
 from app.services.moderation import LogOnlyEventSink, ModerationService, NoopBackend
 from app.services.moderation.types import Decision
@@ -37,6 +38,7 @@ from tests.test_sessions_turn_service import _ScriptedProvider
 def _build_services(
     *,
     block_moderation: bool = False,
+    redirect_moderation: bool = False,
 ) -> tuple[SessionService, TurnService]:
     session_repo = InMemorySessionRepository()
     turn_repo = InMemoryTurnRepository()
@@ -67,6 +69,24 @@ def _build_services(
                 return Decision(verdict="block", score=0.99, categories=("other",))
 
         moderation = ModerationService(backend=_BlockingBackend(), event_sink=LogOnlyEventSink())
+    elif redirect_moderation:
+
+        class _RedirectingBackend:
+            name = "test_redirect"
+
+            async def evaluate(self, content: str, context: str) -> Decision:
+                _ = (content, context)
+                return Decision(
+                    verdict="redirect",
+                    score=0.99,
+                    categories=("self_harm",),
+                    redirect_resource=RedirectResource(
+                        title="心理援助 24h 热线",
+                        url="tel:010-82951332",
+                    ),
+                )
+
+        moderation = ModerationService(backend=_RedirectingBackend(), event_sink=LogOnlyEventSink())
     else:
         moderation = ModerationService(backend=NoopBackend(), event_sink=LogOnlyEventSink())
 
@@ -102,6 +122,18 @@ def service_override() -> Iterator[None]:
 @pytest.fixture
 def blocking_service_override() -> Iterator[None]:
     session_svc, turn_svc = _build_services(block_moderation=True)
+    app.dependency_overrides[get_session_service] = lambda: session_svc
+    app.dependency_overrides[get_turn_service] = lambda: turn_svc
+    try:
+        yield
+    finally:
+        for dep in (get_session_service, get_turn_service):
+            app.dependency_overrides.pop(dep, None)
+
+
+@pytest.fixture
+def redirecting_service_override() -> Iterator[None]:
+    session_svc, turn_svc = _build_services(redirect_moderation=True)
     app.dependency_overrides[get_session_service] = lambda: session_svc
     app.dependency_overrides[get_turn_service] = lambda: turn_svc
     try:
@@ -192,6 +224,31 @@ async def test_turns_returns_400_when_moderation_blocks(
     assert resp.status_code == 400
     body = resp.json()
     assert body["code"] == "USER_INPUT_BLOCKED"
+
+
+async def test_turns_redirect_emits_moderation_frame(
+    client: AsyncClient, redirecting_service_override: None
+) -> None:
+    """Self-harm input → verdict=redirect: H-1 streams a single
+    `moderation` frame carrying the crisis resource (PRD §3.0.5 A) and
+    no opponent reply. The response is still a 200 SSE stream — the
+    frontend's `moderation` SSE handler renders the help card."""
+    _ = redirecting_service_override
+    session_id = await _create_session(client)
+    resp = await client.post(
+        f"/v1/sessions/{session_id}/turns",
+        json={"content": "我不想活了"},
+    )
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/event-stream")
+    frames = _parse_sse(resp.text)
+    events = [name for name, _ in frames]
+    assert events == ["moderation"]
+    _, data = frames[0]
+    assert data["verdict"] == "redirect"
+    assert data["redirect_resource"]["title"] == "心理援助 24h 热线"
+    assert data["redirect_resource"]["url"] == "tel:010-82951332"
+    assert "opponent.delta" not in events
 
 
 async def test_turns_returns_409_for_ended_session(

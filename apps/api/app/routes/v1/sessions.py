@@ -70,9 +70,12 @@ async def create_session(
             "description": (
                 "Server-Sent Events stream. Each `data:` line is a JSON "
                 "`SseEventEnvelope.frame` — a discriminated union over the "
-                "four event types (`opponent.delta` / `opponent.done` / "
-                "`coach.hint` / `meta`). Frontend should switch on `event` "
-                "to pick the matching `data` shape. Wire example in PRD §7.4."
+                "five event types (`opponent.delta` / `opponent.done` / "
+                "`coach.hint` / `meta` / `moderation`). Frontend should "
+                "switch on `event` to pick the matching `data` shape. A "
+                "`moderation` frame (PRD §3.0.5 red-line interception) is "
+                "the sole frame in the stream when it fires. Wire example "
+                "in PRD §7.4."
             ),
             "model": SseEventEnvelope,
             "content": {"text/event-stream": {}},
