@@ -27,6 +27,16 @@ const INITIAL_STATE: ShareCardState = {
   error: null,
 }
 
+/** Human-friendly error from sharecard API — distinguishes CAPTION_BLOCKED */
+function _shareCardError(err: unknown): string {
+  if (err instanceof ApiError) {
+    const code = (err.body as { code?: string })?.code
+    if (code === 'CAPTION_BLOCKED') return '文案被拦截，请修改后重试'
+    if (err.status === 404) return '战报数据不存在'
+  }
+  return '生成失败，请稍后重试'
+}
+
 /**
  * useShareCard — wraps the three sharecard POST endpoints.
  *
@@ -54,7 +64,7 @@ export function useShareCard() {
         setState((s) => ({
           ...s,
           isGenerating: false,
-          error: '生成失败，请稍后重试',
+          error: _shareCardError(err),
         }))
       }
     },
@@ -76,7 +86,7 @@ export function useShareCard() {
         setState((s) => ({
           ...s,
           isGenerating: false,
-          error: '生成失败，请稍后重试',
+          error: _shareCardError(err),
         }))
       }
     },
@@ -98,7 +108,7 @@ export function useShareCard() {
         setState((s) => ({
           ...s,
           isGenerating: false,
-          error: '生成失败，请稍后重试',
+          error: _shareCardError(err),
         }))
       }
     },

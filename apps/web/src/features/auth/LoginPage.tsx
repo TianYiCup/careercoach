@@ -251,19 +251,25 @@ function _maskPhone(phone: string): string {
 }
 
 function _humanizeSendError(e: unknown): string {
-  if (e instanceof ApiError && e.status === 400) {
-    return '手机号格式不对';
+  if (e instanceof ApiError) {
+    if (e.status === 400) return '手机号格式不对';
+    if (e.status === 429) {
+      const code = (e.body as { code?: string })?.code;
+      if (code === 'SMS_SEND_COOLDOWN') return '发送太频繁，请稍后再试';
+      return '请求太频繁，稍后再试';
+    }
   }
   return '发送失败，请稍后再试';
 }
 
 function _humanizeVerifyError(e: unknown): string {
   if (e instanceof ApiError) {
-    // Backend returns 400 INVALID_CODE for both wrong-code and
-    // expired-code (the user can't really tell the difference without
-    // a re-send, so we phrase it the same way).
     if (e.status === 400) return '验证码错了，再试一次';
-    if (e.status === 429) return '请求太频繁，稍后再试';
+    if (e.status === 429) {
+      const code = (e.body as { code?: string })?.code;
+      if (code === 'SMS_VERIFY_LOCKED') return '验证次数过多，请稍后再试';
+      return '请求太频繁，稍后再试';
+    }
   }
   return '登录失败，请稍后再试';
 }
