@@ -160,11 +160,26 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
 
 _BY_ID: dict[str, ScenarioRecord] = {record.id: record for record in SCENARIO_CATALOG}
 
+# In-process registry for user-created scenarios (POST /v1/scenarios/
+# custom). v1 keeps these in memory — single uvicorn worker, and the
+# `*_repo_backend` knobs all default to `memory`. Durable storage is a
+# follow-up (see the `app.services.sessions.scenario_seed` docstring).
+_CUSTOM: dict[str, ScenarioRecord] = {}
+
+
+def register_custom_scenario(record: ScenarioRecord) -> None:
+    """Make a user-created scenario resolvable by `get_record_by_id`, so
+    `POST /v1/sessions` can immediately practise against its id."""
+    _CUSTOM[record.id] = record
+
 
 def get_record_by_id(scenario_id: str) -> ScenarioRecord | _FallbackRecord:
-    """Return the catalog row for `scenario_id`, or the fallback so
-    unknown ids don't break session create — sprint-1 still wants
-    "any string in works" for demo flows."""
+    """Return the row for `scenario_id` — a registered custom scenario,
+    a static catalog entry, or the fallback (so unknown ids don't break
+    session create; sprint-1 wants "any string in works" for demos)."""
+    custom = _CUSTOM.get(scenario_id)
+    if custom is not None:
+        return custom
     return _BY_ID.get(scenario_id, FALLBACK_RECORD)
 
 
@@ -173,4 +188,5 @@ __all__ = [
     "SCENARIO_CATALOG",
     "ScenarioRecord",
     "get_record_by_id",
+    "register_custom_scenario",
 ]

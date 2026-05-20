@@ -213,6 +213,47 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /v1/scenarios/custom:
+    post:
+      tags:
+      - scenarios
+      summary: Generate a practisable scenario from a free-text description
+      description: 'US-A1. The returned `scenario_id` is immediately usable as the
+
+        `scenario_id` for `POST /v1/sessions`. v1 emits a templated
+
+        placeholder script; LLM generation lands in a follow-up.
+
+
+        The description is moderated (§3.0.5 D — 自定义场景必过审): a `block`
+
+        or `redirect` verdict rejects it with a 400.'
+      operationId: create_custom_scenario_v1_scenarios_custom_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomScenarioRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomScenarioResponse'
+        '400':
+          description: description blocked by content moderation (§3.0.5 D)
+        '429':
+          description: daily custom-scenario quota exceeded (PRD §7.12)
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - JWT: []
   /v1/sessions:
     post:
       tags:
@@ -1289,6 +1330,56 @@ components:
       - session_id
       - opening_line
       title: CreateSessionResponse
+    CustomScenarioRequest:
+      properties:
+        description:
+          type: string
+          maxLength: 1000
+          minLength: 30
+          title: Description
+          description: 'Free-text scenario description. US-A1: ≥ 30 chars to submit, capped at 1000.'
+          examples:
+          - 我想练习向房东要求退还押金，但租房合同里关于押金的条款写得很模糊。
+      type: object
+      required:
+      - description
+      title: CustomScenarioRequest
+      description: '`POST /v1/scenarios/custom` body — PRD §7.3 / US-A1.'
+    CustomScenarioResponse:
+      properties:
+        scenario_id:
+          type: string
+          title: Scenario Id
+          examples:
+          - sc_custom_a1b2c3d4e5f6
+        title:
+          type: string
+          title: Title
+          examples:
+          - 向房东要求退还押金
+        background:
+          type: string
+          title: Background
+          description: The practice scenario's background.
+        persona_title:
+          type: string
+          title: Persona Title
+          description: Display name of the opponent persona.
+        opening_line:
+          type: string
+          title: Opening Line
+          description: The opponent's first line of the practice.
+      type: object
+      required:
+      - scenario_id
+      - title
+      - background
+      - persona_title
+      - opening_line
+      title: CustomScenarioResponse
+      description: 'The created scenario. `scenario_id` is immediately usable as the
+
+        `scenario_id` for `POST /v1/sessions`.'
     EndSessionResponse:
       properties:
         score:
