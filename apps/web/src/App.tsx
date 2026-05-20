@@ -678,13 +678,10 @@ function HomePage({
 }
 
 /**
- * AppGate — auth boundary. Renders <LoginPage> until the user has a
- * token (per useAuth.isAuthenticated). After login the provider
- * re-renders and we drop into the real navigation below.
+ * AppGate — auth boundary + page navigation.
  *
- * Routing is a tiny union ('home' | 'sandbox' | 'wrapped') instead of
- * react-router for now — the surface is three pages and the gate is
- * one bit. We'll bring in router when the route count grows.
+ * Uses lightweight useState<Page> routing — sufficient for current scope.
+ * Browser history integration can be added later if needed.
  */
 function AppGate() {
   const { isAuthenticated, needsAge } = useAuth()
