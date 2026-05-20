@@ -1,4 +1,4 @@
-"""HTTP tests for `POST /v1/scenarios/custom` (R3-4)."""
+"""HTTP tests for `POST /v1/scenarios/custom`."""
 
 from __future__ import annotations
 
@@ -10,7 +10,13 @@ from app.services.auth import mint_token
 from app.services.scenarios import CustomScenarioService, get_custom_scenario_service
 from httpx import ASGITransport, AsyncClient
 
-from tests.test_custom_scenario_service import _DESC, _allow_moderation, _blocking_moderation
+from tests.test_custom_scenario_service import (
+    _DESC,
+    _GOOD_GEN,
+    _allow_moderation,
+    _blocking_moderation,
+    _ScriptedGenLLM,
+)
 
 
 def _install(service: CustomScenarioService) -> None:
@@ -19,9 +25,12 @@ def _install(service: CustomScenarioService) -> None:
 
 @pytest.fixture
 def custom_allow() -> Iterator[CustomScenarioService]:
-    """Override the custom-scenario service with one whose moderation
-    passes everything — and a fresh per-test quota."""
-    service = CustomScenarioService(moderation=_allow_moderation())
+    """Override with a service whose moderation passes everything and
+    whose LLM returns a well-formed scenario — fresh per-test quota."""
+    service = CustomScenarioService(
+        moderation=_allow_moderation(),
+        llm=_ScriptedGenLLM(_GOOD_GEN),
+    )
     _install(service)
     try:
         yield service
@@ -31,8 +40,13 @@ def custom_allow() -> Iterator[CustomScenarioService]:
 
 @pytest.fixture
 def custom_blocking() -> Iterator[None]:
-    """Override with a service whose moderation blocks everything."""
-    _install(CustomScenarioService(moderation=_blocking_moderation(verdict="block")))
+    """Override with a service whose moderation blocks every input."""
+    _install(
+        CustomScenarioService(
+            moderation=_blocking_moderation(verdict="block"),
+            llm=_ScriptedGenLLM(_GOOD_GEN),
+        )
+    )
     try:
         yield
     finally:
@@ -61,14 +75,13 @@ async def test_create_custom_scenario_returns_usable_scenario(
     client: AsyncClient, custom_allow: CustomScenarioService
 ) -> None:
     """A created scenario_id is immediately practisable: POST /sessions
-    against it opens a session with the custom scenario's opening line
-    (not the generic fallback)."""
+    against it opens a session with the generated opening line."""
     _ = custom_allow
     resp = await client.post("/v1/scenarios/custom", json={"description": _DESC})
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["scenario_id"].startswith("sc_custom_")
-    assert body["background"] == _DESC
+    assert body["title"] == "向房东追讨押金"  # from the LLM generation
 
     session = await client.post(
         "/v1/sessions",
@@ -80,8 +93,9 @@ async def test_create_custom_scenario_returns_usable_scenario(
         },
     )
     assert session.status_code == 200, session.text
-    # Custom scenario resolved — its opening line, not the fallback's.
-    assert session.json()["opening_line"] == "我们开始吧，你先说。"
+    # The custom scenario resolved — the generated opening line, not
+    # the generic fallback's.
+    assert session.json()["opening_line"] == "押金的事，我得先翻翻合同再说。"
 
 
 async def test_create_custom_scenario_rejects_short_description(

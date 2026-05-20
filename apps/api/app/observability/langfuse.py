@@ -438,6 +438,39 @@ def begin_copilot_trace(
     )
 
 
+def begin_scenario_trace(
+    client: Langfuse | None,
+    *,
+    input: dict[str, Any],
+    metadata: dict[str, Any] | None = None,
+    session_id: str | None = None,
+    tags: list[str] | None = None,
+    trace_id: str | None = None,
+    user_id: str | None = None,
+    persist_call: LLMCallPersistCall | None = None,
+) -> TurnTrace:
+    """Start a Langfuse trace for one custom-scenario generation.
+
+    Used by `CustomScenarioService` (R3-5) for the single LLM call that
+    turns a `POST /v1/scenarios/custom` description into a practisable
+    scenario. Same no-op-on-None contract as `begin_turn_trace`;
+    `surface="scenario"` keeps custom-scenario LLM spend separable in
+    the `/v1/ops/token-cost` rollup.
+    """
+    return _begin_named_trace(
+        client,
+        name="custom_scenario",
+        input=input,
+        metadata=metadata,
+        session_id=session_id,
+        tags=tags,
+        trace_id=trace_id,
+        user_id=user_id,
+        surface="scenario",
+        persist_call=persist_call or _default_persist_call(),
+    )
+
+
 def _default_persist_call() -> LLMCallPersistCall | None:
     """Look up the configured llm_call repo and return its `insert`
     bound method, or `None` on any wiring error.
@@ -536,6 +569,7 @@ __all__ = [
     "TurnTrace",
     "begin_copilot_trace",
     "begin_review_trace",
+    "begin_scenario_trace",
     "begin_turn_trace",
     "get_langfuse_client",
     "run_session_turn",
