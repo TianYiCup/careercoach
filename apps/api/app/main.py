@@ -19,6 +19,7 @@ from app.config import get_settings
 from app.middleware import RequestIdMiddleware, get_request_id
 from app.routes.health import router as health_router
 from app.routes.v1 import router as v1_router
+from app.services.auth import get_auth_service
 
 logger = structlog.get_logger(__name__)
 
@@ -47,6 +48,13 @@ def create_app() -> FastAPI:
             environment=settings.app_env,
             traces_sample_rate=0.1 if settings.app_env == "production" else 1.0,
         )
+
+    # Fail-fast wiring check (H-2): build the auth service now so a
+    # non-dev deploy still pinned to the dev-only LoggingDispatcher
+    # raises here at startup rather than logging SMS codes in plaintext
+    # on the first /auth request. Mirrors the jwt_secret validator that
+    # already ran inside get_settings() above.
+    get_auth_service()
 
     app = FastAPI(
         title="CareerCoach AI",
