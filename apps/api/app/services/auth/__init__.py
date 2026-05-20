@@ -84,6 +84,10 @@ def get_auth_service() -> AuthService:
     user_repo = _get_user_repository()
     rate_limiter = _get_rate_limiter()
     dispatcher = LoggingDispatcher()
+    # H-2 fail-closed: LoggingDispatcher is dev-only. Refuse to wire it
+    # in staging/production so a deploy that forgot a real SMS gateway
+    # fails at startup instead of logging codes in plaintext.
+    _assert_dispatcher_safe_for_env(dispatcher, app_env=get_settings().app_env)
     logger.info(
         "auth_service_wired",
         code_store=code_store.__class__.__name__,
@@ -97,6 +101,30 @@ def get_auth_service() -> AuthService:
         dispatcher=dispatcher,
         rate_limiter=rate_limiter,
     )
+
+
+def _assert_dispatcher_safe_for_env(dispatcher: SmsDispatcher, *, app_env: str) -> None:
+    """Fail-closed guard (H-2): reject the dev-only `LoggingDispatcher`
+    outside `development`.
+
+    `LoggingDispatcher` writes the SMS verification code to the app log
+    in plaintext. That is fine for dev copy-paste, but in staging or
+    production it is both an audit failure (PRD §6.2 / NFR S-05 — codes
+    are credential-grade and must never hit logs) and functionally
+    broken (no real SMS is sent, so users cannot log in).
+
+    Raising here makes a deploy that forgot to inject a real SMS
+    gateway fail at startup rather than ship silently. Mirrors the
+    `jwt_secret` non-dev validator in `app.config`.
+    """
+    if app_env != "development" and isinstance(dispatcher, LoggingDispatcher):
+        raise RuntimeError(
+            "SMS dispatcher is the dev-only LoggingDispatcher but "
+            f"app_env={app_env}. LoggingDispatcher writes verification "
+            "codes to the application log in plaintext (audit failure) "
+            "and sends no real SMS. Inject a production SMS gateway "
+            "before deploying outside development."
+        )
 
 
 @lru_cache(maxsize=1)
