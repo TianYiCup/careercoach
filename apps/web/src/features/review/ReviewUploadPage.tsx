@@ -24,6 +24,9 @@ export function ReviewUploadPage({
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Dynamic mascot: thinking while pending, crashed on error, confident idle
+  const mascotExpression = error ? 'crashed' : pending ? 'thinking' : 'confident'
+
   const charCount = text.length
   const overLimit = charCount > MAX_CHARS
   const canSubmit = charCount > 0 && !overLimit && !pending
@@ -59,7 +62,7 @@ export function ReviewUploadPage({
             ← 返回
           </button>
           <div className="flex items-center gap-2">
-            <MascotReaction expression="thinking" size="sm" />
+            <MascotReaction expression={mascotExpression} size="sm" />
             <span className="text-lg font-display text-ink-text">复盘师</span>
           </div>
           <div className="w-14" /> {/* spacer */}

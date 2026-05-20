@@ -92,6 +92,10 @@ function deriveExpression(state: SandboxState): MascotExpression {
   }
   // Opponent thinking → thinking face
   if (state.isStreaming) return 'thinking'
+  // No activity after many turns → slacking
+  if (state.turnsUsed === 0 && state.started) return 'thinking'
+  // Low turns left (≤3) → fired-up urgency
+  if (state.turnsLeft <= 3 && state.turnsLeft > 0 && state.turnsUsed > 0) return 'fired-up'
   // Tone-driven expressions (when coach.hint arrives)
   if (state.hints) {
     if (state.activeTone === 'safe') return 'caring'

@@ -48,6 +48,9 @@ export function WeaknessProfilePage({ onBack }: { onBack: () => void }) {
 
   const topPct = profile.top_weakness.percentage
 
+  // Dynamic mascot: many weaknesses = caring, few = confident
+  const mascotExpression = profile.weaknesses.length >= 3 ? 'caring' : 'confident'
+
   return (
     <div className="relative min-h-screen flex flex-col items-center px-4 py-8 overflow-y-auto">
       <BlobBackground />
@@ -73,7 +76,7 @@ export function WeaknessProfilePage({ onBack }: { onBack: () => void }) {
 
         {/* K intro */}
         <div className="flex items-start gap-4">
-          <MascotReaction expression="caring" size="md" />
+          <MascotReaction expression={mascotExpression} size="md" />
           <div className="flex-1">
             <p className="text-sm text-ink-text-2 font-body">
               教练 K 说：

@@ -94,13 +94,22 @@ function _isMinorForbidden(err: unknown): boolean {
 function deriveExpression(state: CopilotState): MascotExpression {
   if (state.status === 'error') return 'crashed'
   if (state.status === 'thinking') return 'thinking'
+  if (state.status === 'connecting') return 'thinking'
   if (state.hint) {
     if (state.hint.confidence < 0.6) return 'crashed'
     if (state.activeTone === 'safe') return 'caring'
     if (state.activeTone === 'aggro') return 'fired-up'
     if (state.activeTone === 'fun') return 'clowning'
   }
-  if (state.status === 'recording') return 'slacking'
+  if (state.status === 'recording') {
+    // Long recording without transcript → slacking (user quiet)
+    if (state.durationSec > 15 && !state.transcript?.opponentText) return 'slacking'
+    return 'confident'
+  }
+  if (state.status === 'hinting') {
+    if (state.activeTone === 'safe') return 'caring'
+    return 'fired-up'
+  }
   return 'confident'
 }
 
