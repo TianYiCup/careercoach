@@ -140,6 +140,33 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
       security:
       - JWT: []
+  /v1/users/me/weaknesses:
+    get:
+      tags:
+      - users
+      summary: Get the caller's weakness profile + recommended training scenarios
+      description: '弱点画像 (PRD §7.7 / US-C3). The weakness list is empty until the
+
+        caller''s first scored session; `POST /v1/sessions/{id}/end` folds
+
+        each session''s per-tag deltas in. Recommendations fall back to
+
+        catalog scenarios — weakness-targeted matching is a follow-up.
+
+
+        No age gate: reading a profile touches no LLM path. `user_id`
+
+        comes from the JWT.'
+      operationId: get_my_weaknesses_v1_users_me_weaknesses_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WeaknessProfileResponse'
+      security:
+      - JWT: []
   /v1/scenarios:
     get:
       tags:
@@ -2909,6 +2936,51 @@ components:
       description: 'Confirms the recorded check-in. The home screen uses `vibe` to
 
         pick 教练 K''s expression and bias scenario recommendations.'
+    WeaknessItem:
+      properties:
+        tag:
+          type: string
+          title: Tag
+          description: Weakness tag from the product taxonomy, e.g. 过早让步.
+          examples:
+          - 过早让步
+        frequency:
+          type: integer
+          minimum: 0.0
+          title: Frequency
+          description: Accumulated number of times this weakness has surfaced.
+          examples:
+          - 4
+        last_seen:
+          type: string
+          format: date-time
+          title: Last Seen
+          description: UTC timestamp the weakness was last recorded.
+      type: object
+      required:
+      - tag
+      - frequency
+      - last_seen
+      title: WeaknessItem
+      description: One tracked communication weakness for the caller.
+    WeaknessProfileResponse:
+      properties:
+        weaknesses:
+          items:
+            $ref: '#/components/schemas/WeaknessItem'
+          type: array
+          title: Weaknesses
+          description: Tracked weaknesses, highest-frequency first. Empty until first scored session.
+        recommended_scenarios:
+          items:
+            $ref: '#/components/schemas/ScenarioSummary'
+          type: array
+          title: Recommended Scenarios
+          description: Scenarios to train against. v1 surfaces catalog scenarios; weakness-targeted matching
+            is a follow-up.
+      type: object
+      title: WeaknessProfileResponse
+      description: '`GET /v1/users/me/weaknesses` — the 弱点画像 (US-C3).'
     WeaknessUpdate:
       properties:
         tag:

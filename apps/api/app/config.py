@@ -92,6 +92,9 @@ class Settings(BaseSettings):
     # Streak (consecutive practice-days) persistence — same defaulting rule.
     streak_repo_backend: Literal["memory", "postgres"] = Field(default="memory")
 
+    # Weakness (communication-weakness profile) persistence — same rule.
+    weakness_repo_backend: Literal["memory", "postgres"] = Field(default="memory")
+
     # LLM call (per-generation token accounting) persistence — same
     # defaulting rule. A-39 ships the schema + repo; A-40 wires the
     # observability `record_generation` callsites to actually insert.
