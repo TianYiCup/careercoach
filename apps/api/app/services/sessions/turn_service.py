@@ -40,7 +40,7 @@ from app.agents.judge import parse_judge_output
 from app.agents.state import TurnScore
 from app.llm import LLMProvider, Message, TokenUsage
 from app.observability.langfuse import TurnTrace, begin_turn_trace
-from app.schemas.moderation import ModerationCheckRequest
+from app.schemas.moderation import ModerationCheckRequest, RedirectResource
 from app.services.moderation import ModerationBackendError
 from app.services.moderation.service import ModerationService
 from app.services.sessions.repository import SessionRepository
@@ -126,7 +126,9 @@ class ValidatedTurn:
         "content",
         "input_verdict",
         "is_minor",
+        "moderation_categories",
         "prior_turns",
+        "redirect_resource",
         "session_id",
         "trace_id",
         "user_id",
@@ -142,6 +144,8 @@ class ValidatedTurn:
         prior_turns: list[TurnRecord],
         is_minor: bool = False,
         input_verdict: str = "allow",
+        redirect_resource: RedirectResource | None = None,
+        moderation_categories: tuple[str, ...] = (),
     ) -> None:
         self.session_id = session_id
         self.content = content
@@ -154,6 +158,11 @@ class ValidatedTurn:
         # directly from passing.
         self.is_minor = is_minor
         self.input_verdict = input_verdict
+        # H-1: only populated when input_verdict == "redirect" — the
+        # crisis resource + categories stream_turn emits as the single
+        # `moderation` frame (PRD §3.0.5 A). Empty for every other path.
+        self.redirect_resource = redirect_resource
+        self.moderation_categories = moderation_categories
 
 
 class TurnService:
@@ -200,6 +209,12 @@ class TurnService:
         if session.status != "active":
             raise SessionEndedForTurnError(session_id)
 
+        # H-1: a `redirect` verdict carries a crisis resource that
+        # stream_turn surfaces as a `moderation` frame. Default empty
+        # for the common allow / warn / backend_failed paths.
+        redirect_resource: RedirectResource | None = None
+        moderation_categories: tuple[str, ...] = ()
+
         try:
             decision = await self._moderation.check(
                 ModerationCheckRequest(
@@ -245,6 +260,15 @@ class TurnService:
                 )
                 raise UserInputBlockedError(categories=tuple(decision.categories))
             input_verdict = decision.verdict
+            if decision.verdict == "redirect":
+                # H-1 / PRD §3.0.5 A: a `redirect` verdict (self-harm /
+                # crisis) does NOT 4xx and does NOT run roleplay — the
+                # turn streams a single `moderation` frame instead.
+                # Carry the crisis resource + categories so stream_turn
+                # can emit them. The hit is already audited to the
+                # ModerationEvent log inside `_moderation.check`.
+                redirect_resource = decision.redirect_resource
+                moderation_categories = tuple(decision.categories)
 
         prior_turns = await self._turn_repo.list_for_session(session_id)
         return ValidatedTurn(
@@ -255,6 +279,8 @@ class TurnService:
             prior_turns=prior_turns,
             is_minor=is_minor,
             input_verdict=input_verdict,
+            redirect_resource=redirect_resource,
+            moderation_categories=moderation_categories,
         )
 
     async def stream_turn(self, validated: ValidatedTurn) -> AsyncIterator[SseFrame]:
@@ -266,6 +292,34 @@ class TurnService:
         before re-raising. When `LANGFUSE_*` keys aren't configured
         the trace is a no-op so dev runs aren't slowed down.
         """
+        # H-1 / PRD §3.0.5 A: a `redirect` input verdict (self-harm /
+        # crisis) force-interrupts the practice. Emit one `moderation`
+        # frame carrying the crisis resource, then stop — the roleplay
+        # opponent must not reply to a user in distress. No roleplay /
+        # coach / judge, no turn persisted, no LLM calls (so no Langfuse
+        # trace). validate_turn_request already audited the hit to the
+        # ModerationEvent log.
+        if validated.input_verdict == "redirect":
+            logger.info(
+                "turn_user_input_redirect",
+                session_id=validated.session_id,
+                trace_id=validated.trace_id,
+                categories=list(validated.moderation_categories),
+            )
+            yield SseFrame(
+                "moderation",
+                {
+                    "verdict": "redirect",
+                    "categories": list(validated.moderation_categories),
+                    "redirect_resource": (
+                        validated.redirect_resource.model_dump()
+                        if validated.redirect_resource is not None
+                        else None
+                    ),
+                },
+            )
+            return
+
         session = await self._session_repo.get(validated.session_id)
         # `validate_turn_request` already confirmed the session exists; the
         # repo lookup here is just to grab the scenario_id for prompts.

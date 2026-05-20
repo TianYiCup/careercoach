@@ -235,6 +235,52 @@ async def test_validate_raises_blocked_when_moderation_rejects() -> None:
         )
 
 
+async def test_validate_redirect_carries_resource_onto_validated_turn() -> None:
+    """A `redirect` verdict (self-harm) does NOT raise — H-1 streams a
+    `moderation` frame, not a 4xx. validate_turn_request returns a
+    ValidatedTurn carrying the crisis resource + categories so
+    stream_turn can emit them."""
+    svc, session_repo, _ = _service(moderation_verdict="redirect")
+    await session_repo.save(_active_session())
+    validated = await svc.validate_turn_request(
+        session_id="ses_aaaa1111",
+        content="我不想活了",
+        user_id="anonymous",
+        trace_id="t1",
+    )
+    assert validated.input_verdict == "redirect"
+    # The crisis resource must survive onto the snapshot — discarding it
+    # is exactly the H-1 bug this guards against.
+    assert validated.redirect_resource is not None
+    assert validated.redirect_resource.title
+    assert validated.moderation_categories
+
+
+async def test_stream_turn_redirect_emits_only_moderation_frame() -> None:
+    """PRD §3.0.5 A: a redirect-validated turn force-interrupts the
+    practice. stream_turn emits exactly one `moderation` frame with the
+    crisis resource and nothing else — no roleplay / coach / meta — and
+    persists no turn (the roleplay opponent never replies)."""
+    svc, session_repo, turn_repo = _service(moderation_verdict="redirect")
+    await session_repo.save(_active_session())
+    validated = await svc.validate_turn_request(
+        session_id="ses_aaaa1111",
+        content="我不想活了",
+        user_id="anonymous",
+        trace_id="t1",
+    )
+
+    frames = await _collect(svc.stream_turn(validated))
+
+    assert [f.event for f in frames] == ["moderation"]
+    data = frames[0].data
+    assert data["verdict"] == "redirect"
+    assert data["redirect_resource"]["title"]
+    assert data["redirect_resource"]["url"]
+    # No roleplay reply streamed, no turn recorded.
+    assert await turn_repo.list_for_session("ses_aaaa1111") == []
+
+
 async def test_validate_passes_and_carries_prior_turns_snapshot() -> None:
     svc, session_repo, _ = _service()
     await session_repo.save(_active_session())

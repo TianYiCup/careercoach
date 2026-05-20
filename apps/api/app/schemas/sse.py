@@ -7,13 +7,15 @@ format is:
     data: <json model>
 
 The frontend should switch on `event` to pick the matching model. We expose
-all four payloads in the OpenAPI schema (under components/schemas) so
+all five payloads in the OpenAPI schema (under components/schemas) so
 openapi-typescript generates a discriminated union for B's MSW + client.
 """
 
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
+
+from app.schemas.moderation import ModerationCategory, ModerationVerdict, RedirectResource
 
 
 class OpponentDeltaEvent(BaseModel):
@@ -72,7 +74,33 @@ class MetaEvent(BaseModel):
     turns_left: int = Field(..., ge=0, examples=[25])
 
 
-SseEventName = Literal["opponent.delta", "opponent.done", "coach.hint", "meta"]
+class ModerationInterceptEvent(BaseModel):
+    """Red-line interception frame (PRD §3.0.5).
+
+    Emitted *instead of* a roleplay turn when the user input trips a
+    `redirect` verdict — e.g. self-harm content force-interrupts the
+    practice (§3.0.5 A) and surfaces a crisis-line resource. When this
+    frame fires it is the ONLY frame in the stream: no opponent /
+    coach / meta frames follow, and no turn is persisted.
+    """
+
+    verdict: ModerationVerdict = Field(
+        ...,
+        description="Moderation verdict on the user input. `redirect` for crisis content.",
+        examples=["redirect"],
+    )
+    categories: list[ModerationCategory] = Field(
+        default_factory=list,
+        description="Moderation categories the input tripped.",
+        examples=[["self_harm"]],
+    )
+    redirect_resource: RedirectResource | None = Field(
+        default=None,
+        description="Crisis-line / help resource. Present when verdict == 'redirect'.",
+    )
+
+
+SseEventName = Literal["opponent.delta", "opponent.done", "coach.hint", "meta", "moderation"]
 
 
 class _OpponentDeltaFrame(BaseModel):
@@ -95,8 +123,13 @@ class _MetaFrame(BaseModel):
     data: MetaEvent
 
 
+class _ModerationFrame(BaseModel):
+    event: Literal["moderation"] = "moderation"
+    data: ModerationInterceptEvent
+
+
 SseEventFrame = Annotated[
-    _OpponentDeltaFrame | _OpponentDoneFrame | _CoachHintFrame | _MetaFrame,
+    _OpponentDeltaFrame | _OpponentDoneFrame | _CoachHintFrame | _MetaFrame | _ModerationFrame,
     Field(
         discriminator="event",
         description=(
@@ -107,8 +140,8 @@ SseEventFrame = Annotated[
 ]
 """Discriminated union of all SSE frames emitted by /sessions/{id}/turns.
 
-Used as a response_model on the route so FastAPI registers all four payload
-schemas + the four frame wrappers in components/schemas. Frontend's
+Used as a response_model on the route so FastAPI registers all five payload
+schemas + the five frame wrappers in components/schemas. Frontend's
 openapi-typescript output will produce a tagged union the UI can switch on.
 """
 
