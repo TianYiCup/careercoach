@@ -8,8 +8,8 @@
 import { useState } from 'react'
 import { View, Text, Textarea } from '@tarojs/components'
 import Taro from '@tarojs/taro'
-import { authedRequest, ApiError } from '../../api/client'
-import type { CreateReviewUploadResponse } from '../../api/review'
+import { authedRequest, ApiError } from '../../../../api/client'
+import type { CreateReviewUploadResponse } from '../../../../api/review'
 import './index.scss'
 
 const MAX_CHARS = 5000
@@ -33,7 +33,7 @@ export default function ReviewUploadPage() {
         'POST',
         { text },
       )
-      Taro.navigateTo({ url: `/pages/review-result/index?uploadId=${res.upload_id}` })
+      Taro.navigateTo({ url: `/subpackages/review/pages/review-result/index?uploadId=${res.upload_id}` })
     } catch (e) {
       setError(_humanizeError(e))
     } finally {
