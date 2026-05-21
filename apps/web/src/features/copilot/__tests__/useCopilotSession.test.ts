@@ -9,7 +9,6 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
-import type { CopilotWsEvent } from '../../../api/v1/types'
 
 // Mock api client
 vi.mock('../../../api/v1/client', () => ({
@@ -194,7 +193,6 @@ describe('WS event handling', () => {
   it('asr_partial updates transcript and sets recording', async () => {
     await setupRealWsSession()
 
-    const event: CopilotWsEvent = { type: 'asr_partial', text: '我们' }
     // Access the last created WebSocket instance's onmessage
     act(() => {
       // The WS constructor stored a reference; we need to trigger onmessage
