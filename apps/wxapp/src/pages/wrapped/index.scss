@@ -1,0 +1,134 @@
+.wrapped {
+  min-height: 100vh;
+  background: #0F0B1A;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.wrapped-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24px 32px;
+}
+
+.wrapped-back {
+  color: #A8A3B8;
+  font-size: 28px;
+}
+
+.wrapped-title {
+  color: #F0ECF4;
+  font-size: 34px;
+  font-weight: 600;
+}
+
+.wrapped-spacer {
+  width: 56px;
+}
+
+.wrapped-tabs {
+  display: flex;
+  gap: 16px;
+  padding: 0 32px;
+  margin-bottom: 32px;
+}
+
+.wrapped-tab {
+  flex: 1;
+  text-align: center;
+  padding: 16px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #A8A3B8;
+  font-size: 26px;
+}
+
+.wrapped-tab--active {
+  background: linear-gradient(135deg, #6C4DFF, #B44DFF);
+  border-color: transparent;
+  color: #FFFFFF;
+}
+
+.wrapped-card-area {
+  padding: 0 32px;
+  min-height: 400px;
+}
+
+.wrapped-card-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 400px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+}
+
+.wrapped-card-empty-text {
+  color: #6D6880;
+  font-size: 28px;
+}
+
+.wrapped-card-preview {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 24px;
+}
+
+.wrapped-card-img {
+  width: 100%;
+  border-radius: 8px;
+}
+
+.wrapped-card-actions {
+  display: flex;
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.wrapped-card-action {
+  flex: 1;
+  background: linear-gradient(135deg, #6C4DFF, #B44DFF);
+  border-radius: 999px;
+  padding: 16px;
+  text-align: center;
+}
+
+.wrapped-card-action--secondary {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.wrapped-card-action-text {
+  color: #FFFFFF;
+  font-size: 24px;
+  font-weight: 500;
+}
+
+.wrapped-generate-btn {
+  background: linear-gradient(135deg, #6C4DFF, #B44DFF);
+  border-radius: 999px;
+  padding: 24px;
+  margin: 32px;
+  text-align: center;
+}
+
+.wrapped-generate-btn--disabled {
+  opacity: 0.5;
+}
+
+.wrapped-generate-btn-text {
+  color: #FFFFFF;
+  font-size: 30px;
+  font-weight: 600;
+}
+
+.wrapped-error {
+  display: block;
+  text-align: center;
+  color: #FF6B35;
+  font-size: 26px;
+  margin-top: 16px;
+}

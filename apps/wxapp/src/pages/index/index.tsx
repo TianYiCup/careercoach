@@ -93,7 +93,7 @@ export default function Index() {
             <Text className="home-report-value">7.2</Text>
           </View>
         </View>
-        <Text className="home-report-link">查看完整 Wrapped →</Text>
+        <Text className="home-report-link" onClick={() => Taro.navigateTo({ url: '/pages/wrapped/index' })}>查看完整 Wrapped →</Text>
       </View>
 
       {/* ── 跨端引导 ────────────────
@@ -107,6 +107,26 @@ export default function Index() {
           </Text>
         </View>
       )}
+
+      {/* ── 底部导航 ───────────────── */}
+      <View className="home-nav">
+        <View className="home-nav-item" onClick={() => Taro.navigateTo({ url: '/pages/sandbox/index' })}>
+          <Text className="home-nav-icon">🥊</Text>
+          <Text className="home-nav-label">对练</Text>
+        </View>
+        <View className="home-nav-item" onClick={() => Taro.navigateTo({ url: '/pages/review-upload/index' })}>
+          <Text className="home-nav-icon">🔍</Text>
+          <Text className="home-nav-label">复盘</Text>
+        </View>
+        <View className="home-nav-item" onClick={() => Taro.navigateTo({ url: '/pages/wrapped/index' })}>
+          <Text className="home-nav-icon">📊</Text>
+          <Text className="home-nav-label">战报</Text>
+        </View>
+        <View className="home-nav-item" onClick={() => Taro.navigateTo({ url: '/pages/profile/index' })}>
+          <Text className="home-nav-icon">👤</Text>
+          <Text className="home-nav-label">我的</Text>
+        </View>
+      </View>
     </View>
   )
 }
