@@ -9,7 +9,7 @@
 import { useState } from 'react'
 import { View, Text } from '@tarojs/components'
 import Taro from '@tarojs/taro'
-import { authedRequest } from '../../api/client'
+import { authedRequest } from '../../../../api/client'
 import './index.scss'
 
 type TabType = 'weekly' | 'wrapped'

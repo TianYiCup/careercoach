@@ -9,8 +9,8 @@
 import { useState, useEffect } from 'react'
 import { View, Text } from '@tarojs/components'
 import Taro, { useRouter } from '@tarojs/taro'
-import { authedRequest } from '../../api/client'
-import type { ReviewUploadResponse } from '../../api/review'
+import { authedRequest } from '../../../../api/client'
+import type { ReviewUploadResponse } from '../../../../api/review'
 import './index.scss'
 
 const VERDICT_MAP: Record<string, { label: string; color: string }> = {

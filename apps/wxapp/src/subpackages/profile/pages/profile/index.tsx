@@ -8,10 +8,10 @@
 import { useState, useEffect } from 'react'
 import { View, Text } from '@tarojs/components'
 import Taro from '@tarojs/taro'
-import { authedRequest } from '../../api/client'
-import { getAuthUser } from '../../utils/auth-user'
-import { clearAuthToken } from '../../utils/auth-token'
-import { clearAuthUser } from '../../utils/auth-user'
+import { authedRequest } from '../../../../api/client'
+import { getAuthUser } from '../../../../utils/auth-user'
+import { clearAuthToken } from '../../../../utils/auth-token'
+import { clearAuthUser } from '../../../../utils/auth-user'
 import './index.scss'
 
 interface WeaknessItem {
@@ -147,14 +147,14 @@ export default function ProfilePage() {
       <View className="profile-actions">
         <View
           className="profile-action-item"
-          onClick={() => Taro.navigateTo({ url: '/pages/review-upload/index' })}
+          onClick={() => Taro.navigateTo({ url: '/subpackages/review/pages/review-upload/index' })}
         >
           <Text className="profile-action-text">复盘师</Text>
           <Text className="profile-action-arrow">→</Text>
         </View>
         <View
           className="profile-action-item"
-          onClick={() => Taro.navigateTo({ url: '/pages/wrapped/index' })}
+          onClick={() => Taro.navigateTo({ url: '/subpackages/profile/pages/wrapped/index' })}
         >
           <Text className="profile-action-text">战报</Text>
           <Text className="profile-action-arrow">→</Text>

@@ -1,7 +1,7 @@
 import { View, Text } from '@tarojs/components'
 import { useState } from 'react'
 import Taro from '@tarojs/taro'
-import { getHealth } from '../../api/client'
+import { getHealth } from '../../../../api/client'
 import './index.scss'
 
 /** 健康检查页 — D5-B: 验证小程序能调通后端 API */

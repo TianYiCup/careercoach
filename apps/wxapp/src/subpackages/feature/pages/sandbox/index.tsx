@@ -24,7 +24,7 @@ import {
   type ToneLevel,
   type SseEventFrame,
   type EndSessionResponse,
-} from '../../api/sandbox'
+} from '../../../../api/sandbox'
 import './index.scss'
 
 // --- Session State ---

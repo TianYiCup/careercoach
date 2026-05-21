@@ -49,7 +49,7 @@ export default function Index() {
             <View
               key={s.title}
               className="home-scenario-card"
-              onClick={() => Taro.navigateTo({ url: '/pages/sandbox/index' })}
+              onClick={() => Taro.navigateTo({ url: '/subpackages/feature/pages/sandbox/index' })}
             >
               <Text className="home-scenario-icon">{s.icon}</Text>
               <Text className="home-scenario-title">{s.title}</Text>
@@ -65,7 +65,7 @@ export default function Index() {
         <Text className="home-continue-label">上次没练完...</Text>
         <View
           className="home-continue-card"
-          onClick={() => Taro.navigateTo({ url: '/pages/sandbox/index' })}
+          onClick={() => Taro.navigateTo({ url: '/subpackages/feature/pages/sandbox/index' })}
         >
           <Text className="home-continue-title">和领导提涨薪 · 进度 60%</Text>
           <Button size="small" type="primary" className="home-continue-btn">
@@ -93,7 +93,7 @@ export default function Index() {
             <Text className="home-report-value">7.2</Text>
           </View>
         </View>
-        <Text className="home-report-link" onClick={() => Taro.navigateTo({ url: '/pages/wrapped/index' })}>查看完整 Wrapped →</Text>
+        <Text className="home-report-link" onClick={() => Taro.navigateTo({ url: '/subpackages/profile/pages/wrapped/index' })}>查看完整 Wrapped →</Text>
       </View>
 
       {/* ── 跨端引导 ────────────────
@@ -110,19 +110,19 @@ export default function Index() {
 
       {/* ── 底部导航 ───────────────── */}
       <View className="home-nav">
-        <View className="home-nav-item" onClick={() => Taro.navigateTo({ url: '/pages/sandbox/index' })}>
+        <View className="home-nav-item" onClick={() => Taro.navigateTo({ url: '/subpackages/feature/pages/sandbox/index' })}>
           <Text className="home-nav-icon">🥊</Text>
           <Text className="home-nav-label">对练</Text>
         </View>
-        <View className="home-nav-item" onClick={() => Taro.navigateTo({ url: '/pages/review-upload/index' })}>
+        <View className="home-nav-item" onClick={() => Taro.navigateTo({ url: '/subpackages/review/pages/review-upload/index' })}>
           <Text className="home-nav-icon">🔍</Text>
           <Text className="home-nav-label">复盘</Text>
         </View>
-        <View className="home-nav-item" onClick={() => Taro.navigateTo({ url: '/pages/wrapped/index' })}>
+        <View className="home-nav-item" onClick={() => Taro.navigateTo({ url: '/subpackages/profile/pages/wrapped/index' })}>
           <Text className="home-nav-icon">📊</Text>
           <Text className="home-nav-label">战报</Text>
         </View>
-        <View className="home-nav-item" onClick={() => Taro.navigateTo({ url: '/pages/profile/index' })}>
+        <View className="home-nav-item" onClick={() => Taro.navigateTo({ url: '/subpackages/profile/pages/profile/index' })}>
           <Text className="home-nav-icon">👤</Text>
           <Text className="home-nav-label">我的</Text>
         </View>

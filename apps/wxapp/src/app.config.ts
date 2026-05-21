@@ -2,13 +2,21 @@ export default defineAppConfig({
   pages: [
     'pages/login/index',
     'pages/index/index',
-    'pages/health/index',
-    'pages/sandbox/index',
     'pages/age-gate/index',
-    'pages/review-upload/index',
-    'pages/review-result/index',
-    'pages/wrapped/index',
-    'pages/profile/index',
+  ],
+  subPackages: [
+    {
+      root: 'subpackages/feature',
+      pages: ['pages/sandbox/index', 'pages/health/index'],
+    },
+    {
+      root: 'subpackages/review',
+      pages: ['pages/review-upload/index', 'pages/review-result/index'],
+    },
+    {
+      root: 'subpackages/profile',
+      pages: ['pages/wrapped/index', 'pages/profile/index'],
+    },
   ],
   window: {
     backgroundTextStyle: 'light',
