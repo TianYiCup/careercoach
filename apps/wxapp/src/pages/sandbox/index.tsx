@@ -447,7 +447,7 @@ export default function SandboxPage() {
             className={`sandbox-send-btn ${(!input.trim() || state.isStreaming) ? 'sandbox-send-btn--disabled' : ''}`}
             onClick={handleSend}
           >
-            <Text className="sandbox-send-btn-text">🎤</Text>
+            <Text className="sandbox-send-btn-text">➤</Text>
           </View>
         </View>
       )}

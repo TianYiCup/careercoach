@@ -29,9 +29,6 @@ importers:
       '@careercoach/shared':
         specifier: workspace:*
         version: link:../../packages/shared
-      '@rive-app/react-canvas':
-        specifier: ^4.28.4
-        version: 4.28.4(react@19.2.6)
       '@tanstack/react-query':
         specifier: ^5.100.9
         version: 5.100.9(react@19.2.6)
@@ -2385,14 +2382,6 @@ packages:
         optional: true
       react-redux:
         optional: true
-
-  '@rive-app/canvas@2.37.6':
-    resolution: {integrity: sha512-TxovQ8p1aJJ1PzClRX4Dxhp0As4P8slZWG+FJq40/kXXQDqit5ndj7thW5LlbsvKRyA7HYZQUqL97wAH+emIFA==}
-
-  '@rive-app/react-canvas@4.28.4':
-    resolution: {integrity: sha512-8iIkSkoItQzExCODh50+D6w1GaNkoPhZ9MxYkAyumorWSGy5OS54meE2EfFIZUP4cQZPwPzkOdPuW5oXIPN/1w==}
-    peerDependencies:
-      react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0
 
   '@rnx-kit/babel-preset-metro-react-native@1.1.8':
     resolution: {integrity: sha512-8DotuBK1ZgV0H/tmCmtW/3ofA7JR/8aPqSu9lKnuqwBfq4bxz+w1sMyfFl89m4teWlkhgyczWBGD6NCLqTgi9A==}
@@ -10746,13 +10735,6 @@ snapshots:
       react: 19.2.6
       react-redux: 9.2.0(@types/react@19.2.14)(react@19.2.6)(redux@5.0.1)
 
-  '@rive-app/canvas@2.37.6': {}
-
-  '@rive-app/react-canvas@4.28.4(react@19.2.6)':
-    dependencies:
-      '@rive-app/canvas': 2.37.6
-      react: 19.2.6
-
   '@rnx-kit/babel-preset-metro-react-native@1.1.8(@babel/core@7.29.0)(@babel/plugin-transform-typescript@7.28.6(@babel/core@7.29.0))(@babel/runtime@7.29.2)':
     dependencies:
       '@babel/core': 7.29.0
@@ -10918,7 +10900,7 @@ snapshots:
     dependencies:
       tslib: 2.8.1
 
-  '@swc/register@0.1.10(@swc/core@1.3.96)':
+  '@swc/register@0.1.10(@swc/core@1.3.96(@swc/helpers@0.5.21))':
     dependencies:
       '@swc/core': 1.3.96(@swc/helpers@0.5.21)
       lodash.clonedeep: 4.5.0
@@ -11093,7 +11075,7 @@ snapshots:
       '@babel/traverse': 7.29.0
       '@babel/types': 7.29.0
       '@swc/core': 1.3.96(@swc/helpers@0.5.21)
-      '@swc/register': 0.1.10(@swc/core@1.3.96)
+      '@swc/register': 0.1.10(@swc/core@1.3.96(@swc/helpers@0.5.21))
       ansi-escapes: 4.3.2
       chalk: 4.1.2
       chokidar: 3.6.0

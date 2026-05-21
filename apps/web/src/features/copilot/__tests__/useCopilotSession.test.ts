@@ -70,7 +70,8 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-let hookRef: ReturnType<typeof renderHook<typeof useCopilotSession>>
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let hookRef: any
 
 function renderHook_() {
   hookRef = renderHook(() => useCopilotSession())
