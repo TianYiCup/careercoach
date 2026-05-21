@@ -14,6 +14,13 @@ import type {
   ReviewUploadResponse,
   CreateCopilotSessionRequest,
   CreateCopilotSessionResponse,
+  SetVibeRequest,
+  VibeResponse,
+  VibeType as ApiVibeType,
+  StreakResponse,
+  CustomScenarioRequest,
+  CustomScenarioResponse,
+  WeaknessProfileResponse,
 } from '../../api/v1/types'
 
 // Wildcard origin so handlers match both relative dev fetches (`/v1/...`)
@@ -352,6 +359,61 @@ export const handlers = [
       ws_url: `wss://mock.careercoach.ai/copilot/ws`,
     }
     void body.scenario_hint // consumed by real backend, stored but not acted on in mock
+    return HttpResponse.json(response)
+  }),
+
+  // GET /v1/streak — PR #130
+  http.get(`${BASE}/streak`, async () => {
+    await delay(200)
+    const response: StreakResponse = {
+      current_days: 12,
+      max_days: 21,
+    }
+    return HttpResponse.json(response)
+  }),
+
+  // POST /v1/vibe/today — PR #129
+  http.post(`${BASE}/vibe/today`, async ({ request }) => {
+    await delay(300)
+    const body = (await request.json()) as SetVibeRequest
+    const response: VibeResponse = {
+      vibe: body.vibe as ApiVibeType,
+      logged_date: new Date().toISOString().slice(0, 10),
+    }
+    return HttpResponse.json(response)
+  }),
+
+  // POST /v1/scenarios/custom — PR #132-133
+  http.post(`${BASE}/scenarios/custom`, async ({ request }) => {
+    await delay(1500)
+    const body = (await request.json()) as CustomScenarioRequest
+    const desc = body.description.trim()
+    const response: CustomScenarioResponse = {
+      scenario_id: `cs_${crypto.randomUUID().slice(0, 8)}`,
+      title: desc.length > 20 ? desc.slice(0, 20) + '...' : desc,
+      background: `自定义场景：${desc}`,
+      persona_title: 'custom_opponent',
+      opening_line: '你来找我有什么事？说说看吧。',
+    }
+    return HttpResponse.json(response)
+  }),
+
+  // GET /v1/users/me/weaknesses — PR #131
+  http.get(`${BASE}/users/me/weaknesses`, async () => {
+    await delay(400)
+    const response: WeaknessProfileResponse = {
+      weaknesses: [
+        { tag: '主动让步', frequency: 9, last_seen: '2026-05-19' },
+        { tag: '缺数据支撑', frequency: 6, last_seen: '2026-05-18' },
+        { tag: '情绪外露', frequency: 4, last_seen: '2026-05-15' },
+        { tag: '被带节奏', frequency: 3, last_seen: '2026-05-12' },
+        { tag: '不敢提问', frequency: 2, last_seen: '2026-05-08' },
+      ],
+      recommended_scenarios: [
+        { id: 'sc_001', title: '拒绝加班谈判', category: 'intern', difficulty: 3, tags: ['拒绝', '上下级'], background: '你刚结束周五的项目，老板在群里@你让周末加班赶进度。', real_user_certified: true },
+        { id: 'sc_002', title: '实习转正薪资谈判', category: 'jobhunt', difficulty: 4, tags: ['薪资', '谈判'], background: '实习期结束，HR约你聊转正，薪资比你预期低30%。', real_user_certified: true },
+      ],
+    }
     return HttpResponse.json(response)
   }),
 ]

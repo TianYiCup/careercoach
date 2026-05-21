@@ -54,7 +54,8 @@ function getState(): SandboxState {
   return hookRef.result.current.state
 }
 
-let hookRef: ReturnType<typeof renderHook<typeof useSandboxSession>>
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let hookRef: any
 
 function renderSessionHook() {
   hookRef = renderHook(() => useSandboxSession())

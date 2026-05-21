@@ -4,8 +4,12 @@
  * 导航：沙盘对练 / 实战副驾 / 复盘师 / Wrapped / 弱点画像
  */
 
+import { useEffect } from 'react'
 import { BlobBackground, GlassCard, MascotReaction, VibePill, StreakFire, StickerBadge } from '../../components'
 import { useAuth } from '../auth'
+import { useStreak } from './useStreak'
+import { useVibe } from './useVibe'
+import type { UiVibeType } from './useVibe'
 
 type Page = 'home' | 'sandbox' | 'copilot' | 'wrapped' | 'score' | 'reviewUpload' | 'reviewResult' | 'weakness'
 
@@ -16,6 +20,16 @@ export function HomePage({
 }) {
   const { user, logout } = useAuth()
   const isMinor = user?.is_minor ?? false
+  const { state: streakState, refetch: refetchStreak } = useStreak()
+  const { state: vibeState, setVibe } = useVibe()
+  const allVibes: UiVibeType[] = ['燃爆', '想躺平', '莫名烦', '雄心勃勃', '佛系']
+
+  // Fetch streak on mount if not loaded
+  useEffect(() => {
+    if (streakState.currentDays === 0 && !streakState.isLoading && !streakState.error) {
+      void refetchStreak()
+    }
+  }, [streakState.currentDays, streakState.isLoading, streakState.error, refetchStreak])
 
   return (
     <div className="relative min-h-screen flex flex-col items-center px-4 py-12 overflow-hidden">
@@ -38,12 +52,17 @@ export function HomePage({
           不教你说违心话，只教你说真话还能赢。
         </p>
         <div className="mt-4 flex items-center justify-center gap-2">
-          <VibePill vibe="燃爆" />
-          <VibePill vibe="雄心勃勃" />
-          <VibePill vibe="佛系" />
+          {allVibes.map(v => (
+            <VibePill
+              key={v}
+              vibe={v}
+              onClick={() => setVibe(v)}
+              className={vibeState.activeVibe === v ? 'ring-2 ring-vivid-purple/60' : ''}
+            />
+          ))}
         </div>
         <div className="mt-3 flex justify-center">
-          <StreakFire days={12} />
+          <StreakFire days={streakState.currentDays} />
         </div>
       </div>
 
