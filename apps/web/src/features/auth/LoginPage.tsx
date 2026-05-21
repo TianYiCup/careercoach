@@ -55,7 +55,16 @@ export function LoginPage() {
       setCode('');
       setCooldown(res.ttl);
     } catch (e) {
-      setError(_humanizeSendError(e));
+      const msg = _humanizeSendError(e);
+      setError(msg);
+      // B-8: Read Retry-After header on 429 to start cooldown
+      if (e instanceof ApiError && e.status === 429) {
+        const retryAfter = e.headers.get('Retry-After');
+        if (retryAfter) {
+          const secs = Number(retryAfter);
+          if (secs > 0) setCooldown(secs);
+        }
+      }
     } finally {
       setPending(false);
     }
@@ -255,7 +264,12 @@ function _humanizeSendError(e: unknown): string {
     if (e.status === 400) return '手机号格式不对';
     if (e.status === 429) {
       const code = (e.body as { code?: string })?.code;
-      if (code === 'SMS_SEND_COOLDOWN') return '发送太频繁，请稍后再试';
+      if (code === 'SMS_SEND_COOLDOWN') {
+        const retryAfter = e.headers.get('Retry-After');
+        const secs = retryAfter ? Number(retryAfter) : 0;
+        if (secs > 0) return `发送太频繁，${secs} 秒后再试`;
+        return '发送太频繁，请稍后再试';
+      }
       return '请求太频繁，稍后再试';
     }
   }
