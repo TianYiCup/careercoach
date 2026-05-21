@@ -293,6 +293,58 @@ export interface WeaknessProfile {
   recommendations: RecommendedScenario[]
 }
 
+// --- Vibe (PRD §7.11 / PR #129) ---
+
+export type VibeType = 'fire' | 'tired' | 'anxious' | 'excited' | 'meh'
+
+export interface SetVibeRequest {
+  vibe: VibeType
+}
+
+export interface VibeResponse {
+  vibe: VibeType
+  /** Asia/Shanghai calendar date the check-in is filed under */
+  logged_date: string
+}
+
+// --- Streak (PRD §7.11 / PR #130) ---
+
+export interface StreakResponse {
+  /** Consecutive practice days up to and including today */
+  current_days: number
+  /** All-time best streak */
+  max_days: number
+}
+
+// --- Weakness Profile API response (PR #131) ---
+
+export interface WeaknessProfileResponse {
+  /** Tracked weaknesses, highest-frequency first. Empty until first scored session. */
+  weaknesses: Array<{
+    tag: string
+    frequency: number
+    last_seen: string
+  }>
+  /** Scenarios to train against (max 3) */
+  recommended_scenarios: ScenarioSummary[]
+}
+
+// --- Custom Scenario (PRD §7.3 / PR #132-133) ---
+
+export interface CustomScenarioRequest {
+  /** Free-text scenario description. ≥30 chars, ≤1000. */
+  description: string
+}
+
+export interface CustomScenarioResponse {
+  /** Immediately usable as scenario_id for POST /v1/sessions */
+  scenario_id: string
+  title: string
+  background: string
+  persona_title: string
+  opening_line: string
+}
+
 // --- API error codes (emitted as body.code on 4xx) ---
 
 export type ApiErrorCode =
@@ -303,6 +355,8 @@ export type ApiErrorCode =
   | 'SMS_VERIFY_LOCKED'
   | 'USER_INPUT_BLOCKED'
   | 'CAPTION_BLOCKED'
+  | 'SCENARIO_BLOCKED'
+  | 'RATE_LIMIT_EXCEEDED'
   | 'INVALID_CODE'
   | 'NOT_FOUND'
   | 'ALREADY_ENDED'
