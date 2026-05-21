@@ -1,0 +1,201 @@
+.review-result {
+  min-height: 100vh;
+  background: #0F0B1A;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.review-result-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24px 32px;
+}
+
+.review-result-back {
+  color: #A8A3B8;
+  font-size: 28px;
+}
+
+.review-result-title {
+  color: #F0ECF4;
+  font-size: 34px;
+  font-weight: 600;
+}
+
+.review-result-spacer {
+  width: 56px;
+}
+
+.review-result-loading,
+.review-result-error {
+  display: block;
+  text-align: center;
+  color: #A8A3B8;
+  font-size: 28px;
+  padding-top: 200px;
+}
+
+.review-result-error {
+  color: #FF6B35;
+}
+
+.review-result-card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 24px;
+  margin: 0 32px 20px;
+}
+
+.review-result-card--score {
+  text-align: center;
+}
+
+.review-result-score-value {
+  display: block;
+  color: #6C4DFF;
+  font-size: 72px;
+  font-weight: 700;
+}
+
+.review-result-score-label {
+  display: block;
+  color: #A8A3B8;
+  font-size: 24px;
+  margin-top: 4px;
+}
+
+.review-result-score-detail {
+  display: block;
+  color: #6D6880;
+  font-size: 22px;
+  margin-top: 12px;
+}
+
+.review-result-section {
+  padding: 0 32px;
+  margin-bottom: 24px;
+}
+
+.review-result-section-title {
+  display: block;
+  color: #F0ECF4;
+  font-size: 30px;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+
+.review-result-turn {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 12px;
+}
+
+.review-result-turn-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.review-result-turn-speaker {
+  color: #A8A3B8;
+  font-size: 22px;
+}
+
+.review-result-turn-speaker--user {
+  color: #6C4DFF;
+}
+
+.review-result-turn-badge {
+  border-radius: 999px;
+  padding: 4px 16px;
+}
+
+.review-result-turn-badge-text {
+  color: #FFFFFF;
+  font-size: 20px;
+  font-weight: 500;
+}
+
+.review-result-turn-content {
+  display: block;
+  color: #F0ECF4;
+  font-size: 26px;
+  line-height: 1.5;
+}
+
+.review-result-turn-reason {
+  display: block;
+  color: #FF4757;
+  font-size: 22px;
+  margin-top: 8px;
+}
+
+.review-result-turn-better {
+  background: rgba(0, 214, 143, 0.08);
+  border: 1px solid rgba(0, 214, 143, 0.2);
+  border-radius: 8px;
+  padding: 12px;
+  margin-top: 8px;
+}
+
+.review-result-turn-better-label {
+  display: block;
+  color: #00D68F;
+  font-size: 20px;
+  margin-bottom: 4px;
+}
+
+.review-result-turn-better-text {
+  display: block;
+  color: #F0ECF4;
+  font-size: 24px;
+}
+
+.review-result-turn-better-copy {
+  display: block;
+  color: #6C4DFF;
+  font-size: 22px;
+  margin-top: 8px;
+  text-align: right;
+}
+
+.review-result-card-label {
+  display: block;
+  color: #F0ECF4;
+  font-size: 26px;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+.review-result-card-item {
+  display: block;
+  color: #A8A3B8;
+  font-size: 24px;
+  line-height: 1.6;
+}
+
+.review-result-card--failures {
+  border-color: rgba(255, 71, 87, 0.2);
+}
+
+.review-result-card--improvements {
+  border-color: rgba(0, 214, 143, 0.2);
+}
+
+.review-result-btn {
+  background: linear-gradient(135deg, #6C4DFF, #B44DFF);
+  border-radius: 999px;
+  padding: 20px;
+  margin: 24px 32px;
+  text-align: center;
+}
+
+.review-result-btn-text {
+  color: #FFFFFF;
+  font-size: 28px;
+  font-weight: 500;
+}

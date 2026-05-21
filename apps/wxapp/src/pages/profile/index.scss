@@ -1,0 +1,251 @@
+.profile {
+  min-height: 100vh;
+  background: #0F0B1A;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.profile-header {
+  padding: 24px 32px;
+  text-align: center;
+}
+
+.profile-header-title {
+  color: #F0ECF4;
+  font-size: 36px;
+  font-weight: 600;
+}
+
+.profile-card {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 24px;
+  margin: 0 32px 24px;
+}
+
+.profile-avatar {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #6C4DFF, #B44DFF);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.profile-avatar-text {
+  color: #FFFFFF;
+  font-size: 32px;
+  font-weight: 600;
+}
+
+.profile-info {
+  flex: 1;
+}
+
+.profile-nickname {
+  display: block;
+  color: #F0ECF4;
+  font-size: 32px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.profile-tags {
+  display: flex;
+  gap: 8px;
+}
+
+.profile-tag {
+  background: rgba(108, 77, 255, 0.15);
+  color: #6C4DFF;
+  font-size: 20px;
+  padding: 4px 12px;
+  border-radius: 999px;
+}
+
+.profile-tag--minor {
+  background: rgba(255, 184, 0, 0.15);
+  color: #FFB800;
+}
+
+.profile-section {
+  padding: 0 32px;
+  margin-bottom: 24px;
+}
+
+.profile-section-title {
+  display: block;
+  color: #F0ECF4;
+  font-size: 28px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.profile-hero-card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 24px;
+  text-align: center;
+}
+
+.profile-hero-percentage {
+  display: block;
+  color: #FF6B35;
+  font-size: 56px;
+  font-weight: 700;
+}
+
+.profile-hero-tag {
+  display: block;
+  color: #F0ECF4;
+  font-size: 28px;
+  font-weight: 500;
+  margin-top: 4px;
+}
+
+.profile-hero-remark {
+  display: block;
+  color: #A8A3B8;
+  font-size: 24px;
+  margin-top: 8px;
+}
+
+.profile-weakness-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.profile-weakness-rank {
+  color: #6D6880;
+  font-size: 22px;
+  width: 40px;
+  flex-shrink: 0;
+}
+
+.profile-weakness-bar-wrap {
+  flex: 1;
+}
+
+.profile-weakness-tag {
+  display: block;
+  color: #F0ECF4;
+  font-size: 24px;
+  margin-bottom: 6px;
+}
+
+.profile-weakness-bar {
+  height: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.profile-weakness-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: #00D68F;
+}
+
+.profile-weakness-fill--high {
+  background: #FF6B35;
+}
+
+.profile-weakness-fill--mid {
+  background: #FFB800;
+}
+
+.profile-weakness-fill--low {
+  background: #00D68F;
+}
+
+.profile-weakness-count {
+  color: #6D6880;
+  font-size: 22px;
+  flex-shrink: 0;
+}
+
+.profile-stats {
+  display: flex;
+  gap: 16px;
+  padding: 0 32px;
+  margin-bottom: 24px;
+}
+
+.profile-stat {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 20px;
+  text-align: center;
+}
+
+.profile-stat-value {
+  display: block;
+  color: #6C4DFF;
+  font-size: 36px;
+  font-weight: 700;
+}
+
+.profile-stat-label {
+  display: block;
+  color: #6D6880;
+  font-size: 20px;
+  margin-top: 4px;
+}
+
+.profile-actions {
+  padding: 0 32px;
+  margin-bottom: 24px;
+}
+
+.profile-action-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  margin-bottom: 8px;
+}
+
+.profile-action-text {
+  color: #F0ECF4;
+  font-size: 26px;
+}
+
+.profile-action-arrow {
+  color: #6D6880;
+  font-size: 24px;
+}
+
+.profile-logout {
+  padding: 20px;
+  margin: 24px 32px;
+  text-align: center;
+  border: 1px solid rgba(255, 71, 87, 0.3);
+  border-radius: 12px;
+}
+
+.profile-logout-text {
+  color: #FF4757;
+  font-size: 26px;
+}
+
+.profile-error {
+  display: block;
+  text-align: center;
+  color: #FF6B35;
+  font-size: 24px;
+  margin: 16px 32px;
+}

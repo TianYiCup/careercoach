@@ -197,3 +197,30 @@
   color: #b8a7ff;
   font-weight: 500;
 }
+
+/* ── 底部导航 ────────────────── */
+.home-nav {
+  display: flex;
+  justify-content: space-around;
+  margin-top: 32px;
+  padding: 24px 0;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+}
+
+.home-nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.home-nav-icon {
+  font-size: 36px;
+}
+
+.home-nav-label {
+  font-size: 20px;
+  color: #A8A3B8;
+}
