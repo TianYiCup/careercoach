@@ -31,7 +31,7 @@ class ApiClient {
       if (res.status === 403 && (error as { code?: string }).code === 'AGE_REQUIRED') {
         emitAgeRequired();
       }
-      throw new ApiError(res.status, error);
+      throw new ApiError(res.status, error, res.headers);
     }
 
     return res.json() as Promise<T>;
@@ -73,8 +73,9 @@ class ApiClient {
 export class ApiError extends Error {
   status: number;
   body: unknown;
+  headers: Headers;
 
-  constructor(status: number, body: unknown) {
+  constructor(status: number, body: unknown, headers: Headers = new Headers()) {
     const message =
       typeof body === 'object' && body !== null && 'message' in body
         ? String((body as { message: unknown }).message)
@@ -82,6 +83,7 @@ export class ApiError extends Error {
     super(message);
     this.status = status;
     this.body = body;
+    this.headers = headers;
   }
 }
 
