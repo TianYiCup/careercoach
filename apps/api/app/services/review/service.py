@@ -54,12 +54,11 @@ from __future__ import annotations
 
 import secrets
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import structlog
 from langfuse import Langfuse
 
-from app.agents.reviewer import ReviewerResult, analyze_review
 from app.llm import LLMError, LLMProvider, TokenUsage
 from app.observability.langfuse import TurnTrace, begin_review_trace
 from app.schemas.moderation import ModerationCheckRequest
@@ -67,6 +66,14 @@ from app.services.moderation.backend import ModerationBackendError
 from app.services.moderation.service import ModerationService
 from app.services.review.repository import ReviewRepository, ReviewUploadRecord
 from app.services.review.worker import ReviewWorkerQueue
+
+if TYPE_CHECKING:
+    # `app.agents.reviewer` ↔ `app.services.review` form an import cycle
+    # (`reviewer` needs review's record types; review's service drives
+    # `reviewer`). The runtime users below import `analyze_review`
+    # function-locally; only the type name is needed at module scope,
+    # and `from __future__ import annotations` keeps it a string.
+    from app.agents.reviewer import ReviewerResult
 
 logger = structlog.get_logger(__name__)
 
@@ -346,6 +353,12 @@ class ReviewService:
         trace_id: str,
         trace: TurnTrace,
     ) -> None:
+        # Imported here, not at module scope, to break the
+        # `reviewer` ↔ `review.service` import cycle (see TYPE_CHECKING
+        # block above). By call time `app.agents.reviewer` is fully
+        # loaded.
+        from app.agents.reviewer import analyze_review
+
         usage: list[TokenUsage] = []
         try:
             result: ReviewerResult | None = await analyze_review(
