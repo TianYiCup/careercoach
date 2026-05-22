@@ -351,6 +351,68 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /v1/sessions/{session_id}/voice:
+    post:
+      tags:
+      - sessions
+      summary: Submit a voice turn — transcribe, then stream the opponent reply (SSE)
+      description: 'US-A3 voice turn. Transcribe the audio, then run the *identical*
+
+        `/turns` pipeline on the transcript — the stream''s first frame is
+
+        `user.transcribed`, the rest match a typed turn.
+
+
+        The audio bytes are never persisted (CLAUDE.md constraint #2 —
+
+        不存语音); only the transcript flows on, exactly like a typed reply.
+
+        Validate-then-stream is preserved: ASR + the shared turn validation
+
+        surface 4xx/5xx as normal HTTP responses before the SSE stream
+
+        opens.'
+      operationId: post_voice_turn_v1_sessions__session_id__voice_post
+      security:
+      - JWT: []
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          description: Session id from POST /v1/sessions.
+          title: Session Id
+        description: Session id from POST /v1/sessions.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Body_post_voice_turn_v1_sessions__session_id__voice_post'
+      responses:
+        '200':
+          description: Server-Sent Events stream. Identical to POST /turns except the first frame is `user.transcribed`
+            (the ASR transcript of the uploaded audio); the opponent / coach / meta / moderation frames
+            that follow are the same `SseEventEnvelope.frame` discriminated union. Wire example in PRD
+            §7.4.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SseEventEnvelope'
+            text/event-stream: {}
+        '400':
+          description: transcribed content blocked by content moderation
+        '404':
+          description: session not found
+        '409':
+          description: session already ended
+        '413':
+          description: audio upload exceeds the size limit
+        '422':
+          description: ASR produced an empty transcript (PRD US-A3 — 没听清)
+        '502':
+          description: ASR provider unavailable — fall back to a typed turn
   /v1/sessions/{session_id}/end:
     post:
       tags:
@@ -1147,6 +1209,17 @@ paths:
                 $ref: '#/components/schemas/PersonaListResponse'
 components:
   schemas:
+    Body_post_voice_turn_v1_sessions__session_id__voice_post:
+      properties:
+        audio:
+          type: string
+          format: binary
+          title: Audio
+          description: 16kHz wav/opus utterance (PRD §7.4).
+      type: object
+      required:
+      - audio
+      title: Body_post_voice_turn_v1_sessions__session_id__voice_post
     CoachHintEvent:
       properties:
         safe:
@@ -2739,14 +2812,15 @@ components:
       properties:
         frame:
           oneOf:
+          - $ref: '#/components/schemas/_UserTranscribedFrame'
           - $ref: '#/components/schemas/_OpponentDeltaFrame'
           - $ref: '#/components/schemas/_OpponentDoneFrame'
           - $ref: '#/components/schemas/_CoachHintFrame'
           - $ref: '#/components/schemas/_MetaFrame'
           - $ref: '#/components/schemas/_ModerationFrame'
           title: Frame
-          description: One frame of the /sessions/{id}/turns SSE stream. The `event` tag selects the matching
-            `data` shape.
+          description: One frame of a sandbox turn SSE stream (/turns or /voice). The `event` tag selects
+            the matching `data` shape.
           discriminator:
             propertyName: event
             mapping:
@@ -2755,6 +2829,7 @@ components:
               moderation: '#/components/schemas/_ModerationFrame'
               opponent.delta: '#/components/schemas/_OpponentDeltaFrame'
               opponent.done: '#/components/schemas/_OpponentDoneFrame'
+              user.transcribed: '#/components/schemas/_UserTranscribedFrame'
       type: object
       required:
       - frame
@@ -3077,6 +3152,28 @@ components:
       - is_minor
       title: UserPublic
       description: Fields safe to surface to the client. Never include `phone` raw — masked.
+    UserTranscribedEvent:
+      properties:
+        text:
+          type: string
+          title: Text
+          description: Final ASR transcript of the uploaded audio.
+          examples:
+          - 赵总，我周末有重要安排
+      type: object
+      required:
+      - text
+      title: UserTranscribedEvent
+      description: 'ASR transcript of an uploaded voice turn (PRD §7.4).
+
+
+        The first frame of the `POST /sessions/{id}/voice` stream — emitted
+
+        before any opponent reply so the UI can show the recognised text
+
+        (US-A3: "1s 内屏幕显示 ASR 文本"). Never appears in a `POST /turns`
+
+        stream, where the user already supplied the text.'
     ValidationError:
       properties:
         loc:
@@ -3295,6 +3392,19 @@ components:
       required:
       - data
       title: _OpponentDoneFrame
+    _UserTranscribedFrame:
+      properties:
+        event:
+          type: string
+          const: user.transcribed
+          title: Event
+          default: user.transcribed
+        data:
+          $ref: '#/components/schemas/UserTranscribedEvent'
+      type: object
+      required:
+      - data
+      title: _UserTranscribedFrame
   securitySchemes:
     JWT:
       type: http

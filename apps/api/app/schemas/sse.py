@@ -1,4 +1,4 @@
-"""SSE event payload schemas for POST /v1/sessions/{id}/turns (PRD §7.4).
+"""SSE event payload schemas for the sandbox turn streams (PRD §7.4).
 
 Each model represents the JSON body of a single SSE `data:` line. The wire
 format is:
@@ -7,8 +7,13 @@ format is:
     data: <json model>
 
 The frontend should switch on `event` to pick the matching model. We expose
-all five payloads in the OpenAPI schema (under components/schemas) so
+every payload in the OpenAPI schema (under components/schemas) so
 openapi-typescript generates a discriminated union for B's MSW + client.
+
+`POST /turns` emits `opponent.delta` / `opponent.done` / `coach.hint` /
+`meta` / `moderation`. `POST /voice` prepends a `user.transcribed` frame
+(the ASR transcript) and is otherwise identical — both routes share this
+one frame vocabulary.
 """
 
 from typing import Annotated, Literal
@@ -100,7 +105,30 @@ class ModerationInterceptEvent(BaseModel):
     )
 
 
-SseEventName = Literal["opponent.delta", "opponent.done", "coach.hint", "meta", "moderation"]
+class UserTranscribedEvent(BaseModel):
+    """ASR transcript of an uploaded voice turn (PRD §7.4).
+
+    The first frame of the `POST /sessions/{id}/voice` stream — emitted
+    before any opponent reply so the UI can show the recognised text
+    (US-A3: "1s 内屏幕显示 ASR 文本"). Never appears in a `POST /turns`
+    stream, where the user already supplied the text.
+    """
+
+    text: str = Field(
+        ...,
+        description="Final ASR transcript of the uploaded audio.",
+        examples=["赵总，我周末有重要安排"],
+    )
+
+
+SseEventName = Literal[
+    "user.transcribed",
+    "opponent.delta",
+    "opponent.done",
+    "coach.hint",
+    "meta",
+    "moderation",
+]
 
 
 class _OpponentDeltaFrame(BaseModel):
@@ -128,21 +156,32 @@ class _ModerationFrame(BaseModel):
     data: ModerationInterceptEvent
 
 
+class _UserTranscribedFrame(BaseModel):
+    event: Literal["user.transcribed"] = "user.transcribed"
+    data: UserTranscribedEvent
+
+
 SseEventFrame = Annotated[
-    _OpponentDeltaFrame | _OpponentDoneFrame | _CoachHintFrame | _MetaFrame | _ModerationFrame,
+    _UserTranscribedFrame
+    | _OpponentDeltaFrame
+    | _OpponentDoneFrame
+    | _CoachHintFrame
+    | _MetaFrame
+    | _ModerationFrame,
     Field(
         discriminator="event",
         description=(
-            "One frame of the /sessions/{id}/turns SSE stream. "
+            "One frame of a sandbox turn SSE stream (/turns or /voice). "
             "The `event` tag selects the matching `data` shape."
         ),
     ),
 ]
-"""Discriminated union of all SSE frames emitted by /sessions/{id}/turns.
+"""Discriminated union of every SSE frame the sandbox turn streams emit.
 
-Used as a response_model on the route so FastAPI registers all five payload
-schemas + the five frame wrappers in components/schemas. Frontend's
-openapi-typescript output will produce a tagged union the UI can switch on.
+Used as a response_model on both /turns and /voice so FastAPI registers
+all payload schemas + frame wrappers in components/schemas. Frontend's
+openapi-typescript output will produce a tagged union the UI can switch
+on. `user.transcribed` only ever appears in the /voice stream.
 """
 
 

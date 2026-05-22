@@ -4,14 +4,17 @@ Public surface:
   * `SessionRecord` + `SessionRepository` Protocol + `InMemorySessionRepository`
   * `TurnRecord` + `CoachHintTrio` + `TurnRepository` + `InMemoryTurnRepository`
   * `SessionService` (create + end) + `TurnService` (turns with SSE)
+  * `VoiceTranscriptionService` (ASR step of the /voice turn) + `ValidatedTurn`
   * Typed errors mapped at the route layer to 404 / 409 / 400
-  * `get_session_service()` + `get_turn_service()` factory singletons
+  * `get_session_service()` + `get_turn_service()` +
+    `get_voice_transcription_service()` factory singletons
 """
 
 from functools import lru_cache
 
 import structlog
 
+from app.asr import get_asr_provider
 from app.config import get_settings
 from app.db.session import async_session_factory
 from app.llm.factory import get_llm_router
@@ -41,6 +44,11 @@ from app.services.sessions.turn_service import (
     SessionNotFoundForTurnError,
     TurnService,
     UserInputBlockedError,
+    ValidatedTurn,
+)
+from app.services.sessions.voice import (
+    VoiceTranscriptionError,
+    VoiceTranscriptionService,
 )
 from app.services.sharecards.session_score import get_session_score_repository
 
@@ -95,6 +103,19 @@ def get_turn_service() -> TurnService:
 
 
 @lru_cache(maxsize=1)
+def get_voice_transcription_service() -> VoiceTranscriptionService:
+    """Default wiring for the ASR step of `POST /v1/sessions/{id}/voice`.
+
+    The ASR backend (`dummy` for dev / tests, `aliyun` in production)
+    is chosen by the `asr_backend` setting inside `get_asr_provider`.
+    Tests override via `app.dependency_overrides`.
+    """
+    asr = get_asr_provider()
+    logger.info("voice_transcription_service_wired", asr=asr.name)
+    return VoiceTranscriptionService(asr=asr)
+
+
+@lru_cache(maxsize=1)
 def _get_session_repository() -> SessionRepository:
     """Process-wide session repo singleton. Backend chosen via settings —
     `memory` for dev / tests, `postgres` for production. The factory's
@@ -137,6 +158,10 @@ __all__ = [
     "TurnRepository",
     "TurnService",
     "UserInputBlockedError",
+    "ValidatedTurn",
+    "VoiceTranscriptionError",
+    "VoiceTranscriptionService",
     "get_session_service",
     "get_turn_service",
+    "get_voice_transcription_service",
 ]

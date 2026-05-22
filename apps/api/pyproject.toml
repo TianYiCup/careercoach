@@ -95,6 +95,9 @@ ignore = [
 # Sessions tests carry Chinese fixtures and implement `LLMProvider` stubs that
 # require the `timeout=` parameter to match the protocol signature.
 "tests/test_sessions_*.py" = ["RUF001", "RUF002", "RUF003", "ASYNC109"]
+# Voice-turn tests carry Chinese fixtures and stub the ASRProvider, whose
+# `transcribe_stream` contract requires the `timeout=` parameter.
+"tests/test_voice_*.py" = ["RUF001", "RUF002", "RUF003", "ASYNC109"]
 "tests/test_scenarios_*.py" = ["RUF001", "RUF002", "RUF003"]
 # Custom-scenario tests carry Chinese scenario descriptions + sample copy,
 # and stub LLMProvider with the contract-required `timeout=` parameter.

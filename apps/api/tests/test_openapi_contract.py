@@ -21,6 +21,8 @@ REQUIRED_ENDPOINTS: set[tuple[str, str]] = {
     ("post", "/v1/sessions"),
     ("post", "/v1/sessions/{session_id}/turns"),
     ("post", "/v1/sessions/{session_id}/end"),
+    # US-A3: voice turn (PRD §7.4). Multipart audio in, SSE turn out.
+    ("post", "/v1/sessions/{session_id}/voice"),
     ("post", "/v1/moderation/check"),
     ("post", "/v1/sharecards/session/{session_id}"),
     ("post", "/v1/sharecards/weekly"),
@@ -149,10 +151,11 @@ async def test_health_still_works(client: AsyncClient) -> None:
 
 
 def test_sse_event_schemas_registered() -> None:
-    """B generates types from openapi.yaml; the 4 SSE payloads + envelope must be present."""
+    """B generates types from openapi.yaml; the SSE payloads + envelope must be present."""
     schemas = app.openapi()["components"]["schemas"]
 
     for name in (
+        "UserTranscribedEvent",
         "OpponentDeltaEvent",
         "OpponentDoneEvent",
         "CoachHintEvent",
