@@ -12,6 +12,7 @@ from app.routes.v1 import (
     copilot,
     moderation,
     ops,
+    personas,
     review,
     scenarios,
     sessions,
@@ -40,5 +41,7 @@ router.include_router(ops.router)
 router.include_router(vibe.router)
 # R3-2: practice-streak counter. Read-only here; advanced by POST /sessions.
 router.include_router(streak.router)
+# US-A2: opponent persona catalog. Static, read-only, no auth (like /scenarios).
+router.include_router(personas.router)
 
 __all__ = ["router"]
