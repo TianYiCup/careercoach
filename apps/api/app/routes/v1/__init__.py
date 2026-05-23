@@ -18,6 +18,7 @@ from app.routes.v1 import (
     sessions,
     sharecards,
     streak,
+    tts,
     users,
     vibe,
 )
@@ -43,5 +44,8 @@ router.include_router(vibe.router)
 router.include_router(streak.router)
 # US-A2: opponent persona catalog. Static, read-only, no auth (like /scenarios).
 router.include_router(personas.router)
+# US-B2: streaming TTS for Coach K's earphone whisper. Adult-only via
+# require_adult (same compliance gate as copilot).
+router.include_router(tts.router)
 
 __all__ = ["router"]

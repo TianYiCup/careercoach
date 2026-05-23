@@ -53,6 +53,8 @@ REQUIRED_ENDPOINTS: set[tuple[str, str]] = {
     ("post", "/v1/scenarios/custom"),
     # US-A2: opponent persona catalog (PRD §7.3). Static, read-only, no auth.
     ("get", "/v1/personas"),
+    # US-B2: streaming TTS for Coach K's earphone whisper. Adult-only.
+    ("post", "/v1/tts/synthesize"),
 }
 
 # Endpoints intentionally shipped as 501 stubs so the compliance gates

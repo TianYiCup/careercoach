@@ -1207,6 +1207,51 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PersonaListResponse'
+  /v1/tts/synthesize:
+    post:
+      tags:
+      - tts
+      summary: Synthesize Mandarin text to streaming audio (PRD US-B2)
+      description: Moderate the input, then stream synthesized audio.
+      operationId: synthesize_audio_v1_tts_synthesize_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TTSSynthesizeRequest'
+        required: true
+      responses:
+        '200':
+          description: Audio bytes streamed in the requested container. First byte typically arrives <
+            1.5s; total duration scales with text length.
+          content:
+            application/json:
+              schema: {}
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+            audio/ogg:
+              schema:
+                type: string
+                format: binary
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+        '401':
+          description: Missing or invalid bearer token.
+        '403':
+          description: '`AGE_REQUIRED` if the JWT lacks `age_set=true`; `MINOR_FORBIDDEN` if the caller
+            is under 18. PRD §1.5 / R-15.'
+        '422':
+          description: '`TTS_INPUT_BLOCKED` if the text fails red-line moderation (PRD §3.0.5); validation
+            errors otherwise.'
+        '503':
+          description: '`TTS_UNAVAILABLE` when the configured provider(s) cannot synthesize — vendor outage,
+            auth misconfig, or timeout.'
+      security:
+      - JWT: []
 components:
   schemas:
     Body_post_voice_turn_v1_sessions__session_id__voice_post:
@@ -2867,6 +2912,42 @@ components:
       - max_days
       title: StreakResponse
       description: '`GET /v1/streak` — drives the home screen''s StreakFire counter.'
+    TTSSynthesizeRequest:
+      properties:
+        text:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Text
+          description: Mandarin text to synthesize. Subject to red-line moderation before the provider
+            sees it (PRD §3.0.5).
+          examples:
+          - 下一句可以这样说：先问对方时间方便不方便，再切正题。
+        voice:
+          type: string
+          const: k-warm
+          title: Voice
+          description: Stable voice id. v1 ships only `k-warm` (warm Mandarin female, matching Coach K's
+            '嘴硬心软' tone). Future voices append here.
+          default: k-warm
+          examples:
+          - k-warm
+        audio_format:
+          type: string
+          enum:
+          - mp3
+          - ogg
+          - wav
+          title: Audio Format
+          description: Container for the response body. `mp3` plays everywhere.
+          default: mp3
+          examples:
+          - mp3
+      type: object
+      required:
+      - text
+      title: TTSSynthesizeRequest
+      description: '`POST /v1/tts/synthesize` body.'
     TokenCostBreakdownEntry:
       properties:
         key:
