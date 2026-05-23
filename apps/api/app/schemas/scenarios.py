@@ -24,9 +24,22 @@ class ScenarioSummary(BaseModel):
         description="Short scenario blurb shown in the picker card.",
         examples=["你刚结束周五的项目，老板在群里 @ 你..."],
     )
+    certification_count: int = Field(
+        ...,
+        ge=0,
+        description=(
+            "Number of real students who validated this scenario "
+            "(PRD §3.0.5 D). The picker treats `>= 5` as certified."
+        ),
+        examples=[5],
+    )
     real_user_certified: bool = Field(
         ...,
-        description="True only if ≥ 5 real students validated this scenario (PRD §3.0.5 D).",
+        description=(
+            "Derived from `certification_count >= 5` (PRD §3.0.5 D). "
+            "Kept on the response for backwards compatibility with "
+            "existing clients that branch on the boolean."
+        ),
         examples=[True],
     )
 

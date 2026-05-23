@@ -1,10 +1,11 @@
 """`ScenarioService` — filtering + projection for `GET /v1/scenarios`.
 
-The repository holds raw `ScenarioRecord`s with both summary (title /
-category / difficulty / tags / background / real_user_certified) and
-seed (persona_title / opening_line) fields. This service is what
-projects them down to the `ScenarioSummary` HTTP shape and applies
-the route's two query filters:
+The repository holds raw `ScenarioRecord`s with summary fields (title /
+category / difficulty / tags / background / certification_count /
+certified_student_ids) plus the seed fields (persona_title /
+opening_line) that the session pipeline needs. This service projects
+them down to the `ScenarioSummary` HTTP shape and applies the route's
+two query filters:
 
 * `category` — exact match on the literal enum
 * `q` — free-text substring across title, tags, and background
@@ -84,9 +85,15 @@ def _matches_query(record: ScenarioRecord, needle: str) -> bool:
 
 
 def _to_summary(record: ScenarioRecord) -> ScenarioSummary:
-    """Drop the seed-only fields (persona_title / opening_line) before
-    leaving the service boundary — `/v1/scenarios` consumers shouldn't
-    see what's privileged for session create."""
+    """Drop the seed-only fields (persona_title / opening_line) and the
+    student-id traceability list before leaving the service boundary.
+
+    `/v1/scenarios` consumers shouldn't see what's privileged for
+    session create (persona_title / opening_line), and they don't need
+    the raw `certified_student_ids` either — the picker only branches
+    on the certified bool + count, and exposing per-student IDs would
+    leak PII even if anonymised.
+    """
     return ScenarioSummary(
         id=record.id,
         title=record.title,
@@ -94,7 +101,8 @@ def _to_summary(record: ScenarioRecord) -> ScenarioSummary:
         difficulty=record.difficulty,
         tags=list(record.tags),
         background=record.background,
-        real_user_certified=record.real_user_certified,
+        certification_count=record.certification_count,
+        real_user_certified=record.is_certified,
     )
 
 

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, Integer, String, func
+from sqlalchemy import JSON, DateTime, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -46,10 +46,20 @@ class Scenario(Base):
 
     background: Mapped[str] = mapped_column(String(500), nullable=False)
 
-    real_user_certified: Mapped[bool] = mapped_column(
-        Boolean,
+    # PRD §3.0.5 D — a scenario counts as "real-user certified" once ≥ 5
+    # students have validated it. `certification_count` is the canonical
+    # gate value; `certified_student_ids` carries the anonymised IDs of
+    # the validators so the count is traceable. The repository invariant
+    # `len(ids) >= count` is enforced in `test_scenarios_repository`.
+    certification_count: Mapped[int] = mapped_column(
+        Integer,
         nullable=False,
-        server_default="false",
+        server_default="0",
+    )
+    certified_student_ids: Mapped[list[str]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
     )
 
     # Seed fields colocated so session create doesn't join.

@@ -276,7 +276,8 @@ def _parse_generated(raw: str) -> ScenarioRecord | None:
         difficulty=3,  # mid — the picker only surfaces difficulty for catalog rows
         tags=(),
         background=background.group(1).strip(),
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title=persona.group(1).strip(),
         opening_line=opening.group(1).strip(),
     )
@@ -293,7 +294,8 @@ def _build_placeholder(description: str) -> ScenarioRecord:
         difficulty=3,
         tags=(),
         background=description,
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="对手",
         opening_line="我们开始吧，你先说。",
     )
