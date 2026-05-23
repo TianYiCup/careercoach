@@ -222,6 +222,17 @@ class Settings(BaseSettings):
         description="Per-utterance budget end-to-end (connect + stream + final).",
     )
 
+    # TTS backend selection — A1.1 ships only `dummy` (synthetic WAV)
+    # for dev/tests. The stacked follow-up PR (A1.2) widens this
+    # Literal and adds `edge` + `aliyun` along with their per-provider
+    # settings (Aliyun AppKey / WS endpoint).
+    tts_backend: Literal["dummy"] = Field(
+        default="dummy",
+        description=(
+            "TTS provider backend. A1.1 ships only `dummy`; `edge` + `aliyun` land in A1.2."
+        ),
+    )
+
     # Share-card storage. `dir` is where the LocalFilesystemStorage drops
     # PNGs; `public_base_url` is the prefix the frontend hits to fetch
     # them. v0 dev runs both on the same FastAPI process; prod swaps

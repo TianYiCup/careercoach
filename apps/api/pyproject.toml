@@ -119,6 +119,10 @@ ignore = [
 # transcribe loop.
 "app/asr/**/*.py" = ["ASYNC109"]
 "tests/test_asr_*.py" = ["ASYNC109"]
+# TTS mirrors ASR — `timeout=` is part of the TTSProvider contract so
+# adapters can apply it end-to-end across the streaming synthesize loop.
+"app/tts/**/*.py" = ["ASYNC109"]
+"tests/test_tts_*.py" = ["ASYNC109", "RUF001", "RUF002", "RUF003"]
 # Copilot WS tests speak Chinese in coach-prompt fixtures and stub
 # LLMProvider with the contract-required `timeout=` parameter.
 "tests/test_copilot_*.py" = ["RUF001", "RUF002", "RUF003", "ASYNC109"]
