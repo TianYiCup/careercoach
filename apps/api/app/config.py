@@ -222,15 +222,32 @@ class Settings(BaseSettings):
         description="Per-utterance budget end-to-end (connect + stream + final).",
     )
 
-    # TTS backend selection — A1.1 ships only `dummy` (synthetic WAV)
-    # for dev/tests. The stacked follow-up PR (A1.2) widens this
-    # Literal and adds `edge` + `aliyun` along with their per-provider
-    # settings (Aliyun AppKey / WS endpoint).
-    tts_backend: Literal["dummy"] = Field(
+    # TTS backend selection — `dummy` (synthetic WAV) for dev/tests,
+    # `edge` for Microsoft Edge TTS over WSS (foundation §3.4.2, no
+    # key required), `aliyun` for the NLS streaming TTS backup.
+    # Default `dummy` so tests run offline; production sets `edge`.
+    tts_backend: Literal["dummy", "edge", "aliyun"] = Field(
         default="dummy",
         description=(
-            "TTS provider backend. A1.1 ships only `dummy`; `edge` + `aliyun` land in A1.2."
+            "TTS provider backend. `dummy` for dev/tests, `edge` for Microsoft "
+            "Edge TTS (no key), `aliyun` for Aliyun NLS streaming TTS."
         ),
+    )
+
+    # Aliyun NLS streaming TTS — same AK/secret as ASR + moderation;
+    # AppKey is project-specific (separate from `aliyun_asr_app_key`,
+    # registered per app on the Aliyun console).
+    aliyun_tts_app_key: SecretStr = Field(
+        default=SecretStr(""),
+        description="Aliyun NLS TTS app key (per-project, separate from the ASR AppKey).",
+    )
+    aliyun_tts_ws_url: str = Field(
+        default="wss://nls-gateway-cn-shanghai.aliyuncs.com/ws/v1",
+        description="Aliyun NLS realtime streaming endpoint (TTS shares the ASR gateway).",
+    )
+    aliyun_tts_timeout_s: float = Field(
+        default=8.0,
+        description="Per-synthesis budget end-to-end (connect + stream + final).",
     )
 
     # Share-card storage. `dir` is where the LocalFilesystemStorage drops
