@@ -17,6 +17,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+# PRD §3.0.5 D — "每个场景需 ≥ 5 真实学生认证". This constant is the
+# single source of truth for that threshold; bumping it requires also
+# refreshing the placeholder seed IDs below and the repository invariant
+# in `test_scenarios_repository`.
+REAL_USER_CERTIFIED_MIN_COUNT = 5
+
 
 @dataclass(frozen=True)
 class ScenarioRecord:
@@ -26,6 +32,10 @@ class ScenarioRecord:
     Splitting `title` (used by both summary and seed) means the
     persona_title + opening_line live with the same identifier so a
     DB rename of the title only happens once.
+
+    `certification_count` + `certified_student_ids` together encode the
+    §3.0.5 D ≥ 5-student certification gate. `is_certified` is the
+    derived bool the API and CI gates compare against.
     """
 
     id: str
@@ -34,7 +44,8 @@ class ScenarioRecord:
     difficulty: int  # 1-5
     tags: tuple[str, ...]
     background: str
-    real_user_certified: bool
+    certification_count: int
+    certified_student_ids: tuple[str, ...]
     persona_title: str
     opening_line: str
 
@@ -43,6 +54,11 @@ class ScenarioRecord:
     @property
     def scenario_title(self) -> str:
         return self.title
+
+    @property
+    def is_certified(self) -> bool:
+        """True iff ≥ 5 real students validated this scenario (PRD §3.0.5 D)."""
+        return self.certification_count >= REAL_USER_CERTIFIED_MIN_COUNT
 
 
 @dataclass(frozen=True)
@@ -63,14 +79,31 @@ class _FallbackRecord:
     difficulty: int = 2
     tags: tuple[str, ...] = field(default_factory=tuple)
     background: str = "未匹配到场景库中的条目，进入自由练习。"
-    real_user_certified: bool = False
+    certification_count: int = 0
+    certified_student_ids: tuple[str, ...] = field(default_factory=tuple)
 
     @property
     def scenario_title(self) -> str:
         return self.title
 
+    @property
+    def is_certified(self) -> bool:
+        return False
+
 
 FALLBACK_RECORD = _FallbackRecord()
+
+
+def _placeholder_ids(scenario_id: str) -> tuple[str, ...]:
+    """Five anonymised placeholder student IDs.
+
+    Used for the two pre-certified scenarios (sc_001 / sc_002, the
+    PRD §1.3 dogfood pair) while content-ops backfills real IDs.
+    The `s_placeholder_<scenario>_NN` pattern keeps the backfill audit
+    grep-friendly.
+    """
+    suffix = scenario_id.removeprefix("sc_")
+    return tuple(f"s_placeholder_sc{suffix}_{i:02d}" for i in range(1, 6))
 
 
 # Forty scenarios spanning all four ScenarioCategory literals, meeting
@@ -80,9 +113,15 @@ FALLBACK_RECORD = _FallbackRecord()
 #
 # The first three keep their PR 4a ids and copy so the MSW handlers
 # (`apps/web/src/mocks/handlers/api.ts`) and any cached frontend
-# fixtures continue to line up. Rows added after sc_007 carry
-# `real_user_certified=False` — the ≥ 5-student certification
-# (§3.0.5 D) is a separate content-ops pass, not a code change.
+# fixtures continue to line up.
+#
+# Certification (§3.0.5 D): only sc_001 / sc_002 ship with the ≥ 5
+# students-validated count + placeholder IDs. Every other row carries
+# `certification_count=0, certified_student_ids=()` — content-ops
+# replaces those placeholders with real student IDs and bumps the
+# remaining rows' counts as students dogfood them. The CI guard in
+# `test_scenarios_repository` enforces `len(ids) >= count` so a count
+# bump without backing IDs is a hard failure.
 SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
     ScenarioRecord(
         id="sc_001",
@@ -91,7 +130,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=3,
         tags=("拒绝", "上下级"),
         background="你刚结束周五的项目，老板在群里@你让周末加班赶进度。",
-        real_user_certified=True,
+        certification_count=5,
+        certified_student_ids=_placeholder_ids("sc_001"),
         persona_title="强硬型 HR",
         opening_line="小林啊，这个周末项目得加个班，应该没问题吧？",
     ),
@@ -102,7 +142,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=4,
         tags=("薪资", "谈判"),
         background="实习期结束，HR 约你聊转正，薪资比你预期低 30%。",
-        real_user_certified=True,
+        certification_count=5,
+        certified_student_ids=_placeholder_ids("sc_002"),
         persona_title="老 HR",
         opening_line="坐吧，转正的事情我们聊聊。你的期望薪资是多少？",
     ),
@@ -113,7 +154,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=2,
         tags=("室友", "沟通"),
         background="室友每天打游戏到凌晨 2 点，你明天有早八。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="同寝室友",
         opening_line="嘿，再来一把？这把一定赢！",
     ),
@@ -124,7 +166,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=4,
         tags=("导师", "边界"),
         background="导师私下让你帮他做横向项目，没有任何报酬。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="强势导师",
         opening_line="这个项目你来负责一下吧，对你以后申博也有帮助。",
     ),
@@ -135,7 +178,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=1,
         tags=("面试", "自我介绍"),
         background="第一次校招面试，面试官让你做 2 分钟自我介绍。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="资深面试官",
         opening_line="你好，先做一个 2 分钟的自我介绍吧。",
     ),
@@ -146,7 +190,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=3,
         tags=("家人", "职业选择"),
         background="父母觉得稳定最重要，要你毕业就考公，你想做产品。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="操心的母亲",
         opening_line="你看小明都考上了，你怎么还不抓紧准备？",
     ),
@@ -157,7 +202,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=4,
         tags=("租房", "议价"),
         background="租约到期前一周，房东突然要涨 30% 房租。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="精打细算的房东",
         opening_line="今年市场都涨了，明年房租按 1500 收吧。",
     ),
@@ -169,7 +215,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=3,
         tags=("导师", "拖延"),
         background="导师拖着不回你的论文修改意见，答辩快到了。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="忙起来不回消息的导师",
         opening_line="最近会议多，你先按上次说的改着。",
     ),
@@ -180,7 +227,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=3,
         tags=("小组作业", "边界"),
         background="小组大作业 deadline 在即，有个组员一直不干活。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="摆烂的组员",
         opening_line="你们先做着，最后我来汇总，放心。",
     ),
@@ -191,7 +239,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=2,
         tags=("室友", "沟通"),
         background="室友长期把杂物堆在公共桌上，提醒了也不收。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="不拘小节的室友",
         opening_line="啊？那桌子不一直这样吗，没影响吧。",
     ),
@@ -202,7 +251,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=4,
         tags=("社团", "竞争"),
         background="社团换届，你和另一人都想当部长，要当众答辩。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="强势的竞争对手",
         opening_line="说实话，这个部长你来当，扛得住吗？",
     ),
@@ -213,7 +263,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=4,
         tags=("兼职", "维权"),
         background="奶茶店兼职做满一个月，老板找理由拖着不发工资。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="油滑的兼职老板",
         opening_line="这个月生意不好，工资过阵子一起发哈。",
     ),
@@ -224,7 +275,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=3,
         tags=("奖学金", "答辩"),
         background="奖学金评定答辩，评委质疑你科研经历的含金量。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="挑剔的评审老师",
         opening_line="你这个项目，是你自己做的，还是挂个名？",
     ),
@@ -235,7 +287,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=2,
         tags=("辅导员", "请假"),
         background="家里有事想请一周假，辅导员卡着不批。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="按规矩办事的辅导员",
         opening_line="请假可以，可你这周有两节点名课，怎么办？",
     ),
@@ -246,7 +299,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=2,
         tags=("室友", "金钱"),
         background="你借了室友钱一时还不上，室友开始旁敲侧击。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="不好意思直说的室友",
         opening_line="那个……上次那个事，你最近方便吗？",
     ),
@@ -257,7 +311,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=3,
         tags=("选课", "争取"),
         background="一门必修课名额满了，你想找教授加签进去。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="不想加人的教授",
         opening_line="这门课已经满了，你为什么非这学期上？",
     ),
@@ -268,7 +323,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=3,
         tags=("实验室", "边界"),
         background="实验室师兄总把自己的杂活推给你做。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="爱使唤人的师兄",
         opening_line="师弟，这数据你帮我跑一下呗，你反正闲着。",
     ),
@@ -280,7 +336,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=4,
         tags=("群面", "表达"),
         background="群面无领导讨论，有人一直抢话，你插不进去。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="强势抢话的候选人",
         opening_line="这题答案很明显，我先说几点……",
     ),
@@ -291,7 +348,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=5,
         tags=("谈薪", "谈判"),
         background="终面谈薪，HR 说预算有限，给的数字低于你预期。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="压价的 HR",
         opening_line="你的能力我们认可，但预算就这么多。",
     ),
@@ -302,7 +360,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=2,
         tags=("面试", "反问"),
         background="面试反问环节，你想问加班和福利又怕显得功利。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="面带微笑的面试官",
         opening_line="好，最后你有什么想问我的吗？",
     ),
@@ -313,7 +372,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=3,
         tags=("offer", "谈判"),
         background="你手握两个 offer，想用 B 公司争取 A 公司加薪。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="不想被拿捏的 HR",
         opening_line="你说有别的 offer，那家具体什么条件？",
     ),
@@ -324,7 +384,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=3,
         tags=("offer", "维权"),
         background="签了 offer，入职前一周被通知岗位延期两个月。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="一脸为难的 HR",
         opening_line="实在抱歉，编制有点变动，得请你再等等。",
     ),
@@ -335,7 +396,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=3,
         tags=("面试", "追问"),
         background="面试官追问你简历上半年的空窗期。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="盯着简历的面试官",
         opening_line="我看你这里空着半年，这段时间在做什么？",
     ),
@@ -346,7 +408,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=3,
         tags=("群面", "边界"),
         background="群面讨论结束，组员把汇报的活推给没准备的你。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="把活推出去的组员",
         opening_line="你思路最清楚，待会儿你来代表我们汇报。",
     ),
@@ -357,7 +420,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=2,
         tags=("校招", "沟通"),
         background="宣讲会后你想拦住 HR 问清楚岗位到底做什么。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="赶时间的 HR",
         opening_line="同学不好意思，我等下有会，你长话短说。",
     ),
@@ -369,7 +433,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=3,
         tags=("实习", "边界"),
         background="实习两周，导师只让你贴发票、订会议室。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="没空带你的实习导师",
         opening_line="你先把杂事熟悉一下，业务的事以后再说。",
     ),
@@ -380,7 +445,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=4,
         tags=("跨部门", "沟通"),
         background="你需要另一个组的数据，对接人一直说去找别人。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="不想沾事的隔壁组同事",
         opening_line="这个不归我管，你去问你们组长？",
     ),
@@ -391,7 +457,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=2,
         tags=("职场", "反馈"),
         background="你发的工作汇报邮件被正职同事说太学生气。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="直言不讳的正职同事",
         opening_line="你这邮件写得……有点像在交作业。",
     ),
@@ -402,7 +469,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=3,
         tags=("实习", "争取"),
         background="实习快结束，你想让导师在鉴定表上写优秀。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="评价谨慎的实习导师",
         opening_line="鉴定表我一般都写「良好」，这是惯例。",
     ),
@@ -413,7 +481,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=4,
         tags=("实习", "边界"),
         background="导师让你做的活早超出实习生职责，还说锻炼你。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="爱画饼的导师",
         opening_line="这项目交给你是看重你，做好了对转正有帮助。",
     ),
@@ -424,7 +493,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=1,
         tags=("职场", "沟通"),
         background="入职一周，午饭时你想跟组里正职同事搭上话。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="有点高冷的正职同事",
         opening_line="（同事自顾自刷手机）哦，你也来吃饭啊。",
     ),
@@ -435,7 +505,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=4,
         tags=("转正", "沟通"),
         background="实习期满，你想问转正名额，导师总绕开话题。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="不愿表态的导师",
         opening_line="转正的事公司还在定，你先做好手头的。",
     ),
@@ -446,7 +517,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=4,
         tags=("职场", "甩锅"),
         background="项目出了纰漏，同事把责任推到实习生你头上。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="急着甩锅的同事",
         opening_line="这个环节不是你负责吗？我记得交给你了。",
     ),
@@ -457,7 +529,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=3,
         tags=("职场", "边界"),
         background="活干完想准点走，但全组没人动，你不敢起身。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="习惯加班的组长",
         opening_line="才六点，你们年轻人现在都这么准时啊？",
     ),
@@ -469,7 +542,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=3,
         tags=("维权", "沟通"),
         background="买到有问题的商品申请退款，客服用话术一直拖。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="滴水不漏的客服",
         opening_line="这个情况需要您先提供更多凭证，请理解一下。",
     ),
@@ -480,7 +554,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=4,
         tags=("租房", "维权"),
         background="退租时房东以墙面有划痕为由要扣大半押金。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="锱铢必较的房东",
         opening_line="这墙弄成这样，押金肯定得扣，你自己看。",
     ),
@@ -491,7 +566,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=2,
         tags=("二手", "议价"),
         background="你在二手平台卖东西，买家收货后挑刺要退一半钱。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="得寸进尺的买家",
         opening_line="东西和描述不太一样，退我一半我就不退货。",
     ),
@@ -502,7 +578,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=3,
         tags=("金钱", "朋友"),
         background="半年前借给朋友一笔钱，对方一直不提还钱的事。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="装糊涂的朋友",
         opening_line="最近啊？手头还是有点紧，过阵子的哈。",
     ),
@@ -513,7 +590,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=3,
         tags=("感情", "沟通"),
         background="和对象因小事冷战三天，你想先服软又不想全认错。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="还在赌气的对象",
         opening_line="（对方没看你）怎么，今天想起来跟我说话了？",
     ),
@@ -524,7 +602,8 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         difficulty=3,
         tags=("家人", "拒绝"),
         background="亲戚想让你帮忙办超出你能力范围的事。",
-        real_user_certified=False,
+        certification_count=0,
+        certified_student_ids=(),
         persona_title="不好拒绝的长辈亲戚",
         opening_line="你在大城市认识人多，这点小忙不算什么吧？",
     ),
