@@ -112,3 +112,41 @@ def test_factory_refuses_aliyun_when_app_key_missing(
 
     with pytest.raises(ValueError, match="ALIYUN_ASR_APP_KEY"):
         get_asr_provider()
+
+
+# --- A2: whisper_cpp backend selection ---
+
+
+def test_factory_returns_whisper_cpp_when_backend_and_url_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`asr_backend=whisper_cpp` + a base URL must wire the self-hosted
+    HTTP adapter, not the dummy. The URL points to an in-cluster
+    whisper-server deployment; tests don't dial it, the factory just
+    builds the adapter."""
+    from app.asr import WhisperCppASRProvider
+    from app.config import get_settings
+
+    monkeypatch.setenv("ASR_BACKEND", "whisper_cpp")
+    monkeypatch.setenv("WHISPER_CPP_BASE_URL", "http://whisper.internal:8080")
+    get_settings.cache_clear()
+
+    provider = get_asr_provider()
+    assert isinstance(provider, WhisperCppASRProvider)
+
+
+def test_factory_refuses_whisper_cpp_when_base_url_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Flipping the backend to whisper_cpp without setting the URL
+    must fail loudly — same posture the Aliyun branch uses. A silent
+    fallback to dummy would let a privacy-mode deploy 'succeed' but
+    actually leak audio to no transcriber at all."""
+    from app.config import get_settings
+
+    monkeypatch.setenv("ASR_BACKEND", "whisper_cpp")
+    monkeypatch.setenv("WHISPER_CPP_BASE_URL", "")
+    get_settings.cache_clear()
+
+    with pytest.raises(ValueError, match="WHISPER_CPP_BASE_URL"):
+        get_asr_provider()
