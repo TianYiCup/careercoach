@@ -55,6 +55,9 @@ REQUIRED_ENDPOINTS: set[tuple[str, str]] = {
     ("get", "/v1/personas"),
     # US-B2: streaming TTS for Coach K's earphone whisper. Adult-only.
     ("post", "/v1/tts/synthesize"),
+    # §7.10: 教练 K expression timeline — log a moment, read it back.
+    ("post", "/v1/mascot/log"),
+    ("get", "/v1/mascot/expression"),
 }
 
 # Endpoints intentionally shipped as 501 stubs so the compliance gates
