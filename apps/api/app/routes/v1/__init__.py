@@ -10,6 +10,7 @@ from fastapi import APIRouter
 from app.routes.v1 import (
     auth,
     copilot,
+    mascot,
     moderation,
     ops,
     personas,
@@ -47,5 +48,7 @@ router.include_router(personas.router)
 # US-B2: streaming TTS for Coach K's earphone whisper. Adult-only via
 # require_adult (same compliance gate as copilot).
 router.include_router(tts.router)
+# §7.10: 教练 K expression timeline. Plain JWT auth — no LLM path.
+router.include_router(mascot.router)
 
 __all__ = ["router"]

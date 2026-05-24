@@ -1252,6 +1252,75 @@ paths:
             auth misconfig, or timeout.'
       security:
       - JWT: []
+  /v1/mascot/log:
+    post:
+      tags:
+      - mascot
+      summary: Record one 教练 K expression switch
+      description: 'PRD §7.10 — a best-effort ("弱关联，可丢失") timeline write. The
+
+        `at` timestamp is stamped server-side; `user_id` comes from the
+
+        JWT.'
+      operationId: log_mascot_moment_v1_mascot_log_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LogMascotMomentRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MascotMoment'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - JWT: []
+  /v1/mascot/expression:
+    get:
+      tags:
+      - mascot
+      summary: Get a session's 教练 K expression timeline
+      description: 'The caller''s expression timeline for `session_id`, oldest first.
+
+        A session with no logged moments returns an empty timeline, not a
+
+        404 — the same convention `GET /v1/streak` uses for a fresh user.'
+      operationId: get_mascot_expression_v1_mascot_expression_get
+      security:
+      - JWT: []
+      parameters:
+      - name: session_id
+        in: query
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Session id from POST /v1/sessions.
+          title: Session Id
+        description: Session id from POST /v1/sessions.
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MascotExpressionTimelineResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
     Body_post_voice_turn_v1_sessions__session_id__voice_post:
@@ -1701,6 +1770,106 @@ components:
         alone). `limit` is the cap the route applied; `count` is how
 
         many rows actually came back (≤ limit).'
+    LogMascotMomentRequest:
+      properties:
+        session_id:
+          type: string
+          maxLength: 64
+          minLength: 1
+          title: Session Id
+          description: Session the expression switch happened in.
+          examples:
+          - ses_018f3a8b1c2d7e3a
+        turn_idx:
+          type: integer
+          minimum: 0.0
+          title: Turn Idx
+          description: Zero-based turn index the expression switched at.
+          examples:
+          - 3
+        expression:
+          type: string
+          enum:
+          - confident
+          - burning
+          - thinking
+          - shenfeng
+          - fanche
+          - integrate
+          - caring
+          - sleeping
+          title: Expression
+          description: 教练 K's new expression.
+          examples:
+          - thinking
+      type: object
+      required:
+      - session_id
+      - turn_idx
+      - expression
+      title: LogMascotMomentRequest
+      description: '`POST /v1/mascot/log` body — PRD §7.10.
+
+
+        The client posts one 教练 K expression switch. `session_id` ties it
+
+        to a sandbox session; the owning `user_id` is taken from the JWT,
+
+        never the body.'
+    MascotExpressionTimelineResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/MascotMoment'
+          type: array
+          title: Items
+        total:
+          type: integer
+          minimum: 0.0
+          title: Total
+          description: Count of moments in `items`.
+      type: object
+      required:
+      - items
+      - total
+      title: MascotExpressionTimelineResponse
+      description: '`GET /v1/mascot/expression` — a session''s expression timeline,
+
+        oldest first. Used to replay 教练 K''s reactions on the Wrapped card.'
+    MascotMoment:
+      properties:
+        turn_idx:
+          type: integer
+          minimum: 0.0
+          title: Turn Idx
+          examples:
+          - 3
+        expression:
+          type: string
+          enum:
+          - confident
+          - burning
+          - thinking
+          - shenfeng
+          - fanche
+          - integrate
+          - caring
+          - sleeping
+          title: Expression
+          examples:
+          - thinking
+        at:
+          type: string
+          format: date-time
+          title: At
+          description: UTC timestamp the moment was recorded (CLAUDE.md §6).
+      type: object
+      required:
+      - turn_idx
+      - expression
+      - at
+      title: MascotMoment
+      description: One entry in 教练 K's expression timeline.
     MetaEvent:
       properties:
         turns_used:
