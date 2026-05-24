@@ -1,11 +1,14 @@
 """ASR DI factory.
 
 Backends:
-  * `dummy`  — in-process UTF-8 echo (A-17). Default; covers tests +
-              dev runs without an ASR vendor account.
-  * `aliyun` — Aliyun NLS realtime streaming (A-28). Requires
-              ALIYUN_ACCESS_KEY_ID/SECRET (shared with moderation)
-              plus ALIYUN_ASR_APP_KEY (per-project NLS key).
+  * `dummy`       — in-process UTF-8 echo (A-17). Default; covers tests
+                    + dev runs without an ASR vendor account.
+  * `aliyun`      — Aliyun NLS realtime streaming (A-28). Requires
+                    ALIYUN_ACCESS_KEY_ID/SECRET (shared with moderation)
+                    plus ALIYUN_ASR_APP_KEY (per-project NLS key).
+  * `whisper_cpp` — self-hosted whisper.cpp HTTP server (US-B3 privacy
+                    path). Requires WHISPER_CPP_BASE_URL; the server
+                    itself runs separately (we do not embed the model).
 
 Callers never see the concrete adapter — they depend on the
 `ASRProvider` Protocol and the factory hands them whichever one
@@ -25,6 +28,7 @@ import structlog
 from app.asr.aliyun import AliyunASRProvider
 from app.asr.dummy import DummyASRProvider
 from app.asr.provider import ASRProvider
+from app.asr.whisper_cpp import WhisperCppASRProvider
 from app.config import get_settings
 
 logger = structlog.get_logger(__name__)
@@ -68,4 +72,14 @@ def get_asr_provider() -> ASRProvider:
             ws_url=settings.aliyun_asr_ws_url,
             token_url=settings.aliyun_asr_token_url,
         )
+    if backend == "whisper_cpp":
+        base_url = settings.whisper_cpp_base_url
+        if not base_url:
+            raise ValueError("asr_backend=whisper_cpp requires WHISPER_CPP_BASE_URL")
+        logger.info(
+            "asr_provider_wired",
+            backend="whisper_cpp",
+            base_url=base_url,
+        )
+        return WhisperCppASRProvider(base_url=base_url)
     raise ValueError(f"unsupported asr backend: {backend!r}")

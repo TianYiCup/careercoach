@@ -131,15 +131,38 @@ class Settings(BaseSettings):
     )
 
     # ASR backend selection — `dummy` (UTF-8 echo) for tests + dev,
-    # `aliyun` for the real NLS streaming ASR (A-28). The factory
-    # refuses to wire `aliyun` if the AK/secret/app_key are unset
-    # so a misconfigured prod boot fails loudly rather than silently
-    # falling back to a non-functional dummy.
-    asr_backend: Literal["dummy", "aliyun"] = Field(
+    # `aliyun` for the real NLS streaming ASR (A-28), `whisper_cpp`
+    # for a self-hosted whisper.cpp HTTP server (US-B3 privacy path).
+    # The factory refuses to construct an external backend with
+    # missing credentials / URL so a misconfigured prod boot fails
+    # loudly rather than silently falling back to a non-functional
+    # dummy.
+    asr_backend: Literal["dummy", "aliyun", "whisper_cpp"] = Field(
         default="dummy",
         description=(
             "ASR provider backend. `dummy` for dev/tests, `aliyun` for prod (requires "
-            "ALIYUN_ACCESS_KEY_ID/SECRET + ALIYUN_ASR_APP_KEY)."
+            "ALIYUN_ACCESS_KEY_ID/SECRET + ALIYUN_ASR_APP_KEY), `whisper_cpp` for "
+            "self-hosted whisper.cpp (requires WHISPER_CPP_BASE_URL)."
+        ),
+    )
+
+    # whisper.cpp self-hosted HTTP server (US-B3 privacy path). Empty
+    # default = unusable; the factory raises ValueError if asr_backend
+    # is flipped to `whisper_cpp` without a URL set. The server is
+    # expected to be the upstream `whisper-server` binary exposing
+    # POST /inference with a multipart audio body.
+    whisper_cpp_base_url: str = Field(
+        default="",
+        description=(
+            "Base URL of the self-hosted whisper.cpp HTTP server "
+            "(e.g. http://whisper.internal:8080). Path /inference is appended."
+        ),
+    )
+    whisper_cpp_timeout_s: float = Field(
+        default=8.0,
+        description=(
+            "Per-utterance budget end-to-end for whisper.cpp transcription "
+            "(connect + upload + decode)."
         ),
     )
 

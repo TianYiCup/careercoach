@@ -32,6 +32,7 @@ from app.asr.provider import (
     ASREventKind,
     ASRProvider,
 )
+from app.asr.whisper_cpp import WhisperCppASRProvider
 
 __all__ = [
     "DEFAULT_TIMEOUT_SECONDS",
@@ -45,5 +46,6 @@ __all__ = [
     "ASRUpstreamError",
     "AliyunASRProvider",
     "DummyASRProvider",
+    "WhisperCppASRProvider",
     "get_asr_provider",
 ]
