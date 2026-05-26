@@ -1,0 +1,36 @@
+# Keep the docker build context small + reproducible.
+# Mirrors most of .gitignore but includes a few extras (tests, caches)
+# that shouldn't ship in the runtime image.
+
+# Python build artefacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local dev state
+.venv/
+venv/
+.env
+.env.*
+
+# Editor
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tests (run via CI, not at runtime)
+tests/
+
+# Scratch / spikes
+scripts/llm_spike/
+scripts/moderation_eval/
+var/
