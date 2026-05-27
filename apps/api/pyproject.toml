@@ -109,6 +109,10 @@ ignore = [
 "scripts/llm_spike/**/*.py" = ["RUF001", "RUF002", "RUF003"]
 # Moderation eval CLI emits a Chinese markdown report.
 "scripts/moderation_eval/**/*.py" = ["RUF001", "RUF002", "RUF003"]
+# Nightly LLM regression: judge prompt + scenario dataset are Chinese
+# user-facing copy with full-width punctuation by design.
+"scripts/llm_regression/**/*.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/test_llm_regression_*.py" = ["RUF001", "RUF002", "RUF003"]
 # `timeout=` is part of the LLMProvider contract (foundation §3.3.4),
 # not a reinvention of asyncio.timeout — adapters must accept it directly.
 "app/llm/**/*.py" = ["ASYNC109"]
