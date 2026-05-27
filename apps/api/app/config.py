@@ -311,6 +311,20 @@ class Settings(BaseSettings):
         description="Origin used inside QR codes + share-link deep paths (e.g. /share/{card_id}).",
     )
 
+    # Demo-mode bypass for judge-facing trials (PR-D1). When ON, the
+    # SMS + email verify routes accept ANY 6-digit code so a judge can
+    # log in with `000000` instead of waiting for a real code. Rate
+    # limits are still enforced server-side at the dispatcher layer
+    # (the bypass only skips the code-match step). MUST be off in
+    # staging/production — the model-validator below raises if you try.
+    demo_mode: bool = Field(
+        default=False,
+        description=(
+            "Accept any 6-digit code on /auth/{sms,email}/verify. "
+            "Dev-only — production/staging refuse to start with this on."
+        ),
+    )
+
     model_config = SettingsConfigDict(
         env_file=("../../.env", ".env"),
         env_file_encoding="utf-8",
@@ -355,6 +369,35 @@ class Settings(BaseSettings):
                 msg="using DEV_JWT_SECRET; do NOT deploy with this value",
             )
 
+        return self
+
+    @model_validator(mode="after")
+    def _validate_demo_mode(self) -> Self:
+        """Fail-fast on a misconfigured demo-mode deploy.
+
+        `demo_mode=True` makes /auth/{sms,email}/verify accept any
+        six-digit code. That is exactly the right thing for a judge
+        trying the app from their phone during a pitch, and exactly
+        the wrong thing in a real shared environment — anyone with
+        a phone number could mint a JWT for any other user.
+
+        Refusing the combination at startup mirrors the SMS-dispatcher
+        guard and the JWT-secret validator: a deploy that forgot to
+        flip DEMO_MODE=false fails to boot instead of shipping a
+        gaping hole.
+        """
+        if self.demo_mode and self.app_env != "development":
+            raise ValueError(
+                "demo_mode=True is only allowed when app_env=development. "
+                f"Got app_env={self.app_env}. Unset DEMO_MODE (or set it "
+                "to false) before deploying outside dev — the bypass lets "
+                "any caller mint a JWT for any phone/email."
+            )
+        if self.demo_mode:
+            logger.warning(
+                "demo_mode_enabled",
+                msg="DEMO_MODE on; /auth/*/verify accepts any 6-digit code",
+            )
         return self
 
 

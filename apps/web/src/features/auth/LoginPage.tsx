@@ -186,6 +186,13 @@ export function LoginPage() {
         <p className="mt-6 text-center font-mono text-[11px] text-white/40">
           登录即同意《用户协议》和《隐私政策》
         </p>
+        {/* PR-D1 demo bypass hint — flag-driven so it disappears in prod. */}
+        {import.meta.env.VITE_DEMO_MODE === 'true' && (
+          <div className="mt-3 rounded-lg border border-cyber-cyan/20 bg-cyber-cyan/5 px-4 py-2 text-center font-mono text-[10px] text-cyber-cyan/70">
+            <span className="text-cyber-cyan">DEMO · </span>
+            手机号填自己的（不会真发短信），验证码任意 6 位即可（如 000000）
+          </div>
+        )}
       </motion.div>
     </div>
   )

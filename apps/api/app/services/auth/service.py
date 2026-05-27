@@ -115,11 +115,18 @@ class AuthService:
         user_repo: UserRepository,
         dispatcher: SmsDispatcher,
         rate_limiter: RateLimiter,
+        demo_mode: bool = False,
     ) -> None:
         self._code_store = code_store
         self._user_repo = user_repo
         self._dispatcher = dispatcher
         self._rate_limiter = rate_limiter
+        # PR-D1: demo-mode bypass. When True, `verify_code` accepts any
+        # 6-digit code (schema-validated) so a judge trying the app
+        # during a pitch can log in with `000000` instead of waiting
+        # for a real SMS. The config validator refuses to start the
+        # app with this on outside `app_env=development`.
+        self._demo_mode = demo_mode
 
     async def send_code(self, phone: str) -> SmsSendResponse:
         cooldown_left = await self._rate_limiter.get_send_cooldown_seconds(phone)
@@ -144,6 +151,8 @@ class AuthService:
         return SmsSendResponse(ttl=_RESEND_COOLDOWN_SECONDS)
 
     async def verify_code(self, phone: str, code: str) -> SmsVerifyResponse:
+        if self._demo_mode:
+            return await self._demo_mode_verify(phone, code)
         lock_left = await self._rate_limiter.get_verify_lock_seconds(phone)
         if lock_left is not None:
             logger.info(
@@ -190,6 +199,33 @@ class AuthService:
                 id=user.user_id,
                 nickname=user.nickname,
                 persona_type=user.persona_type,
+                is_minor=user.is_minor,
+            ),
+        )
+
+    async def _demo_mode_verify(self, phone: str, code: str) -> SmsVerifyResponse:
+        """PR-D1 bypass path — mint a JWT for any 6-digit code so a
+        judge can demo without waiting for SMS. Pydantic already
+        validated `code` is 6 digits and `phone` is 11 digits; the
+        config-time guard refuses to even start in non-dev envs."""
+        logger.info(
+            "sms_demo_mode_login",
+            phone=_mask_phone(phone),
+            note="DEMO_MODE on; code not verified",
+        )
+        user = await self._upsert_user(phone)
+        token = mint_token(
+            user_id=user.user_id,
+            persona_type=user.persona_type,
+            is_minor=user.is_minor,
+            age_set=user.birthdate is not None,
+        )
+        return SmsVerifyResponse(
+            token=token,
+            user=UserPublic(
+                id=user.user_id,
+                nickname=user.nickname,
+                persona_type=user.persona_type,  # type: ignore[arg-type]
                 is_minor=user.is_minor,
             ),
         )

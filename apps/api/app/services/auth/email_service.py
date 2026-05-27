@@ -85,11 +85,14 @@ class EmailAuthService:
         user_repo: UserRepository,
         dispatcher: EmailDispatcher,
         rate_limiter: RateLimiter,
+        demo_mode: bool = False,
     ) -> None:
         self._code_store = code_store
         self._user_repo = user_repo
         self._dispatcher = dispatcher
         self._rate_limiter = rate_limiter
+        # PR-D1 demo bypass — same semantics as AuthService.
+        self._demo_mode = demo_mode
 
     async def send_code(self, email: str) -> EmailSendResponse:
         normalised = _normalise(email)
@@ -116,6 +119,8 @@ class EmailAuthService:
 
     async def verify_code(self, email: str, code: str) -> EmailVerifyResponse:
         normalised = _normalise(email)
+        if self._demo_mode:
+            return await self._demo_mode_verify(normalised, code)
         lock_left = await self._rate_limiter.get_verify_lock_seconds(normalised)
         if lock_left is not None:
             logger.info(
@@ -152,6 +157,32 @@ class EmailAuthService:
                 id=user.user_id,
                 nickname=user.nickname,
                 persona_type=user.persona_type,
+                is_minor=user.is_minor,
+            ),
+        )
+
+    async def _demo_mode_verify(self, email: str, code: str) -> EmailVerifyResponse:
+        """PR-D1 bypass — accept any 6-digit code so a judge can log in
+        instantly. The config-time validator refuses to start the app
+        with `demo_mode=True` outside `app_env=development`."""
+        logger.info(
+            "email_demo_mode_login",
+            email=_mask_email(email),
+            note="DEMO_MODE on; code not verified",
+        )
+        user = await self._upsert_user(email)
+        token = mint_token(
+            user_id=user.user_id,
+            persona_type=user.persona_type,
+            is_minor=user.is_minor,
+            age_set=user.birthdate is not None,
+        )
+        return EmailVerifyResponse(
+            token=token,
+            user=UserPublic(
+                id=user.user_id,
+                nickname=user.nickname,
+                persona_type=user.persona_type,  # type: ignore[arg-type]
                 is_minor=user.is_minor,
             ),
         )

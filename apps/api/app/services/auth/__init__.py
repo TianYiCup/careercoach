@@ -110,6 +110,7 @@ def get_auth_service() -> AuthService:
         user_repo=user_repo,
         dispatcher=dispatcher,
         rate_limiter=rate_limiter,
+        demo_mode=get_settings().demo_mode,
     )
 
 
@@ -179,6 +180,7 @@ def get_email_auth_service() -> EmailAuthService:
         user_repo=user_repo,
         dispatcher=dispatcher,
         rate_limiter=rate_limiter,
+        demo_mode=settings.demo_mode,
     )
 
 
