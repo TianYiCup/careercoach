@@ -29,6 +29,7 @@ dependencies = [
     "pillow>=11.0,<12.0",
     "qrcode[pil]>=8.0,<9.0",
     "websockets>=13,<14",
+    "aiosmtplib>=5.1.0",
 ]
 
 [dependency-groups]
@@ -104,6 +105,7 @@ ignore = [
 "tests/test_custom_scenario_*.py" = ["RUF001", "RUF002", "RUF003", "ASYNC109"]
 "tests/test_sharecards_*.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/test_auth_*.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/test_email_*.py" = ["RUF001", "RUF002", "RUF003"]
 # Spike runner has Chinese prompts + report copy using full-width
 # punctuation and × / – for human readability.
 "scripts/llm_spike/**/*.py" = ["RUF001", "RUF002", "RUF003"]
