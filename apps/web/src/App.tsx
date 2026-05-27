@@ -58,6 +58,7 @@ function AppGate() {
         <ReviewResultPage
           uploadId={reviewUploadId}
           onBack={() => setPage('home')}
+          onTrain={() => setPage('weakness')}
         />
       )}
       {page === 'score' && scoreData && (
