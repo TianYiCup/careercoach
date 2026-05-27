@@ -1,20 +1,39 @@
-import { useState, useCallback } from 'react'
-import {
-  GlassCard,
-  BlobBackground,
-  MascotReaction,
-  HintCardV2,
-} from '../../components'
-import { useCopilotSession } from './useCopilotSession'
-import type { CreateCopilotSessionRequest } from '../../api/v1/types'
-import type { ToneLevel } from '../../components'
+/**
+ * CopilotPage — cyberpunk redesign (design-spec §9.5).
+ *
+ * Data layer untouched: `useCopilotSession` hook, ToneLevel, scenario
+ * picker shape, HintCardV2 reuse, MascotReaction tied to state.
+ *
+ * Visual rebuild only — split into ScenarioPicker (entry) and HUD (live):
+ *   · Both phases sit over NeuralParticles + tech-grid + scanline.
+ *   · ScenarioPicker: 4 cyber TiltCard mission tiles + custom HudFrame.
+ *   · HUD: dark transcript card cyan-edged + main hint HudFrame coloured
+ *     by current tone (safe→cyan / aggro→magenta / fun→amber) + tone
+ *     switcher (HintCardV2) + 停止 MagneticButton magenta.
+ */
 
-// --- Scenario picker ---
+import { useCallback, useState } from 'react'
+import { motion } from 'framer-motion'
+import { ArrowLeft, BookOpen, Briefcase, Headphones, MicOff, ShieldAlert, ShoppingBag, UserX, Zap } from 'lucide-react'
+
+import { HintCardV2, MascotReaction } from '../../components'
+import type { ToneLevel } from '../../components'
+import {
+  GlowText,
+  HudFrame,
+  MagneticButton,
+  NeuralParticles,
+  TiltCard,
+} from '../../components/cyber'
+import type { CreateCopilotSessionRequest } from '../../api/v1/types'
+import { useCopilotSession } from './useCopilotSession'
 
 interface ScenarioOption {
   id: string
   label: string
-  emoji: string
+  en: string
+  icon: typeof Briefcase
+  color: string
   scenarioHint: string
 }
 
@@ -22,32 +41,112 @@ const SCENARIOS: ScenarioOption[] = [
   {
     id: 'salary',
     label: '面试谈薪',
-    emoji: '💼',
-    scenarioHint: '面试时HR给薪资低于预期30%',
+    en: 'SALARY · NEG',
+    icon: Briefcase,
+    color: '#00F0FF',
+    scenarioHint: '面试时 HR 给薪资低于预期 30%',
   },
   {
     id: 'overtime',
     label: '拒绝加班',
-    emoji: '🙅',
+    en: 'OVERTIME · NO',
+    icon: UserX,
+    color: '#FF2DAA',
     scenarioHint: '老板临时要求周末加班赶项目',
   },
   {
     id: 'complaint',
     label: '投诉维权',
-    emoji: '🛡️',
+    en: 'COMPLAINT · WIN',
+    icon: ShoppingBag,
+    color: '#B7FF00',
     scenarioHint: '买到问题商品需要跟客服维权',
   },
   {
     id: 'review',
     label: '年终述职',
-    emoji: '📊',
+    en: 'REVIEW · DEFEND',
+    icon: BookOpen,
+    color: '#FFA600',
     scenarioHint: '年终汇报时被领导质疑贡献度',
   },
 ]
 
-// --- CopilotScenarioPicker ---
+const TONE_COLOR_HEX: Record<ToneLevel, string> = {
+  safe: '#00F0FF',
+  aggro: '#FF2DAA',
+  fun: '#FFE94D',
+}
 
-function CopilotScenarioPicker({
+const TONE_EMOJI: Record<ToneLevel, string> = {
+  safe: '🐶',
+  aggro: '🔥',
+  fun: '🤡',
+}
+
+function formatDuration(sec: number): string {
+  const m = Math.floor(sec / 60)
+  const s = sec % 60
+  return `${m}:${s.toString().padStart(2, '0')}`
+}
+
+const STATUS_LABEL: Record<string, { label: string; color: string; pulse: boolean }> = {
+  connecting: { label: 'CONNECTING', color: '#FFE94D', pulse: true },
+  recording: { label: 'RECORDING', color: '#FF2DAA', pulse: true },
+  thinking: { label: 'THINKING', color: '#A892FF', pulse: true },
+  hinting: { label: 'HINTING', color: '#B7FF00', pulse: false },
+  error: { label: 'ERROR', color: '#FF6B35', pulse: false },
+  idle: { label: 'READY', color: '#FFFFFF66', pulse: false },
+}
+
+function StatusIndicator({ status }: { status: string }) {
+  const cfg = STATUS_LABEL[status] ?? STATUS_LABEL.idle!
+  return (
+    <div className="inline-flex items-center gap-2">
+      <span
+        className={`inline-block h-2 w-2 rounded-full ${cfg.pulse ? 'animate-pulse' : ''}`}
+        style={{ backgroundColor: cfg.color, boxShadow: `0 0 8px ${cfg.color}` }}
+      />
+      <span
+        className="font-bebas text-[11px] tracking-[0.28em]"
+        style={{ color: cfg.color }}
+      >
+        {cfg.label}
+      </span>
+    </div>
+  )
+}
+
+/* ── Page orchestrator ────────────────────────────────────────────── */
+
+export function CopilotPage({ onBack }: { onBack: () => void }) {
+  const { state, startSession, reset } = useCopilotSession()
+
+  if (!state.started) {
+    return (
+      <ScenarioPicker
+        onStart={startSession}
+        onBack={() => {
+          reset()
+          onBack()
+        }}
+      />
+    )
+  }
+
+  return (
+    <CopilotHUD
+      onExit={() => {
+        reset()
+        onBack()
+      }}
+    />
+  )
+}
+
+/* ── ScenarioPicker ───────────────────────────────────────────────── */
+
+function ScenarioPicker({
   onStart,
   onBack,
 }: {
@@ -58,8 +157,10 @@ function CopilotScenarioPicker({
   const [customHint, setCustomHint] = useState('')
 
   const handleStart = () => {
-    const scenario = SCENARIOS.find((s) => s.id === selected)
-    if (!scenario) return
+    const scenario = SCENARIOS.find(s => s.id === selected)
+    if (!scenario) {
+      return
+    }
     onStart({
       scenario_hint: customHint.trim() || scenario.scenarioHint,
       privacy_level: 'standard',
@@ -67,122 +168,146 @@ function CopilotScenarioPicker({
   }
 
   return (
-    <div className="relative min-h-screen flex flex-col items-center px-4 py-12 overflow-hidden">
-      <BlobBackground />
+    <div className="relative flex min-h-screen flex-col overflow-hidden bg-cyber-void text-white">
+      <NeuralParticles count={1000} />
+      <div className="pointer-events-none fixed inset-0 -z-10 tech-grid opacity-20" />
+      <div className="pointer-events-none fixed inset-0 -z-10 scanline" />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-0 -z-10"
+        style={{
+          background:
+            'radial-gradient(ellipse at center, transparent 0%, rgba(5,5,5,0.4) 50%, rgba(5,5,5,0.92) 100%)',
+        }}
+      />
 
-      <div className="relative z-10 w-full max-w-lg space-y-6">
-        {/* Back button */}
-        <button
-          type="button"
-          onClick={onBack}
-          className="text-ink-text-2 text-sm hover:text-ink-text transition-colors"
-        >
-          &larr; 返回
-        </button>
-
-        <div className="text-center">
-          <MascotReaction expression="fired-up" size="md" showLabel />
-          <h1 className="mt-4 text-2xl font-display text-ink-text">
-            实战副驾
-          </h1>
-          <p className="mt-1 text-sm text-ink-text-2 font-body">
-            关键时刻，耳机里挺你
-          </p>
+      <div className="relative z-10 mx-auto flex w-full max-w-4xl flex-1 flex-col px-6 py-8">
+        <div className="flex items-center justify-between">
+          <button
+            type="button"
+            onClick={onBack}
+            className="inline-flex items-center gap-1 font-bebas text-xs tracking-[0.24em] text-white/60 transition-colors hover:text-cyber-magenta"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            BACK
+          </button>
+          <MascotReaction expression="fired-up" size="sm" />
         </div>
 
-        <GlassCard className="space-y-4">
-          <p className="text-sm text-ink-text-2 font-body">选择场景</p>
-          <div className="grid grid-cols-2 gap-3">
-            {SCENARIOS.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                onClick={() => setSelected(s.id)}
-                className={`p-3 rounded-radius-md text-left text-sm font-body border transition-all ${
-                  selected === s.id
-                    ? 'border-vivid-purple bg-vivid-purple/10 text-ink-text'
-                    : 'border-ink-line bg-ink-card/60 text-ink-text-2 hover:border-ink-text-3'
-                }`}
-              >
-                <span className="text-lg" role="img" aria-label={s.label}>
-                  {s.emoji}
-                </span>
-                <span className="ml-2 font-medium">{s.label}</span>
-              </button>
-            ))}
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="mt-6 text-center"
+        >
+          <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-cyber-magenta/30 bg-cyber-magenta/5 px-3 py-1">
+            <Headphones className="h-3 w-3 text-cyber-magenta" />
+            <span className="font-bebas text-[11px] tracking-[0.28em] text-cyber-magenta">
+              COPILOT · LIVE MODE
+            </span>
           </div>
+          <h1 className="font-orbitron text-6xl font-black uppercase leading-none tracking-tight">
+            <GlowText variant="stroke" color="#FF2DAA">
+              COPILOT
+            </GlowText>
+          </h1>
+          <p className="mt-3 font-display text-xl italic text-white/80">
+            关键时刻，耳机里挺你。
+          </p>
+        </motion.div>
 
-          {selected && (
+        <p className="mt-8 font-bebas text-[11px] tracking-[0.28em] text-white/50">
+          MISSION · SELECT
+        </p>
+        <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {SCENARIOS.map((s, i) => {
+            const Icon = s.icon
+            const isActive = selected === s.id
+            return (
+              <motion.div
+                key={s.id}
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.4, delay: i * 0.06 }}
+              >
+                <TiltCard className="rounded-3xl">
+                  <HudFrame
+                    label={`MISSION · 0${i + 1}`}
+                    tag=""
+                    color={isActive ? s.color : 'rgba(255, 255, 255, 0.4)'}
+                    className={`cyber-glass-edge rounded-3xl p-5 transition-all ${
+                      isActive ? 'border-cyber-cyan/40' : ''
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setSelected(s.id)}
+                      className="flex w-full flex-col items-start gap-3 text-left"
+                    >
+                      <div
+                        className="flex h-10 w-10 items-center justify-center rounded-2xl border"
+                        style={{
+                          borderColor: `${s.color}55`,
+                          background: `radial-gradient(circle at center, ${s.color}22 0%, transparent 70%)`,
+                          color: s.color,
+                          boxShadow: isActive ? `0 0 18px ${s.color}66` : undefined,
+                        }}
+                      >
+                        <Icon className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <p
+                          className="font-bebas text-[11px] tracking-[0.24em]"
+                          style={{ color: s.color }}
+                        >
+                          {s.en}
+                        </p>
+                        <p className="font-display text-xl italic text-white">{s.label}</p>
+                      </div>
+                      <p className="text-xs text-white/55">{s.scenarioHint}</p>
+                    </button>
+                  </HudFrame>
+                </TiltCard>
+              </motion.div>
+            )
+          })}
+        </div>
+
+        {selected && (
+          <HudFrame
+            label="CUSTOM · OVERRIDE"
+            tag="optional"
+            className="cyber-glass-edge mt-6 rounded-3xl p-6"
+          >
             <div className="space-y-3">
-              <p className="text-xs text-ink-text-3 font-body">
-                当前场景提示：{SCENARIOS.find((s) => s.id === selected)?.scenarioHint}
+              <p className="font-mono text-[11px] text-white/50">
+                CURRENT · {SCENARIOS.find(s => s.id === selected)?.scenarioHint}
               </p>
               <textarea
                 value={customHint}
-                onChange={(e) => setCustomHint(e.target.value)}
-                placeholder="自定义场景描述（可选）..."
+                onChange={e => setCustomHint(e.target.value)}
+                placeholder="自定义场景描述（可选）…"
                 rows={2}
-                className="w-full rounded-radius-md bg-ink-card px-3 py-2 text-sm text-ink-text font-body border border-ink-line focus:border-vivid-purple focus:outline-none transition-colors resize-none"
+                className="font-grotesk w-full resize-none rounded-2xl border border-cyber-hairline bg-cyber-deep/60 px-4 py-3 text-sm text-white placeholder:text-white/30 focus:border-cyber-magenta focus:bg-cyber-deep/80 focus:outline-none focus:ring-2 focus:ring-cyber-magenta/30"
               />
-              <button
-                type="button"
-                onClick={handleStart}
-                className="w-full py-3 rounded-radius-pill gradient-vivid text-white text-sm font-body font-medium hover:scale-105 transition-transform"
-              >
-                启动副驾
-              </button>
+              <div className="flex justify-end">
+                <MagneticButton type="button" variant="magenta" onClick={handleStart}>
+                  <Zap className="h-4 w-4" />
+                  启动副驾
+                </MagneticButton>
+              </div>
             </div>
-          )}
-        </GlassCard>
+          </HudFrame>
+        )}
       </div>
     </div>
   )
 }
 
-// --- Status indicator ---
+/* ── CopilotHUD ───────────────────────────────────────────────────── */
 
-function StatusIndicator({ status }: { status: string }) {
-  const config: Record<string, { label: string; color: string; pulse: boolean }> = {
-    connecting: { label: '连接中', color: 'bg-vivid-yellow', pulse: true },
-    recording: { label: '录音中', color: 'bg-vivid-red', pulse: true },
-    thinking: { label: '思考中', color: 'bg-vivid-purple', pulse: true },
-    hinting: { label: '提示中', color: 'bg-vivid-green', pulse: false },
-    error: { label: '异常', color: 'bg-vivid-orange', pulse: false },
-    idle: { label: '就绪', color: 'bg-ink-text-3', pulse: false },
-  }
-  const cfg = config[status] ?? config.idle ?? { label: '就绪', color: 'bg-ink-text-3', pulse: false }
-
-  return (
-    <div className="flex items-center gap-2">
-      <span
-        className={`inline-block w-2 h-2 rounded-full ${cfg.color} ${cfg.pulse ? 'animate-pulse' : ''}`}
-      />
-      <span className="text-xs text-ink-text-2 font-body">{cfg.label}</span>
-    </div>
-  )
-}
-
-// --- Duration display ---
-
-function formatDuration(sec: number): string {
-  const m = Math.floor(sec / 60)
-  const s = sec % 60
-  return `${m}:${s.toString().padStart(2, '0')}`
-}
-
-// --- CopilotHUD ---
-
-function CopilotHUD({
-  onExit,
-}: {
-  onExit: () => void
-}) {
-  const {
-    state,
-    endSession,
-    setTone,
-    dismissError,
-  } = useCopilotSession()
+function CopilotHUD({ onExit }: { onExit: () => void }) {
+  const { state, endSession, setTone, dismissError } = useCopilotSession()
   const [showExitConfirm, setShowExitConfirm] = useState(false)
 
   const handleExit = useCallback(() => {
@@ -199,226 +324,193 @@ function CopilotHUD({
     onExit()
   }, [endSession, onExit])
 
-  /** Map activeTone to the hint text for current tone */
-  const currentHint =
-    state.streamingHint || state.hint?.text || ''
-
-  /** Tone label mapping for the main hint card border */
-  const toneColorMap: Record<ToneLevel, string> = {
-    safe: 'border-tone-safe',
-    aggro: 'border-tone-aggro',
-    fun: 'border-tone-fun',
-  }
+  const currentHint = state.streamingHint || state.hint?.text || ''
+  const toneColor = TONE_COLOR_HEX[state.activeTone]
 
   return (
-    <div className="relative flex min-h-screen flex-col overflow-hidden bg-ink-bg">
-      {/* Darker HUD background — design-spec §9.5: "HUD 默认黑底高对比" */}
-      <div className="absolute inset-0 bg-gradient-to-b from-ink-bg via-ink-bg/95 to-ink-bg" />
+    <div className="relative flex min-h-screen flex-col overflow-hidden bg-cyber-void text-white">
+      <NeuralParticles count={900} />
+      <div className="pointer-events-none fixed inset-0 -z-10 tech-grid opacity-25" />
+      <div className="pointer-events-none fixed inset-0 -z-10 scanline" />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-0 -z-10"
+        style={{
+          background:
+            'radial-gradient(ellipse at center, transparent 0%, rgba(5,5,5,0.5) 60%, rgba(5,5,5,0.95) 100%)',
+        }}
+      />
 
-      {/* Header */}
-      <header className="relative z-10 flex items-center justify-between px-4 py-3">
+      <header className="relative z-10 mx-auto flex w-full max-w-3xl items-center justify-between gap-4 px-6 pt-6">
         <div className="flex items-center gap-3">
-          <MascotReaction
-            expression={state.mascotExpression}
-            size="sm"
-          />
+          <MascotReaction expression={state.mascotExpression} size="sm" />
           <StatusIndicator status={state.status} />
         </div>
         <div className="flex items-center gap-4">
-          <span className="text-sm text-ink-text-2 font-body font-mono">
+          <span className="font-orbitron text-sm font-semibold text-white">
             {formatDuration(state.durationSec)}
           </span>
-          <span className="text-xs text-ink-text-3 font-body">
+          <span className="font-mono text-[10px] text-white/40 truncate max-w-[160px]">
             {state.scenarioHint}
           </span>
         </div>
       </header>
 
-      {/* Error banner */}
       {state.error && (
         <div
-          className="relative z-10 flex items-center justify-between px-4 py-2 bg-vivid-orange/15 border-b border-vivid-orange/40"
           role="alert"
+          className="relative z-10 mx-auto mt-4 flex w-full max-w-3xl items-center justify-between rounded-2xl border border-cyber-magenta/40 bg-cyber-magenta/10 px-4 py-2"
         >
-          <span className="text-sm text-vivid-orange font-body">
-            {state.error}
-          </span>
+          <span className="font-mono text-xs text-cyber-magenta">⚠ {state.error}</span>
           <button
             type="button"
             onClick={dismissError}
             aria-label="关闭"
-            className="text-vivid-orange/80 hover:text-vivid-orange text-lg leading-none px-2"
+            className="text-cyber-magenta/70 hover:text-cyber-magenta"
           >
-            &times;
+            ×
           </button>
         </div>
       )}
 
-      {/* Main HUD area — design-spec §9.5 */}
-      <main className="relative z-10 flex-1 flex flex-col items-center justify-center px-4 py-6 space-y-5">
-        {/* Subtitle card — opponent's transcript */}
+      <main className="relative z-10 mx-auto flex w-full max-w-3xl flex-1 flex-col items-center justify-center gap-5 px-6 py-6">
+        {/* Subtitle card */}
         {state.transcript && (
-          <div className="w-full max-w-md animate-fade-in">
-            <p className="text-xs text-ink-text-3 font-body mb-1.5">
-              对方刚说：
+          <div className="w-full animate-fade-in">
+            <p className="mb-2 font-bebas text-[11px] tracking-[0.28em] text-white/50">
+              OPPONENT · TRANSCRIPT
             </p>
-            <GlassCard className="border-ink-line/50">
-              <p className="text-base text-ink-text font-body leading-relaxed">
+            <div className="cyber-glass rounded-3xl border border-cyber-hairline px-5 py-4">
+              <p className="font-grotesk text-base leading-relaxed text-white">
                 &ldquo;{state.transcript.opponentText}&rdquo;
                 {!state.transcript.isFinal && (
-                  <span className="inline-block w-0.5 h-4 ml-1 bg-vivid-purple animate-pulse align-text-bottom" />
+                  <span className="ml-1 inline-block h-4 w-0.5 animate-pulse bg-cyber-cyan align-text-bottom" />
                 )}
               </p>
-            </GlassCard>
+            </div>
           </div>
         )}
 
-        {/* Main hint card — Coach K suggestion */}
+        {/* Main hint card */}
         {(currentHint || state.status === 'thinking') && (
-          <div className="w-full max-w-md animate-fade-in">
-            <GlassCard
-              className={`border-2 ${toneColorMap[state.activeTone] ?? ''}`}
-              glow
+          <div className="w-full animate-fade-in">
+            <HudFrame
+              label={`K · ${state.activeTone.toUpperCase()} · ${TONE_EMOJI[state.activeTone]}`}
+              tag={
+                state.hint && state.hint.confidence < 0.6
+                  ? `LOW ${Math.round(state.hint.confidence * 100)}%`
+                  : 'LIVE'
+              }
+              color={`${toneColor}E6`}
+              className="cyber-glass-edge rounded-3xl border p-6"
             >
-              {/* Hint header */}
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-sm text-ink-text-2 font-body">
-                  试试这句
-                  <span className="ml-1.5 text-base" role="img" aria-label={
-                    state.activeTone === 'safe' ? '稳' : state.activeTone === 'aggro' ? '刚' : '活'
-                  }>
-                    {state.activeTone === 'safe' ? '🐶' : state.activeTone === 'aggro' ? '🔥' : '🤡'}
-                  </span>
-                </span>
-                {state.hint && state.hint.confidence < 0.6 && (
-                  <span className="text-xs text-vivid-orange font-body">
-                    低置信度
-                  </span>
-                )}
-              </div>
-
-              {/* Hint content — 24pt bold per design-spec */}
               {state.status === 'thinking' && !currentHint ? (
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-3">
                   <div className="flex gap-1">
-                    <span className="w-2 h-2 rounded-full bg-vivid-purple animate-bounce" style={{ animationDelay: '0ms' }} />
-                    <span className="w-2 h-2 rounded-full bg-vivid-purple animate-bounce" style={{ animationDelay: '150ms' }} />
-                    <span className="w-2 h-2 rounded-full bg-vivid-purple animate-bounce" style={{ animationDelay: '300ms' }} />
+                    <span
+                      className="h-2 w-2 animate-bounce rounded-full"
+                      style={{ backgroundColor: toneColor, animationDelay: '0ms' }}
+                    />
+                    <span
+                      className="h-2 w-2 animate-bounce rounded-full"
+                      style={{ backgroundColor: toneColor, animationDelay: '150ms' }}
+                    />
+                    <span
+                      className="h-2 w-2 animate-bounce rounded-full"
+                      style={{ backgroundColor: toneColor, animationDelay: '300ms' }}
+                    />
                   </div>
-                  <span className="text-sm text-ink-text-3 font-body">教练在想...</span>
+                  <span className="font-mono text-xs text-white/50">K · THINKING…</span>
                 </div>
               ) : (
-                <p className="text-xl font-display font-bold text-ink-text leading-snug">
+                <p
+                  className="font-display text-2xl font-bold italic leading-snug text-white"
+                  style={{ textShadow: `0 0 18px ${toneColor}55` }}
+                >
                   &ldquo;{currentHint}&rdquo;
                   {state.streamingHint && (
-                    <span className="inline-block w-0.5 h-5 ml-1 bg-vivid-purple animate-pulse align-text-bottom" />
+                    <span
+                      className="ml-1 inline-block h-5 w-0.5 animate-pulse align-text-bottom"
+                      style={{ backgroundColor: toneColor }}
+                    />
                   )}
                 </p>
               )}
-            </GlassCard>
+            </HudFrame>
           </div>
         )}
 
-        {/* Tone switcher — design-spec §9.5: 滑动切档 */}
-        <div className="w-full max-w-md">
+        {/* Tone switcher — HintCardV2 in switcher-only mode */}
+        <div className="w-full">
           <HintCardV2
-            hint="" // We render the actual hint above; this is just the tone switcher
+            hint=""
             activeTone={state.activeTone}
             onToneChange={setTone}
             className="!p-0 border-0 bg-transparent shadow-none"
           />
         </div>
 
-        {/* Idle state — waiting for opponent */}
         {!state.transcript && state.status === 'recording' && (
-          <div className="text-center space-y-2 animate-fade-in">
-            <p className="text-sm text-ink-text-3 font-body">
-              正在听你的对手...
-            </p>
-          </div>
+          <p className="font-mono text-[11px] text-white/40 animate-pulse">
+            LISTENING · 正在听你的对手…
+          </p>
         )}
 
-        {/* Redirect resource — when moderation blocks */}
         {state.redirectResource && (
-          <div className="w-full max-w-md rounded-radius-md bg-vivid-orange/10 border border-vivid-orange/30 p-3">
-            <p className="text-sm text-ink-text font-body font-medium">
+          <HudFrame
+            label="SAFETY · RESOURCE"
+            tag="§3.0.5"
+            color="rgba(255, 107, 53, 0.85)"
+            className="cyber-glass-edge w-full rounded-3xl border-cyber-amber/30 p-5"
+          >
+            <p className="font-display text-base italic text-white">
               {state.redirectResource.title}
             </p>
             <a
               href={state.redirectResource.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-xs text-vivid-orange font-body underline"
+              className="mt-2 inline-flex items-center gap-1 font-bebas text-xs tracking-[0.22em] text-cyber-amber underline-offset-4 hover:underline"
             >
+              <ShieldAlert className="h-3.5 w-3.5" />
               获取帮助
             </a>
-          </div>
+          </HudFrame>
         )}
       </main>
 
-      {/* Footer — stop button */}
-      <footer className="relative z-10 flex justify-center py-6">
-        <button
-          type="button"
-          onClick={handleExit}
-          className="px-6 py-3 rounded-radius-pill bg-vivid-red/20 border border-vivid-red/40 text-vivid-red text-sm font-body font-medium hover:bg-vivid-red/30 transition-colors"
-        >
+      <footer className="relative z-10 flex justify-center pb-8">
+        <MagneticButton type="button" variant="magenta" onClick={handleExit}>
+          <MicOff className="h-4 w-4" />
           停止副驾
-        </button>
+        </MagneticButton>
       </footer>
 
-      {/* Exit confirmation modal */}
       {showExitConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-bg/70 backdrop-blur-sm">
-          <GlassCard className="mx-4 max-w-sm w-full space-y-4 text-center">
-            <MascotReaction expression="caring" size="md" showLabel />
-            <p className="text-lg font-body text-ink-text">确定要结束副驾吗？</p>
-            <p className="text-sm text-ink-text-2">当前会话不会被保存</p>
-            <div className="flex gap-3 justify-center pt-2">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-cyber-void/80 backdrop-blur-md">
+          <HudFrame
+            label="EXIT · CONFIRM"
+            tag="!"
+            className="cyber-glass-edge mx-4 w-full max-w-sm rounded-3xl p-8 text-center"
+          >
+            <MascotReaction expression="caring" size="md" />
+            <p className="mt-4 font-display text-xl italic text-white">确定要结束副驾吗？</p>
+            <p className="mt-2 font-mono text-xs text-white/50">SESSION · NOT SAVED</p>
+            <div className="mt-6 flex justify-center gap-3">
               <button
                 type="button"
                 onClick={() => setShowExitConfirm(false)}
-                className="px-5 py-2 rounded-radius-pill bg-ink-card border border-ink-line text-ink-text text-sm font-body hover:bg-ink-card-2 transition-colors"
+                className="rounded-full border border-cyber-hairline px-5 py-2 font-bebas text-xs tracking-[0.22em] text-white/80 hover:border-cyber-cyan/40 hover:text-cyber-cyan"
               >
-                继续
+                CONTINUE
               </button>
-              <button
-                type="button"
-                onClick={confirmExit}
-                className="px-5 py-2 rounded-radius-pill bg-vivid-red/20 border border-vivid-red/40 text-vivid-red text-sm font-body hover:bg-vivid-red/30 transition-colors"
-              >
-                确定结束
-              </button>
+              <MagneticButton type="button" variant="magenta" onClick={confirmExit}>
+                CONFIRM EXIT
+              </MagneticButton>
             </div>
-          </GlassCard>
+          </HudFrame>
         </div>
       )}
     </div>
   )
-}
-
-// --- Exported page component ---
-
-export function CopilotPage({
-  onBack,
-}: {
-  onBack: () => void
-}) {
-  const { state, startSession, reset } = useCopilotSession()
-
-  // If not started, show scenario picker
-  if (!state.started) {
-    return (
-      <CopilotScenarioPicker
-        onStart={startSession}
-        onBack={() => {
-          reset()
-          onBack()
-        }}
-      />
-    )
-  }
-
-  // Otherwise show HUD
-  return <CopilotHUD onExit={() => { reset(); onBack() }} />
 }
