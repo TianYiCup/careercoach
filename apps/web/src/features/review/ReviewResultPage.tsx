@@ -149,7 +149,7 @@ export function ReviewResultPage({
               />
             </div>
             <div className="md:col-span-3">
-              <RightPanel summary={data.summary} />
+              <RightPanel summary={data.summary} onTrain={onTrain} />
             </div>
           </motion.div>
         )}
@@ -269,7 +269,13 @@ function ReviewTurnCard({
 
 /* ── Right · Summary report ─────────────────────────────────────── */
 
-function RightPanel({ summary }: { summary: ReviewUploadResponse['summary'] }) {
+function RightPanel({
+  summary,
+  onTrain,
+}: {
+  summary: ReviewUploadResponse['summary']
+  onTrain: () => void
+}) {
   if (!summary) {
     return (
       <HudFrame label="REPORT" className="cyber-glass-edge rounded-3xl p-5 text-center">
