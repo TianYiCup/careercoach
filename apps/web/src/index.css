@@ -1,3 +1,16 @@
+/* ── Web fonts (must precede @import 'tailwindcss') ─────────────────
+ * Latin display stack used by HUD labels, big-numeric, and cyberpunk
+ * "FUTURE / NEURAL / AI CORE" oversized words. Chinese display still
+ * runs on 站酷庆科黄油体 per design-spec §2.3 — these fonts only
+ * supplement Latin glyphs.
+ *   · Orbitron — futuristic mono-display ("AI OS" wordmark vibe)
+ *   · Bebas Neue — condensed all-caps slab for HUD eyebrow labels
+ *   · Space Grotesk — paragraph + numeric backup for Orbitron
+ *   · JetBrains Mono — already in stack, kept for code / status chips
+ *   · Noto Sans SC — CJK fallback when system PingFang unavailable
+ * ─────────────────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;900&family=Bebas+Neue&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700;900&display=swap');
+
 @import 'tailwindcss';
 
 @theme {
@@ -60,10 +73,44 @@
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 
+  /* ── Cyberpunk extended palette (PR prompt §Color) ────────────
+   * Layered on top of the Vivid Coach palette — not a replacement.
+   * Deep-space backgrounds for the AI-OS feel, plus neon accents that
+   * sit a step harder than the Vivid hues for HUD edges & scanlines.
+   * ─────────────────────────────────────────────────────────────── */
+  --color-cyber-void: #050505;
+  --color-cyber-deep: #0B1020;
+  --color-cyber-panel: #111827;
+  --color-cyber-cyan: #00F0FF;
+  --color-cyber-blue: #4F8BFF;
+  --color-cyber-magenta: #FF2DAA;
+  --color-cyber-lime: #B7FF00;
+  --color-cyber-amber: #FFA600;
+  --color-cyber-edge: rgba(0, 240, 255, 0.6);
+  --color-cyber-hairline: rgba(255, 255, 255, 0.08);
+
+  /* Cyberpunk gradients — keep separate from --gradient-vivid family. */
+  --gradient-cyber-primary: linear-gradient(
+    135deg,
+    #00F0FF 0%,
+    #4F8BFF 35%,
+    #6C4DFF 65%,
+    #FF2DAA 100%
+  );
+  --gradient-cyber-deep: radial-gradient(ellipse at top, #1a1a3e 0%, #050505 70%);
+
+  /* Cyberpunk glow shadows — sharper / further than --glow-purple. */
+  --shadow-cyber-cyan: 0 0 24px rgba(0, 240, 255, 0.45), 0 0 64px rgba(0, 240, 255, 0.2);
+  --shadow-cyber-magenta: 0 0 24px rgba(255, 45, 170, 0.45), 0 0 64px rgba(255, 45, 170, 0.2);
+  --shadow-cyber-lime: 0 0 24px rgba(183, 255, 0, 0.45);
+
   /* ── Typography ────────────────────────────────── */
   --font-display: 'ZhanKu QingKe HuangYou', 'HarmonyOS Sans SC', system-ui, sans-serif;
-  --font-body: 'HarmonyOS Sans SC', system-ui, -apple-system, sans-serif;
+  --font-body: 'HarmonyOS Sans SC', 'Noto Sans SC', system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+  --font-orbitron: 'Orbitron', 'Space Grotesk', system-ui, sans-serif;
+  --font-bebas: 'Bebas Neue', 'Space Grotesk', system-ui, sans-serif;
+  --font-grotesk: 'Space Grotesk', 'Inter', system-ui, sans-serif;
 
   /* ── Back-compat aliases (used in existing components) ── */
   --color-bg-primary: #0F0E1A;
@@ -223,4 +270,138 @@
 .glass-hover:hover {
   box-shadow: 0 0 24px rgba(108, 77, 255, 0.3);
   border-color: rgba(108, 77, 255, 0.3);
+}
+
+/* ────────────────────────────────────────────────────────────────────
+ * Cyberpunk surface utilities — used by components/cyber/* primitives
+ * to render HUD borders, scanline overlays, tiny tech grids, and the
+ * "AI operating system" neon affordances called out by the redesign
+ * prompt §Visual Details. All keep `pointer-events: none` so they
+ * layer beneath interactive content.
+ * ─────────────────────────────────────────────────────────────── */
+@utility cyber-glass {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.01) 100%),
+    rgba(17, 24, 39, 0.55);
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+@utility cyber-glass-edge {
+  /* Glass surface with a sharp inner cyan inset — used for HUD frames. */
+  background:
+    linear-gradient(180deg, rgba(0, 240, 255, 0.04) 0%, rgba(255, 45, 170, 0.03) 100%),
+    rgba(11, 16, 32, 0.65);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(0, 240, 255, 0.18);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.03),
+    0 0 32px rgba(0, 240, 255, 0.06);
+}
+
+@utility scanline {
+  position: relative;
+}
+
+.scanline::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    180deg,
+    transparent 0px,
+    transparent 3px,
+    rgba(255, 255, 255, 0.03) 3px,
+    rgba(255, 255, 255, 0.03) 4px
+  );
+  mix-blend-mode: overlay;
+  border-radius: inherit;
+}
+
+@utility tech-grid {
+  background-image:
+    linear-gradient(rgba(0, 240, 255, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 240, 255, 0.06) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+@utility noise-overlay {
+  position: relative;
+}
+
+.noise-overlay::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml;utf8,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.06 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: 0.5;
+  mix-blend-mode: overlay;
+  border-radius: inherit;
+}
+
+@utility text-gradient-cyber {
+  background: var(--gradient-cyber-primary);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: gradientShift 8s linear infinite;
+}
+
+@utility text-stroke-cyan {
+  -webkit-text-stroke: 1px rgba(0, 240, 255, 0.6);
+  color: transparent;
+}
+
+@utility cyber-glow-cyan {
+  box-shadow: var(--shadow-cyber-cyan);
+}
+
+@utility cyber-glow-magenta {
+  box-shadow: var(--shadow-cyber-magenta);
+}
+
+@utility font-orbitron {
+  font-family: var(--font-orbitron);
+}
+
+@utility font-bebas {
+  font-family: var(--font-bebas);
+}
+
+@utility font-grotesk {
+  font-family: var(--font-grotesk);
+}
+
+/* gradient flow used by text-gradient-cyber + animated gradient borders */
+@keyframes gradientShift {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+/* HUD label entrance — a 200ms hard cut + 1-frame flicker, mimics
+   the "system online" feel of cyberpunk OS boot screens. */
+@keyframes hudFlicker {
+  0% { opacity: 0; }
+  10% { opacity: 0.4; }
+  12% { opacity: 0; }
+  20% { opacity: 0.9; }
+  22% { opacity: 0.2; }
+  30% { opacity: 1; }
+  100% { opacity: 1; }
+}
+
+@utility animate-hud-flicker {
+  animation: hudFlicker 600ms steps(20, end) both;
 }
