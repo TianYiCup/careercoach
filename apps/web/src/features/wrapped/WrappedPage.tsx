@@ -1,15 +1,31 @@
 /**
- * Wrapped 卡演示页 — design-spec §10
- * D14-B: 三种分享卡模式 (session / weekly / wrapped)
- * + useShareCard 服务端生成 + WrappedCard Canvas 端渲染
+ * WrappedPage — cyberpunk redesign (design-spec §10).
+ *
+ * Data layer unchanged: `useShareCard` from sandbox + WrappedCard Canvas.
+ * Visual rebuild only:
+ *   · NeuralParticles + tech-grid + scanline background.
+ *   · Tab switcher reskinned as cyber pill toggle.
+ *   · Generate CTA → MagneticButton lime variant.
+ *   · Card preview wrapped in HudFrame "WRAPPED · 9:16" panel.
  */
 
 import { useState } from 'react'
-import { BlobBackground, GlassCard, WrappedCard } from '../../components'
+import { motion } from 'framer-motion'
+import { ArrowLeft, Download, Sparkles } from 'lucide-react'
+
+import { WrappedCard } from '../../components'
+import {
+  GlowText,
+  HudFrame,
+  MagneticButton,
+  NeuralParticles,
+} from '../../components/cyber'
 import { useShareCard } from '../sandbox/useShareCard'
 
+type Tab = 'weekly' | 'wrapped'
+
 export function WrappedPage({ onBack }: { onBack: () => void }) {
-  const [activeTab, setActiveTab] = useState<'weekly' | 'wrapped'>('weekly')
+  const [activeTab, setActiveTab] = useState<Tab>('weekly')
   const {
     state: shareState,
     generateWeeklyCard,
@@ -29,7 +45,9 @@ export function WrappedPage({ onBack }: { onBack: () => void }) {
   }
 
   const handleDownloadServerPng = () => {
-    if (!shareState.card?.png_url) return
+    if (!shareState.card?.png_url) {
+      return
+    }
     const link = document.createElement('a')
     link.href = shareState.card.png_url
     link.download = `careercoach-${activeTab}-${Date.now()}.png`
@@ -38,103 +56,149 @@ export function WrappedPage({ onBack }: { onBack: () => void }) {
   }
 
   return (
-    <div className="relative min-h-screen flex flex-col items-center px-4 py-12 overflow-y-auto">
-      <BlobBackground />
+    <div className="relative flex min-h-screen flex-col overflow-hidden bg-cyber-void text-white">
+      <NeuralParticles count={1000} />
+      <div className="pointer-events-none fixed inset-0 -z-10 tech-grid opacity-20" />
+      <div className="pointer-events-none fixed inset-0 -z-10 scanline" />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-0 -z-10"
+        style={{
+          background:
+            'radial-gradient(ellipse at center, transparent 0%, rgba(5,5,5,0.4) 50%, rgba(5,5,5,0.92) 100%)',
+        }}
+      />
 
-      <div className="relative z-10 w-full max-w-md space-y-6 text-center">
-        {/* Header */}
+      <div className="relative z-10 mx-auto flex w-full max-w-2xl flex-1 flex-col px-6 py-8">
         <button
           type="button"
-          onClick={() => { reset(); onBack() }}
-          className="self-start text-ink-text-2 text-sm hover:text-ink-text transition-colors"
+          onClick={() => {
+            reset()
+            onBack()
+          }}
+          className="inline-flex w-fit items-center gap-1 font-bebas text-xs tracking-[0.24em] text-white/60 transition-colors hover:text-cyber-cyan"
         >
-          &larr; 返回
+          <ArrowLeft className="h-3.5 w-3.5" />
+          BACK
         </button>
-        <h1 className="text-3xl font-display text-ink-text mb-1">Wrapped 战报</h1>
-        <p className="text-sm text-ink-text-2">生成你的专属分享卡</p>
 
-        {/* Tab switcher */}
-        <div className="flex justify-center gap-3">
-          <button
-            type="button"
-            onClick={() => { setActiveTab('weekly'); reset() }}
-            className={`px-5 py-2 rounded-radius-pill font-body text-sm transition-colors ${
-              activeTab === 'weekly'
-                ? 'gradient-vivid text-white font-medium'
-                : 'bg-ink-card border border-ink-line text-ink-text-2 hover:bg-ink-card-2'
-            }`}
-          >
-            周报
-          </button>
-          <button
-            type="button"
-            onClick={() => { setActiveTab('wrapped'); reset() }}
-            className={`px-5 py-2 rounded-radius-pill font-body text-sm transition-colors ${
-              activeTab === 'wrapped'
-                ? 'gradient-vivid text-white font-medium'
-                : 'bg-ink-card border border-ink-line text-ink-text-2 hover:bg-ink-card-2'
-            }`}
-          >
-            {currentYear} 年报
-          </button>
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="mt-6 text-center"
+        >
+          <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-cyber-lime/30 bg-cyber-lime/5 px-3 py-1">
+            <Sparkles className="h-3 w-3 text-cyber-lime" />
+            <span className="font-bebas text-[11px] tracking-[0.28em] text-cyber-lime">
+              REPLAY · SHAREABLE
+            </span>
+          </div>
+          <h1 className="font-orbitron text-6xl font-black uppercase leading-none tracking-tight">
+            <GlowText variant="gradient">WRAPPED</GlowText>
+          </h1>
+          <p className="mt-3 font-display text-xl italic text-white/80">
+            把今年练得最离谱的那条对线，打包成 9:16 大卡。
+          </p>
+        </motion.div>
+
+        {/* Tab pill */}
+        <div className="mt-8 flex justify-center">
+          <div className="inline-flex items-center gap-1 rounded-full border border-cyber-hairline bg-cyber-deep/60 p-1 backdrop-blur-md">
+            {(['weekly', 'wrapped'] as const).map(t => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => {
+                  setActiveTab(t)
+                  reset()
+                }}
+                className={`rounded-full px-5 py-2 font-bebas text-xs tracking-[0.22em] transition-colors ${
+                  activeTab === t
+                    ? 'bg-gradient-to-r from-cyber-cyan via-vivid-purple to-cyber-magenta text-white shadow-[0_0_16px_rgba(108,77,255,0.5)]'
+                    : 'text-white/60 hover:text-white'
+                }`}
+              >
+                {t === 'weekly' ? 'WEEKLY' : `${currentYear} YEAR`}
+              </button>
+            ))}
+          </div>
         </div>
 
-        {/* Generate button */}
+        {/* Generate CTA */}
         {!shareState.card && (
-          <GlassCard className="space-y-4">
-            <p className="text-sm text-ink-text-2 font-body">
-              {activeTab === 'weekly'
-                ? '回顾你这周的对练表现，生成周报战报卡'
-                : `${currentYear} 年度 Wrapped，看看你的沟通成长轨迹`}
-            </p>
-            <button
-              type="button"
-              onClick={handleGenerate}
-              disabled={shareState.isGenerating}
-              className="px-6 py-2.5 rounded-radius-pill gradient-vivid text-white text-sm font-body font-medium hover:scale-105 transition-transform disabled:opacity-50 glow-purple"
-            >
-              {shareState.isGenerating ? '生成中...' : `生成${activeTab === 'weekly' ? '周报' : '年报'}卡`}
-            </button>
-          </GlassCard>
+          <HudFrame
+            label="GENERATE · CARD"
+            tag={activeTab === 'weekly' ? '7D' : `${currentYear}`}
+            className="cyber-glass-edge mt-8 rounded-3xl p-8"
+          >
+            <div className="flex flex-col items-center gap-5 text-center">
+              <p className="text-sm text-white/70">
+                {activeTab === 'weekly'
+                  ? '回顾你这周的对练表现，生成周报战报卡'
+                  : `${currentYear} 年度 Wrapped，看看你的沟通成长轨迹`}
+              </p>
+              <MagneticButton
+                type="button"
+                variant="lime"
+                onClick={handleGenerate}
+                disabled={shareState.isGenerating}
+              >
+                <Sparkles className="h-4 w-4" />
+                {shareState.isGenerating
+                  ? '生成中…'
+                  : `生成 ${activeTab === 'weekly' ? '周报' : '年报'} 卡`}
+              </MagneticButton>
+            </div>
+          </HudFrame>
         )}
 
-        {/* Error banner */}
         {shareState.error && (
-          <div className="flex items-center justify-between px-4 py-2 bg-vivid-orange/15 border border-vivid-orange/40 rounded-radius-md">
-            <span className="text-sm text-vivid-orange font-body">{shareState.error}</span>
-            <button type="button" onClick={dismissError} className="text-vivid-orange/80 hover:text-vivid-orange text-lg leading-none">&times;</button>
+          <div
+            role="alert"
+            className="mt-6 flex items-center justify-between rounded-2xl border border-cyber-magenta/40 bg-cyber-magenta/10 px-4 py-2"
+          >
+            <span className="font-mono text-xs text-cyber-magenta">⚠ {shareState.error}</span>
+            <button
+              type="button"
+              onClick={dismissError}
+              className="text-cyber-magenta/70 hover:text-cyber-magenta"
+            >
+              ×
+            </button>
           </div>
         )}
 
-        {/* Card result */}
         {shareState.card && (
-          <GlassCard glow className="space-y-4">
-            <p className="text-sm text-ink-text-2 font-body">
-              {activeTab === 'weekly' ? '本周战报' : `${currentYear} Wrapped`}
-            </p>
-            <WrappedCard
-              score={activeTab === 'weekly' ? 7.5 : 8.2}
-              comment={activeTab === 'weekly' ? '这周表现可圈可点' : '今年的你，我都服了'}
-              gradient={activeTab === 'weekly' ? 'vivid' : 'glory'}
-              expression={activeTab === 'weekly' ? '😎' : '✨'}
-              badges={activeTab === 'weekly' ? ['气场+1', '逻辑+1'] : ['封神时刻', '气场+1', '共情+1']}
-            />
-            <div className="space-y-2">
-              <p className="text-xs text-ink-text-3 font-body">高清版（服务端渲染）</p>
-              <button
-                type="button"
-                onClick={handleDownloadServerPng}
-                className="px-5 py-2 rounded-radius-pill bg-vivid-green/20 border border-vivid-green/40 text-vivid-green font-body text-sm hover:bg-vivid-green/30 transition-colors"
-              >
+          <HudFrame
+            label={activeTab === 'weekly' ? 'WEEKLY · CARD' : `${currentYear} · YEAR`}
+            tag="SHARE"
+            className="cyber-glass-edge mt-8 rounded-3xl p-8"
+          >
+            <div className="flex flex-col items-center gap-5">
+              <WrappedCard
+                score={activeTab === 'weekly' ? 7.5 : 8.2}
+                comment={activeTab === 'weekly' ? '这周表现可圈可点' : '今年的你，我都服了'}
+                gradient={activeTab === 'weekly' ? 'vivid' : 'glory'}
+                expression={activeTab === 'weekly' ? '😎' : '✨'}
+                badges={
+                  activeTab === 'weekly'
+                    ? ['气场+1', '逻辑+1']
+                    : ['封神时刻', '气场+1', '共情+1']
+                }
+              />
+              <p className="font-mono text-[11px] text-white/50">HIGH-RES · SERVER RENDERED</p>
+              <MagneticButton type="button" variant="lime" onClick={handleDownloadServerPng}>
+                <Download className="h-4 w-4" />
                 下载高清 PNG
-              </button>
+              </MagneticButton>
+              {activeTab === 'wrapped' && shareState.card.pages.length > 1 && (
+                <p className="font-mono text-[11px] text-white/50">
+                  PAGES · {shareState.card.pages.length}（首页为封面）
+                </p>
+              )}
             </div>
-            {activeTab === 'wrapped' && shareState.card.pages.length > 1 && (
-              <p className="text-xs text-ink-text-3 font-body">
-                共 {shareState.card.pages.length} 页（首页为封面）
-              </p>
-            )}
-          </GlassCard>
+          </HudFrame>
         )}
       </div>
     </div>

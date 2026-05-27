@@ -1,23 +1,42 @@
 /**
- * 弱点画像页 — design-spec §9.7
- * 迁移到 PR #131 WeaknessProfileResponse schema:
- *   - weaknesses: { tag, frequency, last_seen }[] (no percentage/remark)
- *   - recommended_scenarios: ScenarioSummary[] (no reason)
+ * WeaknessProfilePage — cyberpunk redesign (design-spec §9.7).
+ *
+ * Data layer untouched: `useWeaknesses` hook, same `weaknesses[]` shape
+ * (tag / frequency / last_seen) + `recommended_scenarios`.
+ *
+ * Visual rebuild only:
+ *   · NeuralParticles background.
+ *   · K intro line + frequency hero in HudFrame "TOP WEAKNESS".
+ *   · Secondary weaknesses → bar list with cyan→amber→magenta gradient
+ *     by rank (replaces the old vivid-cyan/yellow/orange ladder).
+ *   · K's recommended scenarios → cyber TiltCard mini-cards.
+ *   · StickerBadge stats row preserved (Z-gen sticker accent).
  */
 
 import { useEffect } from 'react'
-import { GlassCard, BlobBackground, MascotReaction, StickerBadge } from '../../components'
+import { motion } from 'framer-motion'
+import { ArrowLeft, Flame, Target } from 'lucide-react'
+
+import { MascotReaction, StickerBadge } from '../../components'
+import {
+  GlowText,
+  HudFrame,
+  MagneticButton,
+  NeuralParticles,
+} from '../../components/cyber'
 import { useWeaknesses } from './useWeaknesses'
 
-/** Progress bar color based on frequency rank */
-function barColor(rank: number, total: number): string {
+function barAccent(rank: number, total: number): string {
   const ratio = total > 1 ? rank / (total - 1) : 1
-  if (ratio <= 0.25) return 'bg-vivid-cyan'
-  if (ratio <= 0.5) return 'bg-vivid-yellow'
-  return 'bg-vivid-orange'
+  if (ratio <= 0.25) {
+    return '#00F0FF'
+  }
+  if (ratio <= 0.5) {
+    return '#FFE94D'
+  }
+  return '#FF2DAA'
 }
 
-/** Format ISO date to compact display */
 function formatDate(iso: string): string {
   return iso.slice(5).replace('-', '/')
 }
@@ -26,150 +45,219 @@ export function WeaknessProfilePage({ onBack }: { onBack: () => void }) {
   const { state, refetch } = useWeaknesses()
   const { data: profile, isLoading, error } = state
 
-  // Fetch on mount if no data yet — uses refetch callback (async setState)
-  // which does not trigger react-hooks/set-state-in-effect
   useEffect(() => {
     if (!profile && !isLoading && !error) {
       void refetch()
     }
   }, [profile, isLoading, error, refetch])
 
-  const weaknesses = profile?.weaknesses ?? []
-  const topWeakness = weaknesses[0]
-  const totalFreq = weaknesses.reduce((s, w) => s + w.frequency, 0)
+  return (
+    <div className="relative flex min-h-screen flex-col overflow-hidden bg-cyber-void text-white">
+      <NeuralParticles count={1000} />
+      <div className="pointer-events-none fixed inset-0 -z-10 tech-grid opacity-20" />
+      <div className="pointer-events-none fixed inset-0 -z-10 scanline" />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-0 -z-10"
+        style={{
+          background:
+            'radial-gradient(ellipse at center, transparent 0%, rgba(5,5,5,0.4) 50%, rgba(5,5,5,0.92) 100%)',
+        }}
+      />
 
-  // Dynamic mascot: many weaknesses = caring, few = confident
+      <div className="relative z-10 mx-auto flex w-full max-w-3xl flex-1 flex-col px-6 py-8">
+        <button
+          type="button"
+          onClick={onBack}
+          className="inline-flex w-fit items-center gap-1 font-bebas text-xs tracking-[0.24em] text-white/60 transition-colors hover:text-cyber-magenta"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+          BACK
+        </button>
+
+        {isLoading && (
+          <div className="mt-24 flex flex-col items-center gap-4">
+            <MascotReaction expression="thinking" size="md" />
+            <p className="font-mono text-sm text-white/60 animate-pulse">
+              ANALYZING · 弱点画像生成中…
+            </p>
+          </div>
+        )}
+
+        {error && (
+          <div className="mt-24 flex flex-col items-center gap-4">
+            <MascotReaction expression="crashed" size="md" />
+            <p className="font-mono text-sm text-cyber-magenta">⚠ {error}</p>
+            <MagneticButton type="button" variant="magenta" onClick={onBack}>
+              返回
+            </MagneticButton>
+          </div>
+        )}
+
+        {!isLoading && !error && profile && profile.weaknesses.length === 0 && (
+          <div className="mt-24 flex flex-col items-center gap-4 text-center">
+            <MascotReaction expression="confident" size="lg" showLabel />
+            <p className="font-display text-2xl italic text-white">还没有弱点数据</p>
+            <p className="font-mono text-xs text-white/50">
+              EMPTY · DO 2-3 SESSIONS FIRST
+            </p>
+            <MagneticButton type="button" onClick={onBack}>
+              去对练 →
+            </MagneticButton>
+          </div>
+        )}
+
+        {!isLoading && !error && profile && profile.weaknesses.length > 0 && (
+          <WeaknessContent
+            weaknesses={profile.weaknesses}
+            scenarios={profile.recommended_scenarios}
+            onBack={onBack}
+          />
+        )}
+      </div>
+    </div>
+  )
+}
+
+interface ContentProps {
+  weaknesses: { tag: string; frequency: number; last_seen: string }[]
+  scenarios: { id: string; title: string; background: string }[]
+  onBack: () => void
+}
+
+function WeaknessContent({ weaknesses, scenarios, onBack }: ContentProps) {
+  const topWeakness = weaknesses[0]!
+  const totalFreq = weaknesses.reduce((s, w) => s + w.frequency, 0)
   const mascotExpression = weaknesses.length >= 3 ? 'caring' : 'confident'
 
-  if (isLoading) {
-    return (
-      <div className="relative min-h-screen flex items-center justify-center px-4">
-        <BlobBackground />
-        <p className="relative z-10 text-ink-text-2 font-body animate-pulse">分析中...</p>
-      </div>
-    )
-  }
-
-  if (error) {
-    return (
-      <div className="relative min-h-screen flex items-center justify-center px-4">
-        <BlobBackground />
-        <div className="relative z-10 text-center space-y-4">
-          <p className="text-ink-text-2 font-body">{error}</p>
-          <button type="button" onClick={onBack} className="text-vivid-purple text-sm hover:underline">
-            返回
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  if (!profile || weaknesses.length === 0) {
-    return (
-      <div className="relative min-h-screen flex items-center justify-center px-4">
-        <BlobBackground />
-        <div className="relative z-10 text-center space-y-4">
-          <MascotReaction expression="confident" size="lg" showLabel />
-          <p className="text-ink-text font-body">还没有弱点数据</p>
-          <p className="text-sm text-ink-text-2 font-body">完成几次对练后 K 才能给你写画像</p>
-          <button type="button" onClick={onBack} className="text-vivid-purple text-sm hover:underline">
-            去对练
-          </button>
-        </div>
-      </div>
-    )
-  }
-
   return (
-    <div className="relative min-h-screen flex flex-col items-center px-4 py-8 overflow-y-auto">
-      <BlobBackground />
-
-      <div className="relative z-10 w-full max-w-md space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <button type="button" onClick={onBack} className="text-ink-text-2 text-sm hover:text-ink-text transition-colors">
-            &larr; 返回
-          </button>
+    <>
+      {/* Hero */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
+        className="mt-6 text-center"
+      >
+        <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-cyber-magenta/30 bg-cyber-magenta/5 px-3 py-1">
+          <Target className="h-3 w-3 text-cyber-magenta" />
+          <span className="font-bebas text-[11px] tracking-[0.28em] text-cyber-magenta">
+            WEAKNESS · PROFILE
+          </span>
         </div>
+        <h1 className="font-orbitron text-6xl font-black uppercase leading-none tracking-tight">
+          <GlowText variant="stroke" color="#FF2DAA">
+            ANALYSIS
+          </GlowText>
+        </h1>
+      </motion.div>
 
-        {/* K intro */}
-        <div className="flex items-start gap-4">
-          <MascotReaction expression={mascotExpression} size="md" />
-          <div className="flex-1">
-            <p className="text-sm text-ink-text-2 font-body">教练 K 说：</p>
-            <p className="text-base text-ink-text font-body mt-1">
-              扒了 {totalFreq} 次复盘
-            </p>
-            <p className="text-sm text-ink-text-3 font-body">发现了这些……</p>
-          </div>
+      {/* K intro */}
+      <div className="mt-8 flex items-start gap-4">
+        <MascotReaction expression={mascotExpression} size="md" />
+        <div className="flex-1 pt-2">
+          <p className="font-bebas text-[11px] tracking-[0.24em] text-cyber-cyan">K-SAYS</p>
+          <p className="mt-1 font-display text-xl italic text-white">
+            扒了 {totalFreq} 次复盘 · 发现了这些……
+          </p>
         </div>
+      </div>
 
-        {/* Top weakness — hero GlassCard */}
-        <GlassCard glow className="space-y-3 text-center">
-          <p className="text-xs text-ink-text-3 font-body">你最常翻车的瞬间</p>
-          <p className="text-5xl font-display italic text-gradient-vivid">
-            {topWeakness!.frequency}
-          </p>
-          <p className="text-lg text-ink-text font-body font-medium">
-            {topWeakness!.tag}
-          </p>
-          <p className="text-sm text-ink-text-3 font-body">
-            最近出现 {formatDate(topWeakness!.last_seen)}
-          </p>
-        </GlassCard>
+      {/* Top weakness */}
+      <HudFrame
+        label="TOP · WEAKNESS"
+        tag={`×${topWeakness.frequency}`}
+        color="rgba(255, 45, 170, 0.85)"
+        className="cyber-glass-edge mt-6 rounded-3xl border-cyber-magenta/30 p-8 text-center"
+      >
+        <p className="font-bebas text-[11px] tracking-[0.28em] text-white/50">
+          你最常翻车的瞬间
+        </p>
+        <p className="mt-2 font-orbitron text-[96px] font-black leading-none">
+          <GlowText variant="gradient">{topWeakness.frequency}</GlowText>
+        </p>
+        <p className="mt-2 font-display text-2xl italic text-white">{topWeakness.tag}</p>
+        <p className="mt-2 font-mono text-[11px] text-white/50">
+          LAST · {formatDate(topWeakness.last_seen)}
+        </p>
+      </HudFrame>
 
-        {/* Secondary weaknesses — ranked list */}
-        {weaknesses.length > 1 && (
-          <div className="space-y-3">
-            {weaknesses.slice(1).map((w, idx) => (
-              <div key={w.tag} className="flex items-center gap-3 px-1">
-                <span className="text-xs text-ink-text-3 font-mono w-6">#{idx + 2}</span>
+      {/* Secondary weaknesses */}
+      {weaknesses.length > 1 && (
+        <div className="mt-8 space-y-3">
+          <p className="font-bebas text-[11px] tracking-[0.28em] text-white/50">
+            OTHER · WEAKNESSES
+          </p>
+          {weaknesses.slice(1).map((w, idx) => {
+            const accent = barAccent(idx, weaknesses.length - 1)
+            return (
+              <div
+                key={w.tag}
+                className="flex items-center gap-3 rounded-2xl border border-cyber-hairline bg-cyber-deep/40 p-4 backdrop-blur-md"
+              >
+                <span className="font-mono text-xs text-white/40">
+                  #{(idx + 2).toString().padStart(2, '0')}
+                </span>
                 <div className="flex-1">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-sm text-ink-text font-body">{w.tag}</span>
-                    <span className="text-xs text-ink-text-3 font-body">{w.frequency} 次</span>
+                  <div className="mb-1 flex items-center justify-between">
+                    <span className="font-grotesk text-sm text-white">{w.tag}</span>
+                    <span className="font-mono text-[11px] text-white/50">×{w.frequency}</span>
                   </div>
-                  <div className="h-2 rounded-full bg-ink-card overflow-hidden">
+                  <div className="h-1.5 overflow-hidden rounded-full bg-cyber-hairline">
                     <div
-                      className={`h-full rounded-full transition-all duration-500 ${barColor(idx, weaknesses.length - 1)}`}
-                      style={{ width: `${(w.frequency / (topWeakness?.frequency ?? 1)) * 100}%` }}
+                      className="h-full rounded-full transition-all duration-500"
+                      style={{
+                        width: `${(w.frequency / topWeakness.frequency) * 100}%`,
+                        background: accent,
+                        boxShadow: `0 0 8px ${accent}88`,
+                      }}
                     />
                   </div>
                 </div>
               </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Recommendations */}
+      {scenarios.length > 0 && (
+        <HudFrame
+          label="K · RECOMMENDS"
+          tag={`${scenarios.length}`}
+          className="cyber-glass-edge mt-8 rounded-3xl p-6"
+        >
+          <div className="flex items-center gap-2">
+            <Flame className="h-4 w-4 text-cyber-amber" />
+            <p className="font-bebas text-[11px] tracking-[0.28em] text-cyber-amber">
+              开 · 小灶
+            </p>
+          </div>
+          <div className="mt-4 -mx-2 flex gap-3 overflow-x-auto px-2 pb-2">
+            {scenarios.map(sc => (
+              <button
+                key={sc.id}
+                type="button"
+                onClick={onBack}
+                className="w-44 flex-shrink-0 rounded-2xl border border-cyber-hairline bg-cyber-deep/50 p-3 text-left transition-all hover:border-cyber-cyan/40 hover:bg-cyber-deep/80"
+              >
+                <p className="font-grotesk truncate text-sm font-medium text-white">
+                  {sc.title}
+                </p>
+                <p className="mt-1 line-clamp-2 font-mono text-[11px] text-white/50">
+                  {sc.background}
+                </p>
+              </button>
             ))}
           </div>
-        )}
+        </HudFrame>
+      )}
 
-        {/* K's recommendations */}
-        {profile.recommended_scenarios.length > 0 && (
-          <GlassCard className="space-y-3">
-            <div className="flex items-center gap-2">
-              <span className="text-base" role="img" aria-label="训练">💪</span>
-              <p className="text-sm text-ink-text font-body font-medium">K 给你开小灶</p>
-            </div>
-            <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
-              {profile.recommended_scenarios.map(sc => (
-                <button
-                  key={sc.id}
-                  type="button"
-                  onClick={() => onBack()}
-                  className="flex-shrink-0 w-40 p-3 rounded-radius-md bg-ink-card/60 border border-ink-line text-left hover:border-vivid-purple transition-colors"
-                >
-                  <p className="text-sm text-ink-text font-body font-medium truncate">{sc.title}</p>
-                  <p className="text-xs text-ink-text-3 font-body mt-1 line-clamp-2">{sc.background}</p>
-                </button>
-              ))}
-            </div>
-          </GlassCard>
-        )}
-
-        {/* Quick stats row */}
-        <div className="flex items-center justify-center gap-3">
-          <StickerBadge variant="orange">{weaknesses.length} 个弱点</StickerBadge>
-          <StickerBadge variant="cyan">{totalFreq} 次出现</StickerBadge>
-        </div>
+      {/* Stats sticker row */}
+      <div className="mt-8 flex justify-center gap-3">
+        <StickerBadge variant="orange">{weaknesses.length} 个弱点</StickerBadge>
+        <StickerBadge variant="cyan">{totalFreq} 次出现</StickerBadge>
       </div>
-    </div>
+    </>
   )
 }
