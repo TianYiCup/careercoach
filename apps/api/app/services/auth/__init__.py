@@ -39,6 +39,12 @@ from app.services.auth.dependency import (
     require_adult,
     require_age_set,
 )
+from app.services.auth.email_dispatcher import (
+    EmailDispatcher,
+    LoggingEmailDispatcher,
+    SmtpConfigError,
+    SmtpEmailDispatcher,
+)
 from app.services.auth.jwt_tokens import TokenPayload, decode_token, mint_token
 from app.services.auth.quiet_hours import (
     QUIET_END_HOUR,
@@ -181,11 +187,13 @@ __all__ = [
     "AuthService",
     "CodeStore",
     "CurrentUser",
+    "EmailDispatcher",
     "InMemoryCodeStore",
     "InMemoryRateLimiter",
     "InMemoryUserRepository",
     "InvalidCodeError",
     "LoggingDispatcher",
+    "LoggingEmailDispatcher",
     "PostgresUserRepository",
     "ProfileUserNotFoundError",
     "RateLimited",
@@ -193,6 +201,8 @@ __all__ = [
     "RedisCodeStore",
     "RedisRateLimiter",
     "SmsDispatcher",
+    "SmtpConfigError",
+    "SmtpEmailDispatcher",
     "StoredCode",
     "TokenPayload",
     "UserRecord",
