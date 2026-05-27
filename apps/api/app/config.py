@@ -117,6 +117,27 @@ class Settings(BaseSettings):
     # A-41 ships only the dep; A-42 attaches it to the cost rollup.
     ops_api_token: SecretStr = Field(default=SecretStr(""))
 
+    # Email-auth dispatcher (PR-A2). `logging` is dev-only — writes the
+    # code to the app log so a developer can copy-paste. `smtp` ships
+    # via Resend (smtp.resend.com:587) or any RFC-5321 SMTP server. The
+    # wiring layer refuses to start with `logging` outside dev.
+    auth_email_dispatcher_backend: Literal["logging", "smtp"] = Field(default="logging")
+
+    # SMTP credentials. v0 ships against Resend
+    # (host=smtp.resend.com, port=587, user=resend, password=<API key>).
+    # Empty by default so dev runs without a real SMTP account stay on
+    # the `logging` dispatcher. The factory raises at startup if the
+    # backend is `smtp` and any of these are empty.
+    smtp_host: str = Field(default="")
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_username: str = Field(default="")
+    smtp_password: SecretStr = Field(default=SecretStr(""))
+    smtp_from: str = Field(
+        default="",
+        description="Verified sender address shown to recipients (e.g. noreply@careercoach.app).",
+    )
+    smtp_starttls: bool = Field(default=True)
+
     # Base URL the client uses to open the copilot WebSocket. The
     # service appends `/v1/copilot/sessions/{copilot_id}/stream`. v0
     # dev runs against `ws://localhost:8000`; production sets this to

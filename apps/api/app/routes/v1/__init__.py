@@ -10,6 +10,7 @@ from fastapi import APIRouter
 from app.routes.v1 import (
     auth,
     copilot,
+    email_auth,
     mascot,
     moderation,
     ops,
@@ -26,6 +27,10 @@ from app.routes.v1 import (
 
 router = APIRouter(prefix="/v1")
 router.include_router(auth.router)
+# PR-A2: email-auth path. Same `/auth` prefix so the OpenAPI grouping
+# stays together; the per-route paths are `/auth/email/{send,verify}`
+# (vs. the SMS `/auth/sms/{send,verify}`).
+router.include_router(email_auth.router)
 router.include_router(users.router)
 router.include_router(scenarios.router)
 router.include_router(sessions.router)

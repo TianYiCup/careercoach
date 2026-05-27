@@ -103,6 +103,68 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /v1/auth/email/send:
+    post:
+      tags:
+      - auth
+      summary: Request an email verification code
+      operationId: email_send_v1_auth_email_send_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailSendRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmailSendResponse'
+        '502':
+          description: Email gateway temporarily unavailable — client should retry.
+        '429':
+          description: Per-email rate limit fired. `code` is `EMAIL_SEND_COOLDOWN` for the send-after-send
+            case and `EMAIL_VERIFY_LOCKED` for the 3-failure verify lock. The `Retry-After` header carries
+            the seconds the client must wait.
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/auth/email/verify:
+    post:
+      tags:
+      - auth
+      summary: Verify email code and mint a JWT
+      operationId: email_verify_v1_auth_email_verify_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailVerifyRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmailVerifyResponse'
+        '400':
+          description: Code expired, never sent, or does not match
+        '429':
+          description: Per-email rate limit fired. `code` is `EMAIL_SEND_COOLDOWN` for the send-after-send
+            case and `EMAIL_VERIFY_LOCKED` for the 3-failure verify lock. The `Retry-After` header carries
+            the seconds the client must wait.
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /v1/users/me/birth-year:
     post:
       tags:
@@ -1585,6 +1647,73 @@ components:
       description: 'The created scenario. `scenario_id` is immediately usable as the
 
         `scenario_id` for `POST /v1/sessions`.'
+    EmailSendRequest:
+      properties:
+        email:
+          type: string
+          maxLength: 254
+          pattern: ^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$
+          title: Email
+          description: Recipient email address. Must look like an email; we do not verify the MX record.
+          examples:
+          - alex@example.com
+      type: object
+      required:
+      - email
+      title: EmailSendRequest
+      description: Body for `POST /v1/auth/email/send`.
+    EmailSendResponse:
+      properties:
+        ttl:
+          type: integer
+          minimum: 1.0
+          title: Ttl
+          description: Seconds until the user may request another code. Hardcoded 60s in v0.1.
+          examples:
+          - 60
+      type: object
+      required:
+      - ttl
+      title: EmailSendResponse
+      description: Same shape as `SmsSendResponse` — UI resend-cooldown hint.
+    EmailVerifyRequest:
+      properties:
+        email:
+          type: string
+          maxLength: 254
+          pattern: ^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$
+          title: Email
+          examples:
+          - alex@example.com
+        code:
+          type: string
+          pattern: ^\d{6}$
+          title: Code
+          description: 6-digit verification code received by email.
+          examples:
+          - '123456'
+      type: object
+      required:
+      - email
+      - code
+      title: EmailVerifyRequest
+      description: Body for `POST /v1/auth/email/verify`.
+    EmailVerifyResponse:
+      properties:
+        token:
+          type: string
+          title: Token
+          description: 'JWT bearer token. Pass as `Authorization: Bearer <token>`.'
+          examples:
+          - eyJhbGciOiJIUzI1NiJ9...
+        user:
+          $ref: '#/components/schemas/UserPublic'
+      type: object
+      required:
+      - token
+      - user
+      title: EmailVerifyResponse
+      description: Mirror of `SmsVerifyResponse` — JWT envelope is channel-agnostic.
     EndSessionResponse:
       properties:
         score:

@@ -19,7 +19,7 @@ from app.config import get_settings
 from app.middleware import RequestIdMiddleware, get_request_id
 from app.routes.health import router as health_router
 from app.routes.v1 import router as v1_router
-from app.services.auth import get_auth_service
+from app.services.auth import get_auth_service, get_email_auth_service
 
 logger = structlog.get_logger(__name__)
 
@@ -55,6 +55,10 @@ def create_app() -> FastAPI:
     # on the first /auth request. Mirrors the jwt_secret validator that
     # already ran inside get_settings() above.
     get_auth_service()
+    # PR-A2: same fail-fast for the email-auth dispatcher. A deploy
+    # that forgot `AUTH_EMAIL_DISPATCHER_BACKEND=smtp` (or any SMTP_*
+    # env) raises here rather than dropping codes into the log.
+    get_email_auth_service()
 
     app = FastAPI(
         title="CareerCoach AI",
