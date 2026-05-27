@@ -314,4 +314,8 @@ jobs:
   # build-web:      产物 ≤ 2MB — B 端 (apps/web)
   # build-wxapp:    主包 ≤ 1.5MB（约束 #13）— B 端 (apps/wxapp)，
   #                 启用前需 B 端确认 wxapp 能干净构建，否则会卡死所有 PR
-  # llm-regression: 30 场景 LLM-judge — 需 CI 配 LLM key + 每次 PR 调用成本
+  #
+  # llm-regression 已落地为独立 workflow（.github/workflows/llm-regression.yml）
+  # 跑 nightly + workflow_dispatch；PR 时跑 offline 数据集闸
+  # （tests/test_llm_regression_data.py，已含在 test-api job 里）。
+  # 详见 docs/llm-regression.md。

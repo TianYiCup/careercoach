@@ -1,0 +1,120 @@
+name: LLM Regression
+
+# Recurring quality gate for the LangGraph chain: 30 scenarios x N
+# configured models, each scored by an LLM-as-judge on 5 dimensions.
+# Foundation §3.4.1 — corpus average per model must stay above 4.0/5.
+#
+# Why this lives in its own workflow (not ci.yml):
+#   * needs live LLM API keys (DeepSeek + Qwen) — those are billed,
+#     so we don't burn budget on every PR
+#   * nightly cadence is enough for prompt drift / model swap detection
+#   * a single failure here should NOT block unrelated PRs (which
+#     would happen if it ran as a ci.yml gate)
+#
+# Trigger this manually after touching any agent prompt
+# (`apps/api/app/agents/`) or LLM adapter — the offline dataset
+# pytest in ci.yml only catches dataset-shape regressions, not model
+# behavioural ones.
+
+on:
+  schedule:
+    # 03:00 UTC daily = 11:00 Asia/Shanghai. Late enough that nightly
+    # vendor rate limits have reset, early enough that we see results
+    # before the workday begins in Beijing.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      models:
+        description: "Comma-separated subset (deepseek,qwen). Blank = all configured."
+        required: false
+        default: ""
+      judge:
+        description: "Which model judges responses."
+        required: false
+        default: "deepseek"
+        type: choice
+        options:
+          - deepseek
+          - qwen
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  run-regression:
+    name: 30-scenario LLM regression
+    runs-on: ubuntu-latest
+    # 20-minute ceiling — 30 scenarios x 2 models x (gen ~6s + judge
+    # ~4s) = ~10 min when both upstreams are healthy. Anything beyond
+    # 20 means an upstream is hanging or the dataset grew without
+    # bumping this bound.
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+
+      - name: Install
+        working-directory: apps/api
+        run: uv sync --frozen
+
+      - name: Run regression
+        working-directory: apps/api
+        env:
+          # Provided via repo Secrets. The script raises SystemExit
+          # when both are blank, which fails the job loud-and-clear.
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          QWEN_API_KEY: ${{ secrets.QWEN_API_KEY }}
+          # JWT secret is required by `get_settings()` (config.py's
+          # cross-field validator) — we pin a sentinel that satisfies
+          # the 32-byte floor without ever touching real auth code.
+          JWT_SECRET: ci-only-llm-regression-32-chars-min!
+          APP_ENV: development
+          MODELS_INPUT: ${{ github.event.inputs.models }}
+          JUDGE_INPUT: ${{ github.event.inputs.judge }}
+        # Inputs only exist on workflow_dispatch — fall back to
+        # sensible defaults for the cron path. `set -e` keeps a
+        # failed --models typo from being swallowed.
+        run: |
+          set -e
+          ARGS="--output ../../docs/llm-regression-report.json"
+          if [ -n "$MODELS_INPUT" ]; then
+            ARGS="$ARGS --models $MODELS_INPUT"
+          fi
+          if [ -n "$JUDGE_INPUT" ]; then
+            ARGS="$ARGS --judge $JUDGE_INPUT"
+          fi
+          uv run --frozen python -m scripts.llm_regression.run_eval $ARGS
+
+      - name: Upload report
+        # `always()` so a threshold breach still hands us the JSON to
+        # debug from; otherwise the most interesting runs would have
+        # no artifact.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: llm-regression-report-${{ github.run_id }}
+          path: docs/llm-regression-report.json
+          retention-days: 30
+
+      - name: Summary
+        if: always()
+        # Surface the headline numbers in the run summary so we don't
+        # have to download the artifact to know whether it passed.
+        # `jq -r` keeps the output greppable; `|| true` ensures a
+        # malformed report doesn't mask the real failure exit code.
+        run: |
+          REPORT=docs/llm-regression-report.json
+          if [ ! -f "$REPORT" ]; then
+            echo "::warning::report not generated"
+            exit 0
+          fi
+          {
+            echo "## LLM regression run"
+            echo ""
+            echo "| Model | Avg | Errors | Unparseable | Pass |"
+            echo "|---|---|---|---|---|"
+            jq -r '.summary | to_entries[] | "| \(.key) | \(.value.average // "—") | \(.value.error_count)/\(.value.count) | \(.value.judge_unparseable_count) | \(if .value.passes_threshold and .value.passes_error_rate then "✅" else "❌" end) |"' "$REPORT" || true
+          } >> "$GITHUB_STEP_SUMMARY"
