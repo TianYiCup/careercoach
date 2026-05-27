@@ -26,13 +26,18 @@ import {
 import { apiClient, ApiError } from '../../api/v1'
 import type { ReviewTurn, ReviewUploadResponse } from '../../api/v1'
 
+interface ReviewResultPageProps {
+  uploadId: string
+  onBack: () => void
+  /** "生成训练计划" CTA — typically routes to the weakness profile. */
+  onTrain: () => void
+}
+
 export function ReviewResultPage({
   uploadId,
   onBack,
-}: {
-  uploadId: string
-  onBack: () => void
-}) {
+  onTrain,
+}: ReviewResultPageProps) {
   const [data, setData] = useState<ReviewUploadResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null)
@@ -319,7 +324,7 @@ function RightPanel({ summary }: { summary: ReviewUploadResponse['summary'] }) {
       )}
 
       <div className="mt-6 flex justify-center">
-        <MagneticButton type="button" variant="lime">
+        <MagneticButton type="button" variant="lime" onClick={onTrain}>
           <Sparkles className="h-3.5 w-3.5" />
           生成训练计划
         </MagneticButton>

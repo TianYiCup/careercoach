@@ -60,12 +60,15 @@ type Page =
 const ALL_VIBES: UiVibeType[] = ['燃爆', '想躺平', '莫名烦', '雄心勃勃', '佛系']
 
 // 24-bar sparkline placeholders. Will swap to live signals once a
-// per-day usage histogram lands on the API.
+// per-day usage histogram lands on the API. Until then, the
+// PLACEHOLDER_TAG label above each stat surfaces them as sample data
+// so judges scanning the demo don't mistake them for live signals.
 const SPARK_SESSIONS = [
   0.2, 0.3, 0.25, 0.4, 0.35, 0.5, 0.45, 0.6, 0.55, 0.65, 0.7, 0.6, 0.75, 0.7, 0.85, 0.8, 0.9, 0.85,
   1.0, 0.92, 0.88, 0.95, 0.9, 0.98,
 ]
 const ACTIVITY_LINE = [0.2, 0.35, 0.28, 0.5, 0.45, 0.62, 0.55, 0.72, 0.68, 0.85, 0.78, 0.92]
+const PLACEHOLDER_TAG = '示例'
 
 interface SidebarItem {
   key: Page
@@ -281,6 +284,9 @@ export function HomePage({ onNavigate }: { onNavigate: (page: Page) => void }) {
                       <p className="font-orbitron text-lg font-bold text-cyber-lime">6.5</p>
                     </div>
                   </div>
+                  <p className="text-center font-mono text-[10px] text-white/40">
+                    {PLACEHOLDER_TAG} · 练完第一局生成你的画像
+                  </p>
                   <div className="flex flex-wrap items-center justify-center gap-2">
                     <StickerBadge variant="cyan">🐶 稳如老狗</StickerBadge>
                     <StickerBadge variant="orange">🔥 正面刚</StickerBadge>
@@ -291,7 +297,7 @@ export function HomePage({ onNavigate }: { onNavigate: (page: Page) => void }) {
 
               <div className="grid grid-cols-2 gap-3">
                 <StatCard
-                  label="SESSIONS"
+                  label={`SESSIONS · ${PLACEHOLDER_TAG}`}
                   value="76"
                   suffix="+12%"
                   spark={SPARK_SESSIONS}
@@ -307,7 +313,7 @@ export function HomePage({ onNavigate }: { onNavigate: (page: Page) => void }) {
 
               <HudFrame
                 label="WEEKLY · ACTIVITY"
-                tag="LIVE"
+                tag={PLACEHOLDER_TAG}
                 className="cyber-glass-edge rounded-3xl p-5"
               >
                 <NeonChart data={ACTIVITY_LINE} color="#00F0FF" height={64} />

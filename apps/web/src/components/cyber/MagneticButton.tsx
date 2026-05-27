@@ -35,7 +35,11 @@ const VARIANT_STYLES: Record<Variant, { glow: string; ring: string; text: string
   lime: {
     glow: 'shadow-[0_0_32px_rgba(183,255,0,0.45)]',
     ring: 'from-cyber-lime to-cyber-cyan',
-    text: 'text-cyber-void',
+    // Black-on-black bug: the inner span uses `bg-cyber-void`, so the
+    // previous `text-cyber-void` rendered as invisible glyphs on the
+    // dark fill. Switch to the lime brand colour for a high-contrast
+    // glow without changing the silhouette.
+    text: 'text-cyber-lime',
   },
 }
 
