@@ -16,6 +16,10 @@ REQUIRED_ENDPOINTS: set[tuple[str, str]] = {
     ("get", "/health"),
     ("post", "/v1/auth/sms/send"),
     ("post", "/v1/auth/sms/verify"),
+    # PR-A2: email-auth flow (foundation §F1). Added under time pressure
+    # to unblock launch while SMS 备案 + 模板审核 lags.
+    ("post", "/v1/auth/email/send"),
+    ("post", "/v1/auth/email/verify"),
     ("post", "/v1/users/me/birth-year"),
     ("get", "/v1/scenarios"),
     ("post", "/v1/sessions"),

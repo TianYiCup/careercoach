@@ -38,15 +38,22 @@ class UserRecord:
     `birthdate` is the source-of-truth for the minor gate; `is_minor`
     is a denormalised cache so JWT mints don't recompute on every
     request. Both are updated together by `update_birthdate`.
+
+    Either `phone` or `email` is set (but not necessarily both — a
+    user that verified via the email path has `phone=None` until they
+    optionally bind a phone later). PR-A4 (Postgres persistence) folds
+    the email column into the DB schema; until then the email branch
+    only works against `InMemoryUserRepository`.
     """
 
     user_id: str
-    phone: str
+    phone: str | None
     nickname: str
     persona_type: str  # in_school | intern | graduate
     is_minor: bool
     birthdate: date | None
     created_at: datetime
+    email: str | None = None
 
 
 @runtime_checkable
@@ -54,6 +61,11 @@ class UserRepository(Protocol):
     """Persistence seam — SQLAlchemy-backed impl lands later."""
 
     async def get_by_phone(self, phone: str) -> UserRecord | None: ...
+
+    async def get_by_email(self, email: str) -> UserRecord | None:
+        """Lookup-by-email mirror of `get_by_phone` for the email
+        auth path (PR-A2). PG impl is a stub until PR-A4 adds the
+        `email` column to the users table."""
 
     async def get_by_user_id(self, user_id: str) -> UserRecord | None:
         """Look up by wire-form `u_<uuid>` id (the JWT `sub` claim).
@@ -68,6 +80,19 @@ class UserRepository(Protocol):
         persona_type: str,
         is_minor: bool,
     ) -> UserRecord: ...
+
+    async def create_email_user(
+        self,
+        *,
+        email: str,
+        nickname: str,
+        persona_type: str,
+        is_minor: bool,
+    ) -> UserRecord:
+        """Create a user whose primary identifier is `email`, not
+        `phone`. PR-A4 (Postgres persistence) makes this work against
+        the PG-backed impl; until then only `InMemoryUserRepository`
+        supports email users."""
 
     async def update_birthdate(
         self,
@@ -85,19 +110,31 @@ class UserRepository(Protocol):
 
 
 class InMemoryUserRepository:
-    """Dict-backed store. Not thread-safe; single-worker assumption."""
+    """Dict-backed store. Not thread-safe; single-worker assumption.
+
+    Holds both phone-keyed and email-keyed users in a single dict
+    keyed by `user_id`, with two secondary indexes for `get_by_phone`
+    and `get_by_email`. Either index can be empty for a given record."""
 
     def __init__(self) -> None:
-        self._by_phone: dict[str, UserRecord] = {}
+        self._by_user_id: dict[str, UserRecord] = {}
+        self._user_id_by_phone: dict[str, str] = {}
+        self._user_id_by_email: dict[str, str] = {}
 
     async def get_by_phone(self, phone: str) -> UserRecord | None:
-        return self._by_phone.get(phone)
+        user_id = self._user_id_by_phone.get(phone)
+        if user_id is None:
+            return None
+        return self._by_user_id.get(user_id)
+
+    async def get_by_email(self, email: str) -> UserRecord | None:
+        user_id = self._user_id_by_email.get(email.lower())
+        if user_id is None:
+            return None
+        return self._by_user_id.get(user_id)
 
     async def get_by_user_id(self, user_id: str) -> UserRecord | None:
-        for record in self._by_phone.values():
-            if record.user_id == user_id:
-                return record
-        return None
+        return self._by_user_id.get(user_id)
 
     async def create(
         self,
@@ -116,7 +153,31 @@ class InMemoryUserRepository:
             birthdate=None,
             created_at=datetime.now(UTC),
         )
-        self._by_phone[phone] = record
+        self._by_user_id[record.user_id] = record
+        self._user_id_by_phone[phone] = record.user_id
+        return record
+
+    async def create_email_user(
+        self,
+        *,
+        email: str,
+        nickname: str,
+        persona_type: str,
+        is_minor: bool,
+    ) -> UserRecord:
+        normalised = email.lower()
+        record = UserRecord(
+            user_id=f"{_USER_ID_PREFIX}{uuid.uuid4()}",
+            phone=None,
+            nickname=nickname,
+            persona_type=persona_type,
+            is_minor=is_minor,
+            birthdate=None,
+            created_at=datetime.now(UTC),
+            email=normalised,
+        )
+        self._by_user_id[record.user_id] = record
+        self._user_id_by_email[normalised] = record.user_id
         return record
 
     async def update_birthdate(
@@ -126,12 +187,12 @@ class InMemoryUserRepository:
         birthdate: date,
         is_minor: bool,
     ) -> UserRecord:
-        for phone, record in self._by_phone.items():
-            if record.user_id == user_id:
-                updated = replace(record, birthdate=birthdate, is_minor=is_minor)
-                self._by_phone[phone] = updated
-                return updated
-        raise KeyError(user_id)
+        existing = self._by_user_id.get(user_id)
+        if existing is None:
+            raise KeyError(user_id)
+        updated = replace(existing, birthdate=birthdate, is_minor=is_minor)
+        self._by_user_id[user_id] = updated
+        return updated
 
 
 class PostgresUserRepository:
@@ -157,6 +218,14 @@ class PostgresUserRepository:
             if row is None:
                 return None
             return _model_to_record(row)
+
+    async def get_by_email(self, email: str) -> UserRecord | None:
+        # PR-A2 — the PG users table doesn't yet carry an `email`
+        # column. PR-A4 (Postgres persistence) adds it; until then we
+        # return None so the email auth path falls through to "user
+        # not found" and the wiring layer keeps the email backend on
+        # InMemoryUserRepository regardless of `auth_repo_backend`.
+        return None
 
     async def get_by_user_id(self, user_id: str) -> UserRecord | None:
         try:
@@ -209,6 +278,25 @@ class PostgresUserRepository:
             row.is_minor = is_minor
             await session.flush()
             return _model_to_record(row)
+
+    async def create_email_user(
+        self,
+        *,
+        email: str,
+        nickname: str,
+        persona_type: str,
+        is_minor: bool,
+    ) -> UserRecord:
+        # PR-A2 — see `get_by_email` above. The PG schema does not yet
+        # carry the email column, so creating an email-only user
+        # against PG is structurally impossible. The wiring layer
+        # routes email auth through InMemoryUserRepository even when
+        # `auth_repo_backend=postgres`; PR-A4 will collapse that.
+        raise NotImplementedError(
+            "PostgresUserRepository.create_email_user is deferred until "
+            "PR-A4 adds the email column. Use InMemoryUserRepository "
+            "for the email auth path in the meantime."
+        )
 
 
 def _model_to_record(row: User) -> UserRecord:
