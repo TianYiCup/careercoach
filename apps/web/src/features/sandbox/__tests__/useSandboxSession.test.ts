@@ -87,6 +87,7 @@ describe('initial state', () => {
     expect(s.characterVector).toBeNull()
     expect(s.arcStage).toBe('opening')
     expect(s.coachStrategy).toBeNull()
+    expect(s.memory).toBeNull()
   })
 })
 
@@ -118,6 +119,36 @@ describe('startSession', () => {
     expect(s.messages[0]).toEqual({ role: 'opponent', text: '你今天怎么又迟到了？' })
     // mascot auto-derives 'thinking' after start (turnsUsed=0 + started=true)
     expect(s.mascotExpression).toBe('thinking')
+    // No memory on the response → fresh-visit, no badge.
+    expect(s.memory).toBeNull()
+  })
+
+  it('L6: populates memory from the create response for a returning user', async () => {
+    mockPost.mockResolvedValueOnce({
+      session_id: 'ses_mem1',
+      opening_line: '又是你。上次没聊完吧？',
+      character_vector: {
+        aggression: 60,
+        empathy: 30,
+        control: 75,
+        honesty: 50,
+        stability: 80,
+        power_gap: 70,
+      },
+      memory: { visit_count: 2, last_result: 'fanche' },
+    })
+
+    renderSessionHook()
+    await act(async () => {
+      await hookRef.result.current.startSession({
+        mode: 'sandbox',
+        scenario_id: 'sc_001',
+        persona_id: 'p_hard',
+        user_goal: 'test',
+      })
+    })
+
+    expect(getState().memory).toEqual({ visit_count: 2, last_result: 'fanche' })
   })
 
   it('sets error banner on generic failure', async () => {

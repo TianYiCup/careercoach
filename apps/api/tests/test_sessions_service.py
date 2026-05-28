@@ -16,6 +16,7 @@ import pytest
 from app.agents.state import TurnScore, Verdict
 from app.llm import LLMAuthError, Message, TokenUsage
 from app.schemas.sessions import CreateSessionRequest
+from app.services.memory import InMemoryEpisodeRepository, MemoryService
 from app.services.profile import InMemoryProfileRepository, ProfileService
 from app.services.sessions import (
     InMemorySessionRepository,
@@ -91,9 +92,10 @@ def _service(
         score_repo=score_repo,
         turn_repo=turn_repo,
         llm=llm or _StubLLM(),
-        # Fresh profile per service so L5 adaptation can't leak the
-        # singleton's accumulated stats across tests.
+        # Fresh profile + memory per service so L5/L6 state can't leak the
+        # singletons' accumulated data across tests.
         profile_service=ProfileService(repo=InMemoryProfileRepository()),
+        memory_service=MemoryService(repo=InMemoryEpisodeRepository()),
     )
     return svc, score_repo, turn_repo
 
@@ -136,6 +138,57 @@ async def test_create_session_returns_known_scenario_opening_line() -> None:
     assert len(response.session_id) > len("ses_")
     # sc_001 maps to the 周末加班谈判 seed.
     assert response.opening_line == "小林啊，这个周末项目得加个班，应该没问题吧？"
+
+
+async def test_first_session_has_no_memory_payload() -> None:
+    """L6: a brand-new (user, scenario) carries no recall."""
+    svc, _, _ = _service()
+
+    response = await svc.create_session(_request("sc_001"), user_id="u_fresh")
+
+    assert response.memory is None
+
+
+async def test_second_session_in_scenario_recalls_the_first() -> None:
+    """L6 round-trip: create → seed a turn → end (records episode) →
+    create again for the same user + scenario surfaces the memory."""
+    svc, _, turn_repo = _service()
+
+    first = await svc.create_session(_request("sc_001"), user_id="u_repeat")
+    await _seed_one_turn(turn_repo, first.session_id, verdict=Verdict.FANCHE)
+    end = await svc.end_session(first.session_id, user_id="u_repeat")
+
+    second = await svc.create_session(_request("sc_001"), user_id="u_repeat")
+
+    assert second.memory is not None
+    assert second.memory.visit_count == 1
+    # The recalled result is the *aggregated* session verdict (what the
+    # scorecard showed), not any single turn's score.
+    assert second.memory.last_result == end.score.result
+
+
+async def test_memory_is_scoped_per_scenario() -> None:
+    """Finishing sc_001 leaves sc_002 with no memory."""
+    svc, _, turn_repo = _service()
+
+    first = await svc.create_session(_request("sc_001"), user_id="u_scoped")
+    await _seed_one_turn(turn_repo, first.session_id)
+    await svc.end_session(first.session_id, user_id="u_scoped")
+
+    other = await svc.create_session(_request("sc_002"), user_id="u_scoped")
+    assert other.memory is None
+
+
+async def test_empty_session_records_no_memory() -> None:
+    """A session with no turns has no story — ending it must not create
+    a recall the next session would surface."""
+    svc, _, _ = _service()
+
+    first = await svc.create_session(_request("sc_001"), user_id="u_empty")
+    await svc.end_session(first.session_id, user_id="u_empty")
+
+    second = await svc.create_session(_request("sc_001"), user_id="u_empty")
+    assert second.memory is None
 
 
 async def test_create_session_unknown_scenario_falls_back_to_generic_opening() -> None:

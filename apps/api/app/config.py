@@ -99,6 +99,10 @@ class Settings(BaseSettings):
     # win rate) persistence — same memory/postgres rule.
     profile_repo_backend: Literal["memory", "postgres"] = Field(default="memory")
 
+    # Long-term episodic memory (Character Engine L6 — per-(user,scenario)
+    # recall so the opponent remembers past sessions) — same rule.
+    memory_repo_backend: Literal["memory", "postgres"] = Field(default="memory")
+
     # LLM call (per-generation token accounting) persistence — same
     # defaulting rule. A-39 ships the schema + repo; A-40 wires the
     # observability `record_generation` callsites to actually insert.

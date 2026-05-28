@@ -38,6 +38,26 @@ class CharacterVectorPayload(BaseModel):
     power_gap: int = Field(..., ge=0, le=100)
 
 
+class SessionMemoryPayload(BaseModel):
+    """The opponent's recall of this (user, scenario), if any (L6).
+
+    Present on session create when the user has finished this scenario
+    before, so the frontend can show a "对手记得你 · 第 N 次" badge.
+    Null on a first visit."""
+
+    visit_count: int = Field(
+        ...,
+        ge=1,
+        description="How many times the user has finished this scenario before this session.",
+        examples=[2],
+    )
+    last_result: ScoreResult = Field(
+        ...,
+        description="The verdict of the user's most recent session in this scenario.",
+        examples=["fanche"],
+    )
+
+
 class CreateSessionResponse(BaseModel):
     session_id: str = Field(..., examples=["ses_018f3a8b1c2d7e3a"])
     opening_line: str = Field(
@@ -51,6 +71,14 @@ class CreateSessionResponse(BaseModel):
             "Opponent's 6-dim persona profile (L1). The frontend renders "
             "this as the L9 radar chart so the user can see who they're "
             "up against at a glance."
+        ),
+    )
+    memory: SessionMemoryPayload | None = Field(
+        default=None,
+        description=(
+            "L6 long-term memory recall. Present when the opponent "
+            "remembers the user from a past session in this scenario; "
+            "null on a first visit."
         ),
     )
 

@@ -40,10 +40,16 @@ export interface CharacterVector {
   power_gap: number
 }
 
+export interface SessionMemory {
+  visit_count: number
+  last_result: ScoreResult
+}
+
 export interface CreateSessionResponse {
   session_id: string
   opening_line: string
   character_vector: CharacterVector
+  memory?: SessionMemory | null
 }
 
 export interface TurnRequest {

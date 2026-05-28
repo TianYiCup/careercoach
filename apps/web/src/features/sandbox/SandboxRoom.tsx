@@ -381,6 +381,14 @@ export function SandboxRoom({ onExit, onScore }: SandboxRoomProps) {
             </div>
           )}
 
+          {state.memory && (
+            <div className="relative z-10 mx-auto mt-2 w-full max-w-5xl px-6 text-center">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-cyber-magenta/40 bg-cyber-magenta/10 px-3 py-1 font-bebas text-[11px] tracking-[0.2em] text-cyber-magenta">
+                ◆ 对手记得你 · 第 {state.memory.visit_count + 1} 次交手
+              </span>
+            </div>
+          )}
+
           {state.characterVector && (
             <div className="relative z-10 mx-auto mt-4 flex w-full max-w-5xl justify-end px-6">
               <HudFrame

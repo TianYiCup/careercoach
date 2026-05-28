@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 import pytest
 from app.agents.state import Verdict
 from app.llm import LLMProvider, Message, TokenUsage
+from app.services.memory import InMemoryEpisodeRepository, MemoryService
 from app.services.moderation import LogOnlyEventSink, ModerationService, NoopBackend
 from app.services.moderation.types import Decision
 from app.services.profile import InMemoryProfileRepository, ProfileService
@@ -176,9 +177,10 @@ def _service(
         session_repo=session_repo,
         turn_repo=turn_repo,
         langfuse_client=langfuse_client,
-        # Fresh profile per service so L5 per-turn recording stays
-        # isolated from the process-wide singleton across tests.
+        # Fresh profile + memory per service so L5/L6 state stays isolated
+        # from the process-wide singletons across tests.
         profile_service=ProfileService(repo=InMemoryProfileRepository()),
+        memory_service=MemoryService(repo=InMemoryEpisodeRepository()),
     )
     return svc, session_repo, turn_repo
 
