@@ -4,6 +4,7 @@ import { postSSE } from '../../api/v1/sse'
 import type {
   ArcStage,
   CharacterVector,
+  CoachStrategyRead,
   CreateSessionRequest,
   CreateSessionResponse,
   EndSessionResponse,
@@ -36,6 +37,10 @@ export interface SandboxState {
   isStreaming: boolean
   /** Current turn hints from coach K */
   hints: { safe: string; aggressive: string; humor: string } | null
+  /** L8: K's read of the strategy the user just played (what / effect /
+   * upgrade). Null when the model produced no parseable read, or before
+   * the first turn completes. */
+  coachStrategy: CoachStrategyRead | null
   /** Active tone level */
   activeTone: ToneLevel
   /** Turns used / left */
@@ -70,6 +75,7 @@ const INITIAL_STATE: SandboxState = {
   streamingText: '',
   isStreaming: false,
   hints: null,
+  coachStrategy: null,
   activeTone: 'aggro',
   turnsUsed: 0,
   turnsLeft: 30,
@@ -189,6 +195,7 @@ export function useSandboxSession() {
         isStreaming: true,
         streamingText: '',
         hints: null,
+        coachStrategy: null,
         messages: [...s.messages, { role: 'user', text: content }],
       }))
 
@@ -241,7 +248,14 @@ export function useSandboxSession() {
                 case 'coach.hint':
                   return {
                     ...s,
-                    hints: frame.data,
+                    hints: {
+                      safe: frame.data.safe,
+                      aggressive: frame.data.aggressive,
+                      humor: frame.data.humor,
+                    },
+                    // L8: strategy read rides the same frame; null when
+                    // the model went off-vocabulary → card hidden.
+                    coachStrategy: frame.data.strategy ?? null,
                   }
                 case 'meta':
                   return {

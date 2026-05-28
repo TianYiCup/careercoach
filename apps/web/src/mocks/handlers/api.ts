@@ -180,6 +180,8 @@ export const handlers = [
       safe: '可以反问deadline，让对方先暴露底牌',
       aggressive: '直接质疑加班合理性，引用劳动法',
       humor: '说"我已经和床约好了，不能放它鸽子"',
+      // L8: mock a strategy read so the dev-mode strategy card renders.
+      strategy: { strategy: 'placate', effect: 'poor', upgrade: 'direct' },
     }
 
     // L2: mock an arc that walks opening → conflict → turning → closing

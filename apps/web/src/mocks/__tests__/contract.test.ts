@@ -204,6 +204,13 @@ describe('POST /v1/sessions/:id/turns (SSE)', () => {
       aggressive: expect.any(String),
       humor: expect.any(String),
     })
+    // L8: the strategy read rides the coach.hint frame with closed-set keys.
+    const strategy = (hint.data as { strategy?: Record<string, string> }).strategy
+    expect(strategy).toBeDefined()
+    expect(['placate', 'concede', 'avoid', 'deflect', 'counter', 'reason', 'direct']).toContain(
+      strategy!.strategy,
+    )
+    expect(['good', 'mixed', 'poor']).toContain(strategy!.effect)
 
     const meta = frames.find((f) => f.event === 'meta')!
     expect(meta.data).toMatchObject({

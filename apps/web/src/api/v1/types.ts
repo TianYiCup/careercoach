@@ -60,12 +60,35 @@ export interface ModerationFrameData {
 
 export type ArcStage = 'opening' | 'conflict' | 'turning' | 'closing'
 
+export type CoachStrategyKey =
+  | 'placate'
+  | 'concede'
+  | 'avoid'
+  | 'deflect'
+  | 'counter'
+  | 'reason'
+  | 'direct'
+export type CoachEffectKey = 'good' | 'mixed' | 'poor'
+
+export interface CoachStrategyRead {
+  strategy: CoachStrategyKey
+  effect: CoachEffectKey
+  upgrade: CoachStrategyKey
+}
+
+export interface CoachHintData {
+  safe: string
+  aggressive: string
+  humor: string
+  strategy?: CoachStrategyRead | null
+}
+
 export type SseEventFrame =
   | { event: 'arc.update'; data: { stage: ArcStage } }
   | { event: 'mood.update'; data: CharacterVector }
   | { event: 'opponent.delta'; data: { text: string } }
   | { event: 'opponent.done'; data: { turn_id: string; full_text: string } }
-  | { event: 'coach.hint'; data: { safe: string; aggressive: string; humor: string } }
+  | { event: 'coach.hint'; data: CoachHintData }
   | { event: 'meta'; data: { turns_used: number; turns_left: number } }
   | { event: 'moderation'; data: ModerationFrameData }
 
