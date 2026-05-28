@@ -72,6 +72,22 @@ class CoachHintEvent(BaseModel):
     )
 
 
+class ArcUpdateEvent(BaseModel):
+    """Dramatic-arc stage for the turn (Character Engine L2).
+
+    Fires once per turn, before `mood.update`, so the UI stage bar can
+    highlight where the conversation sits (开场 → 冲突 → 转折 → 收尾).
+    The same stage biases the opponent's mood via the arbiter, so the
+    bar and the radar move together.
+    """
+
+    stage: Literal["opening", "conflict", "turning", "closing"] = Field(
+        ...,
+        description="Current dramatic-arc stage.",
+        examples=["turning"],
+    )
+
+
 class MoodUpdateEvent(BaseModel):
     """Opponent's live 6-dim mood after the turn (Character Engine L3).
 
@@ -140,6 +156,7 @@ class UserTranscribedEvent(BaseModel):
 
 SseEventName = Literal[
     "user.transcribed",
+    "arc.update",
     "mood.update",
     "opponent.delta",
     "opponent.done",
@@ -164,6 +181,11 @@ class _CoachHintFrame(BaseModel):
     data: CoachHintEvent
 
 
+class _ArcUpdateFrame(BaseModel):
+    event: Literal["arc.update"] = "arc.update"
+    data: ArcUpdateEvent
+
+
 class _MoodUpdateFrame(BaseModel):
     event: Literal["mood.update"] = "mood.update"
     data: MoodUpdateEvent
@@ -186,6 +208,7 @@ class _UserTranscribedFrame(BaseModel):
 
 SseEventFrame = Annotated[
     _UserTranscribedFrame
+    | _ArcUpdateFrame
     | _MoodUpdateFrame
     | _OpponentDeltaFrame
     | _OpponentDoneFrame

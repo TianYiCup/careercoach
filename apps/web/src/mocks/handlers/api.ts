@@ -182,6 +182,15 @@ export const handlers = [
       humor: '说"我已经和床约好了，不能放它鸽子"',
     }
 
+    // L2: mock an arc that walks opening → conflict → turning → closing
+    // across turns so the dev-mode stage bar visibly advances without
+    // the real arc director LLM.
+    const arcStages = ['opening', 'opening', 'conflict', 'turning', 'closing'] as const
+    const arcFrame = {
+      event: 'arc.update',
+      data: { stage: arcStages[Math.min(turnCounter - 1, arcStages.length - 1)] },
+    }
+
     // L3: mock a mood drift that ramps aggression + drops stability each
     // turn (a user pushing back wears the opponent down), clamped to a
     // plausible range. Lets the dev-mode radar visibly move without the
@@ -199,6 +208,7 @@ export const handlers = [
     }
 
     const frames = [
+      arcFrame,
       moodFrame,
       { event: 'opponent.delta', data: { text: reply.slice(0, 2) } },
       { event: 'opponent.delta', data: { text: reply.slice(2) } },

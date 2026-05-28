@@ -20,6 +20,7 @@ import { ArrowLeft, Lock, Send, ShieldAlert, Sparkles, Swords } from 'lucide-rea
 
 import { HintCardV2, MascotReaction } from '../../components'
 import {
+  ArcStageBar,
   CharacterRadar,
   GlowText,
   HudFrame,
@@ -387,6 +388,7 @@ export function SandboxRoom({ onExit, onScore }: SandboxRoomProps) {
                 color="#00F0FF"
                 className="w-48 px-3 py-3"
               >
+                <ArcStageBar stage={state.arcStage} className="mb-2 px-1" />
                 <CharacterRadar vector={state.characterVector} size={160} />
                 <MoodGauge vector={state.characterVector} className="mt-1 px-1" />
               </HudFrame>

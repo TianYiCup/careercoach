@@ -327,6 +327,34 @@ async def test_stream_emits_four_event_types_in_order() -> None:
     assert meta_idx == len(events) - 1
 
 
+async def test_stream_emits_arc_update_before_mood_update() -> None:
+    """PR-L2: the arc.update frame fires once, before mood.update (which
+    is before the deltas). Turn 1 with no prior turns → the arc director
+    short-circuits to `opening` deterministically, so the scripted
+    provider that raises on the arc prompt is never consulted here."""
+    svc, session_repo, _ = _service()
+    await session_repo.save(_active_session())
+    validated = await svc.validate_turn_request(
+        session_id="ses_aaaa1111",
+        content="老板我周末有事",
+        user_id="anonymous",
+        trace_id="t1",
+    )
+
+    frames = await _collect(svc.stream_turn(validated))
+    events = [f.event for f in frames]
+
+    assert events.count("arc.update") == 1
+    arc_idx = events.index("arc.update")
+    mood_idx = events.index("mood.update")
+    first_delta_idx = events.index("opponent.delta")
+    assert arc_idx < mood_idx < first_delta_idx
+
+    arc_frame = frames[arc_idx]
+    # Turn 1 is always opening (deterministic edge guard).
+    assert arc_frame.data["stage"] == "opening"
+
+
 async def test_stream_emits_mood_update_before_opponent_deltas() -> None:
     """PR-L3: the mood.update frame fires once, before any opponent
     delta, so the L9 radar morphs as the reply streams in. The scripted

@@ -58,7 +58,10 @@ export interface ModerationFrameData {
   redirect_resource?: { title: string; url: string } | null
 }
 
+export type ArcStage = 'opening' | 'conflict' | 'turning' | 'closing'
+
 export type SseEventFrame =
+  | { event: 'arc.update'; data: { stage: ArcStage } }
   | { event: 'mood.update'; data: CharacterVector }
   | { event: 'opponent.delta'; data: { text: string } }
   | { event: 'opponent.done'; data: { turn_id: string; full_text: string } }
