@@ -20,6 +20,7 @@ from app.services.scenarios.character_vector import (
     VECTOR_NEUTRAL,
     CharacterVector,
 )
+from app.services.scenarios.persona_vectors import PERSONA_VECTORS
 from app.services.scenarios.seed_data import FALLBACK_RECORD, SCENARIO_CATALOG
 
 
@@ -216,3 +217,38 @@ def test_fallback_record_carries_neutral_vector() -> None:
     still needs a vector — neutral is the safe choice (no opinionated
     persona to model)."""
     assert FALLBACK_RECORD.character_vector == CharacterVector.neutral()
+
+
+def test_every_catalog_row_has_a_curated_vector_entry() -> None:
+    """After L1.2, every row in SCENARIO_CATALOG must have an entry in
+    PERSONA_VECTORS. A row that falls through to the neutral default
+    means a content-ops gap — the prompt builder would render a
+    "baseline" persona that doesn't match the picker copy."""
+    missing = [record.id for record in SCENARIO_CATALOG if record.id not in PERSONA_VECTORS]
+
+    assert not missing, f"catalog rows without PERSONA_VECTORS entry: {missing}"
+
+
+def test_persona_vectors_covers_only_catalog_ids() -> None:
+    """Inverse check — a vector with no matching catalog row is dead
+    weight that drifts out of sync silently. Catch the mistake when
+    someone deletes a scenario but forgets to remove its vector."""
+    catalog_ids = {record.id for record in SCENARIO_CATALOG}
+    orphaned = sorted(vector_id for vector_id in PERSONA_VECTORS if vector_id not in catalog_ids)
+
+    assert not orphaned, f"PERSONA_VECTORS entries with no matching catalog row: {orphaned}"
+
+
+def test_persona_vectors_stay_inside_15_to_85_band() -> None:
+    """Curated vectors avoid the 0/100 extremes — those are reserved
+    for later-epic archetype personas. Catching a stray boundary value
+    here keeps the day-one catalog interpretable as "intensity dial
+    within a normal range", not "absolute archetype"."""
+    out_of_band: list[str] = []
+    for scenario_id, vector in PERSONA_VECTORS.items():
+        for name in VECTOR_DIMENSIONS:
+            value = getattr(vector, name)
+            if not 15 <= value <= 85:
+                out_of_band.append(f"{scenario_id}.{name}={value}")
+
+    assert not out_of_band, "values outside 15-85 band:\n" + "\n".join(out_of_band)

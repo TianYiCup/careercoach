@@ -15,9 +15,11 @@ tests have at least one match per band.
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 
 from app.services.scenarios.character_vector import CharacterVector
+from app.services.scenarios.persona_vectors import PERSONA_VECTORS
 
 # PRD §3.0.5 D — "每个场景需 ≥ 5 真实学生认证". This constant is the
 # single source of truth for that threshold; bumping it requires also
@@ -145,14 +147,6 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         certified_student_ids=_placeholder_ids("sc_001"),
         persona_title="强硬型 HR",
         opening_line="小林啊，这个周末项目得加个班，应该没问题吧？",
-        character_vector=CharacterVector(
-            aggression=60,
-            empathy=30,
-            control=75,
-            honesty=50,
-            stability=80,
-            power_gap=70,
-        ),
     ),
     ScenarioRecord(
         id="sc_002",
@@ -165,14 +159,6 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         certified_student_ids=_placeholder_ids("sc_002"),
         persona_title="老 HR",
         opening_line="坐吧，转正的事情我们聊聊。你的期望薪资是多少？",
-        character_vector=CharacterVector(
-            aggression=40,
-            empathy=35,
-            control=70,
-            honesty=30,
-            stability=85,
-            power_gap=65,
-        ),
     ),
     ScenarioRecord(
         id="sc_003",
@@ -185,14 +171,6 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         certified_student_ids=(),
         persona_title="同寝室友",
         opening_line="嘿，再来一把？这把一定赢！",
-        character_vector=CharacterVector(
-            aggression=25,
-            empathy=20,
-            control=20,
-            honesty=70,
-            stability=45,
-            power_gap=10,
-        ),
     ),
     ScenarioRecord(
         id="sc_004",
@@ -642,6 +620,21 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         persona_title="不好拒绝的长辈亲戚",
         opening_line="你在大城市认识人多，这点小忙不算什么吧？",
     ),
+)
+
+
+# Merge Character Engine L1 vectors into the catalog. The
+# `PERSONA_VECTORS` table lives in a sibling module so the picker copy
+# above and the 6-dim profiles stay in separate files (both readable,
+# both under the 800-line cap). Any catalog row without an explicit
+# vector falls back to the neutral 50/50/50/50/50/50 baseline carried
+# by the `ScenarioRecord` field default — the test suite guards that
+# every catalog id has a curated entry.
+SCENARIO_CATALOG = tuple(
+    dataclasses.replace(record, character_vector=PERSONA_VECTORS[record.id])
+    if record.id in PERSONA_VECTORS
+    else record
+    for record in SCENARIO_CATALOG
 )
 
 
