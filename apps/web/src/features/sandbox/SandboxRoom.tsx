@@ -24,6 +24,7 @@ import {
   GlowText,
   HudFrame,
   MagneticButton,
+  MoodGauge,
   NeuralParticles,
   TiltCard,
 } from '../../components/cyber'
@@ -387,6 +388,7 @@ export function SandboxRoom({ onExit, onScore }: SandboxRoomProps) {
                 className="w-48 px-3 py-3"
               >
                 <CharacterRadar vector={state.characterVector} size={160} />
+                <MoodGauge vector={state.characterVector} className="mt-1 px-1" />
               </HudFrame>
             </div>
           )}
