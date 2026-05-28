@@ -2,6 +2,7 @@ import { useState, useCallback, useRef } from 'react'
 import { apiClient, ApiError } from '../../api/v1/client'
 import { postSSE } from '../../api/v1/sse'
 import type {
+  CharacterVector,
   CreateSessionRequest,
   CreateSessionResponse,
   EndSessionResponse,
@@ -19,6 +20,11 @@ export interface ChatMessage {
 
 export interface SandboxState {
   sessionId: string | null
+  /** Opponent's 6-dim character vector (L1). Set on session create from
+   * the CreateSessionResponse and consumed by the SandboxRoom radar
+   * (L9). Null until startSession resolves so the radar can hide on a
+   * fresh mount. */
+  characterVector: CharacterVector | null
   messages: ChatMessage[]
   /** Current streaming opponent text (not yet in messages) */
   streamingText: string
@@ -54,6 +60,7 @@ export interface SandboxState {
 
 const INITIAL_STATE: SandboxState = {
   sessionId: null,
+  characterVector: null,
   messages: [],
   streamingText: '',
   isStreaming: false,
@@ -146,6 +153,7 @@ export function useSandboxSession() {
         setState((s) => ({
           ...s,
           sessionId: res.session_id,
+          characterVector: res.character_vector,
           started: true,
           messages: [{ role: 'opponent', text: res.opening_line }],
         }))

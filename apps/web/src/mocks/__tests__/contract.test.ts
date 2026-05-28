@@ -90,6 +90,14 @@ describe('POST /v1/sessions', () => {
     expect(body.session_id).toMatch(/^ses_/)
     expect(body.opening_line).toBeTypeOf('string')
     expect(body.opening_line.length).toBeGreaterThan(0)
+
+    // L9 — mock must carry the 6-dim vector so the SandboxRoom radar
+    // renders identically whether running against MSW or the real API.
+    expect(body.character_vector).toBeDefined()
+    expect(body.character_vector.aggression).toBeGreaterThanOrEqual(0)
+    expect(body.character_vector.aggression).toBeLessThanOrEqual(100)
+    expect(body.character_vector.power_gap).toBeGreaterThanOrEqual(0)
+    expect(body.character_vector.power_gap).toBeLessThanOrEqual(100)
   })
 })
 

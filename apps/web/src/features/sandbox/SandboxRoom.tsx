@@ -20,6 +20,7 @@ import { ArrowLeft, Lock, Send, ShieldAlert, Sparkles, Swords } from 'lucide-rea
 
 import { HintCardV2, MascotReaction } from '../../components'
 import {
+  CharacterRadar,
   GlowText,
   HudFrame,
   MagneticButton,
@@ -374,6 +375,19 @@ export function SandboxRoom({ onExit, onScore }: SandboxRoomProps) {
               <span className="font-bebas text-[11px] tracking-[0.24em] text-cyber-amber animate-hud-flicker">
                 ⚡ LOW · 还剩 {state.turnsLeft} 回合，抓紧表现
               </span>
+            </div>
+          )}
+
+          {state.characterVector && (
+            <div className="relative z-10 mx-auto mt-4 flex w-full max-w-5xl justify-end px-6">
+              <HudFrame
+                label="对手画像"
+                tag="CHARACTER"
+                color="#00F0FF"
+                className="w-48 px-3 py-3"
+              >
+                <CharacterRadar vector={state.characterVector} size={160} />
+              </HudFrame>
             </div>
           )}
 

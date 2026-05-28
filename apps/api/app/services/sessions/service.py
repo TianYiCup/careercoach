@@ -33,6 +33,7 @@ import structlog
 
 from app.llm import LLMProvider
 from app.schemas.sessions import (
+    CharacterVectorPayload,
     CreateSessionRequest,
     CreateSessionResponse,
     EndSessionResponse,
@@ -107,6 +108,7 @@ class SessionService:
         return CreateSessionResponse(
             session_id=session_id,
             opening_line=seed.opening_line,
+            character_vector=CharacterVectorPayload(**seed.character_vector.to_dict()),
         )
 
     async def end_session(

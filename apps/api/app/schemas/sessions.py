@@ -20,12 +20,38 @@ class CreateSessionRequest(BaseModel):
     )
 
 
+class CharacterVectorPayload(BaseModel):
+    """6-dim opponent persona profile (Character Engine L1) returned on
+    session create so the frontend can render the L9 radar chart.
+
+    Each dim is 0-100; semantics live with
+    `app.services.scenarios.character_vector.CharacterVector`. The
+    frontend treats this as a display-only snapshot — future epics
+    (L3 Mood Arbiter) will move these values during the conversation,
+    at which point the radar animates."""
+
+    aggression: int = Field(..., ge=0, le=100)
+    empathy: int = Field(..., ge=0, le=100)
+    control: int = Field(..., ge=0, le=100)
+    honesty: int = Field(..., ge=0, le=100)
+    stability: int = Field(..., ge=0, le=100)
+    power_gap: int = Field(..., ge=0, le=100)
+
+
 class CreateSessionResponse(BaseModel):
     session_id: str = Field(..., examples=["ses_018f3a8b1c2d7e3a"])
     opening_line: str = Field(
         ...,
         description="Opponent's first line, generated server-side from scenario + persona.",
         examples=["小林啊，这个周末项目得加个班，应该没问题吧？"],
+    )
+    character_vector: CharacterVectorPayload = Field(
+        ...,
+        description=(
+            "Opponent's 6-dim persona profile (L1). The frontend renders "
+            "this as the L9 radar chart so the user can see who they're "
+            "up against at a glance."
+        ),
     )
 
 
