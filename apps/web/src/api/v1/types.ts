@@ -31,9 +31,19 @@ export interface CreateSessionRequest {
   user_goal: string
 }
 
+export interface CharacterVector {
+  aggression: number
+  empathy: number
+  control: number
+  honesty: number
+  stability: number
+  power_gap: number
+}
+
 export interface CreateSessionResponse {
   session_id: string
   opening_line: string
+  character_vector: CharacterVector
 }
 
 export interface TurnRequest {

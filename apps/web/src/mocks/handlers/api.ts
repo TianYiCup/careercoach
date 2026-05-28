@@ -135,9 +135,28 @@ export const handlers = [
       sc_003: '嘿，再来一把？这把一定赢！',
     }
 
+    // Character Engine L1 — mirrors the values curated in
+    // apps/api/app/services/scenarios/persona_vectors.py. The mock catalog
+    // only carries the demo trio; anything else gets the neutral 50/50/...
+    // baseline so MSW path keeps behaving like the real catalog's fallback.
+    const vectors: Record<string, CreateSessionResponse['character_vector']> = {
+      sc_001: { aggression: 60, empathy: 30, control: 75, honesty: 50, stability: 80, power_gap: 70 },
+      sc_002: { aggression: 40, empathy: 35, control: 70, honesty: 30, stability: 85, power_gap: 65 },
+      sc_003: { aggression: 25, empathy: 20, control: 20, honesty: 70, stability: 45, power_gap: 15 },
+    }
+    const neutral = {
+      aggression: 50,
+      empathy: 50,
+      control: 50,
+      honesty: 50,
+      stability: 50,
+      power_gap: 50,
+    }
+
     const response: CreateSessionResponse = {
       session_id: `ses_${crypto.randomUUID().slice(0, 8)}`,
       opening_line: openings[body.scenario_id] ?? '我们来聊聊吧。',
+      character_vector: vectors[body.scenario_id] ?? neutral,
     }
 
     turnCounter = 0
