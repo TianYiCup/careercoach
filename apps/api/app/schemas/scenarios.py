@@ -54,9 +54,13 @@ class CustomScenarioRequest(BaseModel):
 
     description: str = Field(
         ...,
-        min_length=30,
+        min_length=6,
         max_length=1000,
-        description="Free-text scenario description. US-A1: ≥ 30 chars to submit, capped at 1000.",
+        description=(
+            "Free-text scenario description. ≥ 6 chars to submit, capped at 1000. "
+            "PR-D4 lowered the floor from 30 — judges typing a short phrase "
+            '("导师骂我怎么办") were hitting a 422 on the route.'
+        ),
         examples=["我想练习向房东要求退还押金，但租房合同里关于押金的条款写得很模糊。"],
     )
 

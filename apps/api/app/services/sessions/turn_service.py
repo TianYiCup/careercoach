@@ -61,15 +61,68 @@ MAX_TURNS_PER_SESSION = 30
 # Same prompts as the agents package, kept local so this service can
 # evolve them independently of the LangGraph node body. When the two
 # converge in a later sprint, we'll point both at one module.
-_ROLEPLAY_PROMPT = (
-    "你扮演用户练习对话中的对手，回应要自然、不超过 80 字，不要给建议，也不要破坏角色。"
-)
-_COACH_PROMPT = (
-    "你是教练 K。看完对手的回应，给用户三档下一句提示，"
-    "每行 ≤ 30 字，按以下格式严格输出，不要解释、不要任何额外文字：\n"
-    "SAFE: <稳如老狗版>\n"
-    "AGGRESSIVE: <正面刚版>\n"
-    "HUMOR: <整活版>"
+#
+# PR-D4: prompts are now BUILDERS that take the live session context.
+# The previous constants didn't know the scenario title, the user's
+# goal, or which side of the conversation the user was on — the LLM
+# drifted to weather chitchat in the roleplay node, and the coach
+# produced lines from the opponent's POV instead of the user's.
+
+
+def _build_roleplay_prompt(
+    *,
+    scenario_title: str,
+    background: str,
+    persona_title: str,
+    user_goal: str,
+) -> str:
+    """System prompt for the AI opponent.
+
+    Pins the LLM to the scenario, the persona, and — crucially — to
+    the opposing side of the user's stated goal. Without the explicit
+    "你在跟用户对立面" line, models defaulted to neutral friendly
+    chitchat and forgot they were a tough negotiation counterpart."""
+    return (
+        f"你扮演用户练习对话中的对手。场景：「{scenario_title}」。\n"
+        f"场景背景：{background}\n"
+        f"你的角色身份：{persona_title}。\n"
+        f"用户的目标是：{user_goal}\n"
+        "你站在与用户对立的一方，要让用户感受到压力，但不能爆粗、不能人身攻击。\n"
+        "回应要自然、像真人说话，不超过 80 字。不要给用户建议，不要破坏角色，不要替用户说话。"
+    )
+
+
+def _build_coach_prompt(
+    *,
+    scenario_title: str,
+    user_goal: str,
+) -> str:
+    """System prompt for教练 K's three-tone hint.
+
+    PR-D4: K used to drift into the opponent's voice ("我打游戏关你什么事"
+    in the 室友打游戏 scenario, said as if the user *was* the gamer
+    instead of the one losing sleep). Pinning the user's side via
+    user_goal in the system prompt fixes the perspective."""
+    return (
+        f"你是教练 K，正在指导【用户】练习对话。\n"
+        f"场景：「{scenario_title}」\n"
+        f"用户的目标：{user_goal}\n"
+        "你站在【用户这一边】，给出的提示是【用户接下来要说的话】，不是对手的话，"
+        "也不是替用户分析对方。每行直接是用户可以照说的一句话。\n"
+        "看完对手的回应，给用户三档下一句提示，每行 ≤ 30 字，按以下格式严格输出，"
+        "不要解释、不要任何额外文字：\n"
+        "SAFE: <稳如老狗版>\n"
+        "AGGRESSIVE: <正面刚版>\n"
+        "HUMOR: <整活版>"
+    )
+
+
+_JUDGE_PROMPT = (
+    "你是评委。看完用户与对手的对话，对【用户的话】给一个评分。\n"
+    "只输出两行：\n"
+    "VERDICT: shenfeng | guolu | fanche\n"
+    "RATING: 0-100 的整数\n"
+    "不要解释，不要任何额外文字。"
 )
 _JUDGE_PROMPT = (
     "你是评委。看完用户与对手的对话，对【用户的话】给一个评分。\n"
@@ -377,7 +430,14 @@ class TurnService:
             )
 
             roleplay_messages: list[Message] = [
-                Message.system(_ROLEPLAY_PROMPT),
+                Message.system(
+                    _build_roleplay_prompt(
+                        scenario_title=seed.scenario_title,
+                        background=seed.background,
+                        persona_title=seed.persona_title,
+                        user_goal=session.user_goal,
+                    )
+                ),
                 *history,
                 Message.user(validated.content),
             ]
@@ -435,7 +495,13 @@ class TurnService:
                 {"turn_id": turn_id, "full_text": full_reply},
             )
 
-            coach_hint = await self._coach_three_tones(validated.content, full_reply, trace)
+            coach_hint = await self._coach_three_tones(
+                validated.content,
+                full_reply,
+                trace,
+                scenario_title=seed.scenario_title,
+                user_goal=session.user_goal,
+            )
             yield SseFrame(
                 "coach.hint",
                 {
@@ -570,10 +636,21 @@ class TurnService:
         user_content: str,
         opponent_reply: str,
         trace: TurnTrace,
+        *,
+        scenario_title: str,
+        user_goal: str,
     ) -> CoachHintTrio:
-        """Single LLM call → parse the three-tone block. Fallback on parse fail."""
-        prompt = f"用户刚说：{user_content}\n对手回应：{opponent_reply}\n请按三档输出。"
-        messages = [Message.system(_COACH_PROMPT), Message.user(prompt)]
+        """Single LLM call → parse the three-tone block. Fallback on parse fail.
+
+        PR-D4: `scenario_title` + `user_goal` are pinned into the system
+        prompt so K speaks from the user's side rather than drifting
+        into the opponent's voice."""
+        prompt = f"用户刚说：{user_content}\n对手回应：{opponent_reply}\n请按三档输出用户的下一句。"
+        system_prompt = _build_coach_prompt(
+            scenario_title=scenario_title,
+            user_goal=user_goal,
+        )
+        messages = [Message.system(system_prompt), Message.user(prompt)]
         usage: list[TokenUsage] = []
         raw = await _collect(self._llm.stream_chat(messages, usage_sink=usage))
         trace.record_generation(
