@@ -33,8 +33,14 @@ depends_on: str | Sequence[str] | None = None
 # serialised from `CharacterVector.neutral().to_dict()` so the migration
 # is reproducible from the file alone — alembic shouldn't import live
 # app code that could shift under a future refactor.
+#
+# Each `:` is escaped as `\:` because `sa.text()` treats unescaped `:`
+# followed by alphanumerics as a bindparam placeholder — without the
+# escape, `"aggression":50` renders as `"aggression"NULL` and Postgres
+# rejects the resulting JSON literal at migration time.
 _NEUTRAL_VECTOR_JSON = (
-    '{"aggression":50,"empathy":50,"control":50,"honesty":50,"stability":50,"power_gap":50}'
+    r'{"aggression"\:50,"empathy"\:50,"control"\:50,'
+    r'"honesty"\:50,"stability"\:50,"power_gap"\:50}'
 )
 
 
