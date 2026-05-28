@@ -381,8 +381,8 @@ export function SandboxRoom({ onExit, onScore }: SandboxRoomProps) {
           {state.characterVector && (
             <div className="relative z-10 mx-auto mt-4 flex w-full max-w-5xl justify-end px-6">
               <HudFrame
-                label="对手画像"
-                tag="CHARACTER"
+                label="对手情绪"
+                tag="LIVE MOOD"
                 color="#00F0FF"
                 className="w-48 px-3 py-3"
               >

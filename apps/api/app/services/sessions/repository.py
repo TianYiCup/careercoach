@@ -12,13 +12,14 @@ package, which holds rendered-card-shaped data (`SessionCardData`).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Protocol, runtime_checkable
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.session import Session
+from app.services.scenarios.character_vector import CharacterVector
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,12 @@ class SessionRecord:
 
     All mutations (e.g. `mark_ended`) return a new instance so callers
     never accidentally hold a stale view of the lifecycle state.
+
+    `mood_vector` (PR-L3) is the live 6-dim opponent state: starts equal
+    to the scenario's static `character_vector` and shifts each turn as
+    the MoodArbiter reads what the user just said. Defaults to neutral
+    so a session created before L3 (e.g. in a unit test) still satisfies
+    the dataclass and the prompt builder's L1 descriptor path stays valid.
     """
 
     session_id: str
@@ -38,6 +45,9 @@ class SessionRecord:
     status: str  # 'active' | 'ended'
     created_at: datetime
     ended_at: datetime | None = None
+    mood_vector: "CharacterVector" = field(  # noqa: UP037 — quoted to keep import below the class
+        default_factory=lambda: CharacterVector.neutral()
+    )
 
 
 @runtime_checkable
@@ -131,6 +141,7 @@ def _record_to_model(record: SessionRecord) -> Session:
         status=record.status,
         created_at=record.created_at,
         ended_at=record.ended_at,
+        mood_vector=record.mood_vector.to_dict(),
     )
 
 
@@ -145,6 +156,7 @@ def _model_to_record(row: Session) -> SessionRecord:
         status=row.status,
         created_at=row.created_at,
         ended_at=row.ended_at,
+        mood_vector=CharacterVector.from_dict(row.mood_vector),
     )
 
 

@@ -72,6 +72,23 @@ class CoachHintEvent(BaseModel):
     )
 
 
+class MoodUpdateEvent(BaseModel):
+    """Opponent's live 6-dim mood after the turn (Character Engine L3).
+
+    Fires once per turn, before the opponent deltas, so the L9 radar can
+    morph to the new shape as the reply streams in. Values are the same
+    0-100 dims as the static `character_vector` returned on session
+    create — the frontend animates from the previous mood to this one.
+    """
+
+    aggression: int = Field(..., ge=0, le=100, examples=[72])
+    empathy: int = Field(..., ge=0, le=100, examples=[28])
+    control: int = Field(..., ge=0, le=100, examples=[80])
+    honesty: int = Field(..., ge=0, le=100, examples=[45])
+    stability: int = Field(..., ge=0, le=100, examples=[65])
+    power_gap: int = Field(..., ge=0, le=100, examples=[70])
+
+
 class MetaEvent(BaseModel):
     """Quota / meter update. Fires after each turn so the UI can re-render the counter."""
 
@@ -123,6 +140,7 @@ class UserTranscribedEvent(BaseModel):
 
 SseEventName = Literal[
     "user.transcribed",
+    "mood.update",
     "opponent.delta",
     "opponent.done",
     "coach.hint",
@@ -146,6 +164,11 @@ class _CoachHintFrame(BaseModel):
     data: CoachHintEvent
 
 
+class _MoodUpdateFrame(BaseModel):
+    event: Literal["mood.update"] = "mood.update"
+    data: MoodUpdateEvent
+
+
 class _MetaFrame(BaseModel):
     event: Literal["meta"] = "meta"
     data: MetaEvent
@@ -163,6 +186,7 @@ class _UserTranscribedFrame(BaseModel):
 
 SseEventFrame = Annotated[
     _UserTranscribedFrame
+    | _MoodUpdateFrame
     | _OpponentDeltaFrame
     | _OpponentDoneFrame
     | _CoachHintFrame

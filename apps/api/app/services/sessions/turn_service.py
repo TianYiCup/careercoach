@@ -31,6 +31,7 @@ from __future__ import annotations
 import re
 import uuid
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import structlog
@@ -47,6 +48,7 @@ from app.services.scenarios.character_vector import (
     describe_for_coach,
     describe_for_roleplay,
 )
+from app.services.sessions.mood_arbiter import MoodArbiter
 from app.services.sessions.repository import SessionRepository
 from app.services.sessions.scenario_seed import get_scenario_seed
 from app.services.sessions.sse import SseFrame
@@ -252,11 +254,16 @@ class TurnService:
         session_repo: SessionRepository,
         turn_repo: TurnRepository,
         langfuse_client: Langfuse | None = None,
+        mood_arbiter: MoodArbiter | None = None,
     ) -> None:
         self._llm = llm
         self._moderation = moderation
         self._session_repo = session_repo
         self._turn_repo = turn_repo
+        # PR-L3: defaults to a MoodArbiter over the same LLM. Injectable
+        # so tests can pass a scripted arbiter (or None to disable the
+        # mood frame entirely on the pre-L3 paths).
+        self._mood_arbiter = mood_arbiter if mood_arbiter is not None else MoodArbiter(llm)
         # `None` is a real, supported value — when Langfuse keys aren't
         # configured `begin_turn_trace` returns a no-op `TurnTrace` so
         # `stream_turn` never branches on observability state.
@@ -452,6 +459,29 @@ class TurnService:
                 prior_turns=validated.prior_turns,
             )
 
+            # PR-L3: run the mood arbiter FIRST so the roleplay prompt
+            # reflects the opponent's *updated* mood, not the stale one.
+            # The arbiter reads the static persona + previous mood + what
+            # the user just said, and falls back to the previous mood on
+            # any LLM / parse failure (never blocks the turn). We emit a
+            # `mood.update` frame before the deltas so the L9 radar morphs
+            # as the reply streams in.
+            prev_mood = session.mood_vector
+            last_opponent_reply = (
+                validated.prior_turns[-1].opponent_reply if validated.prior_turns else None
+            )
+            next_mood = await self._mood_arbiter.next_mood(
+                character_vector=seed.character_vector,
+                prev_mood=prev_mood,
+                user_content=validated.content,
+                opponent_last_reply=last_opponent_reply,
+                trace_id=validated.trace_id,
+                session_id=validated.session_id,
+            )
+            if next_mood != prev_mood:
+                await self._session_repo.save(replace(session, mood_vector=next_mood))
+            yield SseFrame("mood.update", next_mood.to_dict())
+
             roleplay_messages: list[Message] = [
                 Message.system(
                     _build_roleplay_prompt(
@@ -459,7 +489,7 @@ class TurnService:
                         background=seed.background,
                         persona_title=seed.persona_title,
                         user_goal=session.user_goal,
-                        character_descriptor=describe_for_roleplay(seed.character_vector),
+                        character_descriptor=describe_for_roleplay(next_mood),
                     )
                 ),
                 *history,
@@ -525,7 +555,7 @@ class TurnService:
                 trace,
                 scenario_title=seed.scenario_title,
                 user_goal=session.user_goal,
-                opponent_profile=describe_for_coach(seed.character_vector),
+                opponent_profile=describe_for_coach(next_mood),
             )
             yield SseFrame(
                 "coach.hint",

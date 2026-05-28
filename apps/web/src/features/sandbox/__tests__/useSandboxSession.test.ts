@@ -179,6 +179,14 @@ async function setupActiveSession() {
   mockPost.mockResolvedValueOnce({
     session_id: 'ses_sse',
     opening_line: '你好',
+    character_vector: {
+      aggression: 60,
+      empathy: 30,
+      control: 75,
+      honesty: 50,
+      stability: 80,
+      power_gap: 70,
+    },
   })
 
   renderSessionHook()
@@ -212,6 +220,32 @@ describe('sendTurn SSE frame handling', () => {
     // User message + opponent done message
     expect(getState().messages).toHaveLength(3)
     expect(getState().messages[2]).toEqual({ role: 'opponent', text: '你好' })
+  })
+
+  it('mood.update replaces characterVector for the L9 radar', async () => {
+    const newMood = {
+      aggression: 76,
+      empathy: 28,
+      control: 75,
+      honesty: 50,
+      stability: 65,
+      power_gap: 70,
+    }
+    mockPostSSE.mockImplementation(async (_path, _body, onFrame) => {
+      onFrame({ event: 'mood.update', data: newMood } as SseEventFrame)
+      onFrame({ event: 'opponent.done', data: { turn_id: 't_1', full_text: '哼' } } as SseEventFrame)
+    })
+
+    await setupActiveSession()
+    // Seeded from session create
+    expect(getState().characterVector?.aggression).toBe(60)
+
+    await act(async () => {
+      await hookRef.result.current.sendTurn('我就是不加班')
+    })
+
+    // Mood frame swapped the vector before the reply landed
+    expect(getState().characterVector).toEqual(newMood)
   })
 
   it('coach.hint stores hints and derives mascot expression', async () => {

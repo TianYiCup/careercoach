@@ -182,7 +182,24 @@ export const handlers = [
       humor: '说"我已经和床约好了，不能放它鸽子"',
     }
 
+    // L3: mock a mood drift that ramps aggression + drops stability each
+    // turn (a user pushing back wears the opponent down), clamped to a
+    // plausible range. Lets the dev-mode radar visibly move without the
+    // real arbiter LLM. Lands first so the radar updates before deltas.
+    const moodFrame = {
+      event: 'mood.update',
+      data: {
+        aggression: Math.min(80, 60 + turnCounter * 4),
+        empathy: 30,
+        control: 75,
+        honesty: 50,
+        stability: Math.max(60, 80 - turnCounter * 3),
+        power_gap: 70,
+      },
+    }
+
     const frames = [
+      moodFrame,
       { event: 'opponent.delta', data: { text: reply.slice(0, 2) } },
       { event: 'opponent.delta', data: { text: reply.slice(2) } },
       { event: 'opponent.done', data: { turn_id: turnId, full_text: reply } },
