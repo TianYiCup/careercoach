@@ -161,6 +161,17 @@ describe('POST /v1/sessions/:id/turns (SSE)', () => {
     expect(events.indexOf('coach.hint')).toBeGreaterThan(doneIdx)
     // meta last.
     expect(events.indexOf('meta')).toBe(events.length - 1)
+
+    // L3: exactly one mood.update, before any opponent.delta, carrying
+    // the 6-dim payload the radar consumes.
+    expect(events.filter((e) => e === 'mood.update').length).toBe(1)
+    const moodIdx = events.indexOf('mood.update')
+    expect(moodIdx).toBeLessThan(events.indexOf('opponent.delta'))
+    const mood = frames[moodIdx]!.data as Record<string, number>
+    for (const dim of ['aggression', 'empathy', 'control', 'honesty', 'stability', 'power_gap']) {
+      expect(mood[dim]).toBeGreaterThanOrEqual(0)
+      expect(mood[dim]).toBeLessThanOrEqual(100)
+    }
   })
 
   it('opponent.delta carries `text`, opponent.done carries `turn_id` + `full_text`', async () => {

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, String, func
+from sqlalchemy import JSON, DateTime, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -63,6 +63,26 @@ class Session(Base):
     ended_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
+    )
+
+    # Character Engine L3 — live 6-dim mood vector. Seeded equal to the
+    # scenario's static character_vector at create time, then mutated by
+    # the MoodArbiter after every user turn. Stored as JSON to mirror
+    # `scenarios.character_vector`; the same `CharacterVector.from_dict`
+    # parser round-trips both. Server default is the neutral baseline so
+    # an in-flight migration doesn't leave rows with a NULL mood and
+    # crash the prompt builder.
+    mood_vector: Mapped[dict[str, int]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=lambda: {
+            "aggression": 50,
+            "empathy": 50,
+            "control": 50,
+            "honesty": 50,
+            "stability": 50,
+            "power_gap": 50,
+        },
     )
 
     def __repr__(self) -> str:

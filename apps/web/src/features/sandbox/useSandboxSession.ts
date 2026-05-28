@@ -196,6 +196,16 @@ export function useSandboxSession() {
           (frame: SseEventFrame) => {
             setState((s) => {
               switch (frame.event) {
+                case 'mood.update':
+                  // L3: opponent's live mood after this turn. Swapping
+                  // characterVector re-renders the L9 radar to the new
+                  // shape (snap — animated frame-to-frame morph is the
+                  // L9.2 follow-up). Lands before the deltas so the new
+                  // shape is on screen as the reply streams in.
+                  return {
+                    ...s,
+                    characterVector: frame.data,
+                  }
                 case 'opponent.delta':
                   return {
                     ...s,

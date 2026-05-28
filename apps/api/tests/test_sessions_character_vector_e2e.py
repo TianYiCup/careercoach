@@ -27,15 +27,29 @@ prompt it sees, then asserts:
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
 from app.llm import LLMProvider, Message, TokenUsage
 from app.services.moderation import LogOnlyEventSink, ModerationService, NoopBackend
+from app.services.scenarios.character_vector import VECTOR_DIMENSIONS, CharacterVector
+from app.services.scenarios.seed_data import get_record_by_id
 from app.services.sessions.repository import InMemorySessionRepository, SessionRecord
 from app.services.sessions.sse import SseFrame
 from app.services.sessions.turn_repository import InMemoryTurnRepository
 from app.services.sessions.turn_service import TurnService
+
+
+def _parse_base_from_arbiter_prompt(user_prompt: str) -> dict[str, int]:
+    """Pull the `基础人格：aggression=60, ...` line out of the arbiter's
+    user prompt so the stub can echo the static persona back as the
+    next mood (keeping these L1-era descriptor assertions stable)."""
+    base: dict[str, int] = {}
+    for name in VECTOR_DIMENSIONS:
+        match = re.search(rf"{name}=(\d+)", user_prompt)
+        base[name] = int(match.group(1)) if match else 50
+    return base
 
 
 class _RecordingProvider:
@@ -63,7 +77,15 @@ class _RecordingProvider:
     ) -> AsyncIterator[str]:
         _ = (temperature, timeout, usage_sink)
         system = messages[0].content if messages else ""
-        if "你扮演用户练习对话中的对手" in system:
+        if "你是对话情绪导演" in system:
+            # PR-L3 mood arbiter. Echo the base persona back so next_mood
+            # == the static character_vector and the descriptor assertions
+            # below stay identical to the pre-L3 behaviour. The arbiter
+            # clamps to the ±20 band, so echoing the base is always valid.
+            self.system_prompts.setdefault("arbiter", []).append(system)
+            base = _parse_base_from_arbiter_prompt(messages[-1].content)
+            response = "\n".join(f"{name}: {value}" for name, value in base.items())
+        elif "你扮演用户练习对话中的对手" in system:
             self.system_prompts["roleplay"].append(system)
             response = "这话我听过太多次了，今天不行。"
         elif "你是教练 K" in system:
@@ -93,6 +115,16 @@ def _service(
 
 
 def _session(scenario_id: str, session_id: str) -> SessionRecord:
+    # Seed mood_vector = the scenario's static character vector, exactly
+    # as SessionService.create_session does. The arbiter then runs each
+    # turn but the stub echoes the base back, so next_mood stays equal to
+    # the seed and the descriptor assertions below are stable.
+    record = get_record_by_id(scenario_id)
+    mood = (
+        record.character_vector
+        if hasattr(record, "character_vector")
+        else CharacterVector.neutral()
+    )
     return SessionRecord(
         session_id=session_id,
         user_id="anonymous",
@@ -102,6 +134,7 @@ def _session(scenario_id: str, session_id: str) -> SessionRecord:
         user_goal="拒绝加班但不撕破脸",
         status="active",
         created_at=datetime(2026, 5, 28, 12, 0, tzinfo=UTC),
+        mood_vector=mood,
     )
 
 

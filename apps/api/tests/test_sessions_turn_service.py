@@ -327,6 +327,35 @@ async def test_stream_emits_four_event_types_in_order() -> None:
     assert meta_idx == len(events) - 1
 
 
+async def test_stream_emits_mood_update_before_opponent_deltas() -> None:
+    """PR-L3: the mood.update frame fires once, before any opponent
+    delta, so the L9 radar morphs as the reply streams in. The scripted
+    provider raises on the arbiter prompt, so the arbiter falls back to
+    the session's seeded mood — the frame still carries a valid 6-dim
+    payload."""
+    svc, session_repo, _ = _service()
+    await session_repo.save(_active_session())
+    validated = await svc.validate_turn_request(
+        session_id="ses_aaaa1111",
+        content="老板我周末有事",
+        user_id="anonymous",
+        trace_id="t1",
+    )
+
+    frames = await _collect(svc.stream_turn(validated))
+    events = [f.event for f in frames]
+
+    assert events.count("mood.update") == 1
+    mood_idx = events.index("mood.update")
+    first_delta_idx = events.index("opponent.delta")
+    assert mood_idx < first_delta_idx
+
+    mood_frame = frames[mood_idx]
+    for dim in ("aggression", "empathy", "control", "honesty", "stability", "power_gap"):
+        assert dim in mood_frame.data
+        assert 0 <= mood_frame.data[dim] <= 100
+
+
 async def test_opponent_delta_text_concatenates_to_done_full_text() -> None:
     svc, session_repo, _ = _service()
     await session_repo.save(_active_session())

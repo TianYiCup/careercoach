@@ -96,6 +96,9 @@ class SessionService:
             user_goal=request.user_goal,
             status="active",
             created_at=utcnow(),
+            # PR-L3: seed live mood = scenario's static profile. The
+            # MoodArbiter mutates this on every user turn going forward.
+            mood_vector=seed.character_vector,
         )
         await self._repository.save(record)
 
