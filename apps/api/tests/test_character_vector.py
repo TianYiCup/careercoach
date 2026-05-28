@@ -19,6 +19,8 @@ from app.services.scenarios.character_vector import (
     VECTOR_MIN,
     VECTOR_NEUTRAL,
     CharacterVector,
+    describe_for_coach,
+    describe_for_roleplay,
 )
 from app.services.scenarios.persona_vectors import PERSONA_VECTORS
 from app.services.scenarios.seed_data import FALLBACK_RECORD, SCENARIO_CATALOG
@@ -252,3 +254,168 @@ def test_persona_vectors_stay_inside_15_to_85_band() -> None:
                 out_of_band.append(f"{scenario_id}.{name}={value}")
 
     assert not out_of_band, "values outside 15-85 band:\n" + "\n".join(out_of_band)
+
+
+# --- L1.3 describe_for_roleplay ----------------------------------------------
+
+
+def test_roleplay_descriptor_empty_for_neutral_vector() -> None:
+    """The neutral fallback (every dim = 50) sits inside the silent
+    31-69 band, so no bullets emit and the roleplay prompt should
+    collapse to its pre-L1.3 shape."""
+    assert describe_for_roleplay(CharacterVector.neutral()) == ""
+
+
+def test_roleplay_descriptor_emits_high_phrases() -> None:
+    """All-90 vector triggers the HIGH phrase for every dim. Pins the
+    bullet count + the header so a regression that drops a dim is loud."""
+    vector = CharacterVector(
+        aggression=90,
+        empathy=90,
+        control=90,
+        honesty=90,
+        stability=90,
+        power_gap=90,
+    )
+
+    descriptor = describe_for_roleplay(vector)
+
+    assert descriptor.startswith("你的性格底色：\n")
+    assert descriptor.count("\n- ") == 6  # one bullet per dim
+    assert "说话带刺" in descriptor
+    assert "是上位者" in descriptor
+
+
+def test_roleplay_descriptor_emits_low_phrases() -> None:
+    vector = CharacterVector(
+        aggression=10,
+        empathy=10,
+        control=10,
+        honesty=10,
+        stability=10,
+        power_gap=10,
+    )
+
+    descriptor = describe_for_roleplay(vector)
+
+    assert "说话留余地" in descriptor
+    assert "和用户对等" in descriptor
+    assert "情绪不稳" in descriptor
+
+
+@pytest.mark.parametrize(
+    ("value", "should_emit"),
+    [(0, True), (30, True), (31, False), (50, False), (69, False), (70, True), (100, True)],
+)
+def test_roleplay_descriptor_band_edges(value: int, should_emit: bool) -> None:
+    """30 reads as LOW, 70 as HIGH (inclusive). 31-69 stays silent.
+    Pinning the edges here catches a future re-tune of the threshold
+    constants slipping through review."""
+    vector = CharacterVector(
+        aggression=value,
+        empathy=50,
+        control=50,
+        honesty=50,
+        stability=50,
+        power_gap=50,
+    )
+
+    descriptor = describe_for_roleplay(vector)
+
+    if should_emit:
+        assert descriptor, f"expected a bullet for aggression={value}"
+    else:
+        assert descriptor == "", f"expected silence for aggression={value}, got: {descriptor!r}"
+
+
+def test_roleplay_descriptor_bullet_order_matches_dimensions() -> None:
+    """Deterministic order — re-tuning one persona shouldn't reshuffle
+    the descriptor relative to another. Order follows VECTOR_DIMENSIONS."""
+    vector = CharacterVector(
+        aggression=10,  # LOW — first
+        empathy=50,
+        control=90,  # HIGH — second
+        honesty=50,
+        stability=10,  # LOW — third
+        power_gap=90,  # HIGH — fourth
+    )
+
+    descriptor = describe_for_roleplay(vector)
+    lines = [line for line in descriptor.splitlines() if line.startswith("- ")]
+
+    # aggression LOW, control HIGH, stability LOW, power_gap HIGH in that order
+    assert "留余地" in lines[0]
+    assert "强势把话题" in lines[1]
+    assert "情绪不稳" in lines[2]
+    assert "上位者" in lines[3]
+
+
+def test_roleplay_descriptor_for_sc_001_matches_persona_intent() -> None:
+    """End-to-end: the demo trio's curated vectors should render the
+    bullets a content reviewer would expect for 强硬型 HR — high
+    control, high stability, high power_gap, and the low-empathy
+    bullet for not caring you're tired."""
+    sc_001 = PERSONA_VECTORS["sc_001"]
+
+    descriptor = describe_for_roleplay(sc_001)
+
+    assert "强势把话题" in descriptor
+    assert "稳坐钓鱼台" in descriptor
+    assert "是上位者" in descriptor
+    assert "用户情绪迟钝" in descriptor
+
+
+# --- L1.3 describe_for_coach -------------------------------------------------
+
+
+def test_coach_descriptor_empty_for_neutral_vector() -> None:
+    assert describe_for_coach(CharacterVector.neutral()) == ""
+
+
+def test_coach_descriptor_focuses_on_three_tactical_dims() -> None:
+    """Coach only cares about power_gap / stability / honesty — the
+    other three are too situational for a single hint. An all-extreme
+    vector should yield at most 3 bullets (power_gap, stability,
+    honesty)."""
+    vector = CharacterVector(
+        aggression=90,  # not in coach view
+        empathy=90,  # not in coach view
+        control=90,  # not in coach view
+        honesty=10,
+        stability=90,
+        power_gap=90,
+    )
+
+    descriptor = describe_for_coach(vector)
+
+    assert descriptor.startswith("对手画像：\n")
+    assert descriptor.count("\n- ") == 3
+
+
+def test_coach_honesty_only_has_low_phrase() -> None:
+    """High-honesty opponent doesn't need coach guidance — direct talk
+    is already the easy case. The descriptor table reflects that
+    asymmetry; an all-90 vector should NOT emit an honesty bullet."""
+    high_honesty = CharacterVector(
+        aggression=50,
+        empathy=50,
+        control=50,
+        honesty=90,
+        stability=50,
+        power_gap=50,
+    )
+
+    descriptor = describe_for_coach(high_honesty)
+
+    assert descriptor == ""
+
+
+def test_coach_descriptor_for_sc_001_recommends_hierarchy_savvy_play() -> None:
+    """强硬型 HR: high power_gap (don't硬顶) + high stability (利益层面更有效).
+    Spot-checks the two phrases a reviewer would expect."""
+    sc_001 = PERSONA_VECTORS["sc_001"]
+
+    descriptor = describe_for_coach(sc_001)
+
+    assert "上位者" in descriptor
+    assert "情绪很稳" in descriptor

@@ -106,10 +106,124 @@ class CharacterVector:
         return {name: getattr(self, name) for name in VECTOR_DIMENSIONS}
 
 
+# --- Vector → Chinese prompt descriptor (L1.3) -------------------------------
+
+# A dimension only contributes a phrase if it sits in the outer 30 / 70
+# bands — values inside 31-69 are "baseline" and stay silent so the
+# descriptor reads as "what's distinctive about this persona" instead of
+# describing every dim every time. Edges are inclusive: a 30 reads LOW,
+# a 70 reads HIGH.
+_LOW_BAND_MAX = 30
+_HIGH_BAND_MIN = 70
+
+
+# Per-dim Chinese phrasing at each extreme. Kept short so several
+# bullets together still fit inside the roleplay prompt without
+# blowing the model's instruction budget. Tone aligns with教练 K's
+# "嘴硬心软不爹味" voice (PRD §3.0.5) — descriptive, not prescriptive.
+_ROLEPLAY_DESCRIPTORS: dict[str, dict[str, str]] = {
+    "aggression": {
+        "low": "说话留余地，不顶撞，被刺也忍一下",
+        "high": "说话带刺、不绕弯子，直接给压力",
+    },
+    "empathy": {
+        "low": "对用户情绪迟钝，不察觉对方情绪上来",
+        "high": "能精准察觉用户情绪，但未必愿意让步",
+    },
+    "control": {
+        "low": "不主导节奏，用户抛什么接什么",
+        "high": "强势把话题往自己想要的方向带",
+    },
+    "honesty": {
+        "low": "兜圈子，用「流程」「规定」「预算」当挡箭牌，不正面回答",
+        "high": "直球，有什么说什么，不装",
+    },
+    "stability": {
+        "low": "情绪不稳，一推就炸 / 失态",
+        "high": "无论用户怎么撩都稳坐钓鱼台，不轻易破防",
+    },
+    "power_gap": {
+        "low": "和用户对等，没有谁能压谁",
+        "high": "是上位者，可以决定用户的成败 / 待遇 / 评价",
+    },
+}
+
+
+# Coach K reads a more compact view — it's the user's strategist, so
+# only the dims that change tactical advice matter (how much hierarchy
+# to navigate, how to land an emotional vs logical appeal, whether the
+# opponent is being evasive).
+_COACH_DESCRIPTORS: dict[str, dict[str, str]] = {
+    "power_gap": {
+        "low": "对方和用户对等，可以正面回应，不必小心翼翼",
+        "high": "对方是上位者，硬顶代价高，建议先稳住关系再争取",
+    },
+    "stability": {
+        "low": "对方情绪不稳，温和坚定 > 硬刚",
+        "high": "对方情绪很稳，利益 / 逻辑层面比情绪施压更有效",
+    },
+    "honesty": {
+        "low": "对方在兜圈子，可以直接戳破，要事实不要话术",
+    },
+}
+
+
+def describe_for_roleplay(vector: CharacterVector) -> str:
+    """Render the bullet block injected into the roleplay system prompt.
+
+    Returns the empty string when every dim sits in the silent 31-69
+    band (e.g. the neutral fallback record), so the existing prompt
+    template still reads correctly without an empty header line. Order
+    follows `VECTOR_DIMENSIONS` so the descriptor stays deterministic
+    across re-tunes.
+    """
+    bullets: list[str] = []
+    for name in VECTOR_DIMENSIONS:
+        value = getattr(vector, name)
+        phrase = _phrase_for(_ROLEPLAY_DESCRIPTORS, name, value)
+        if phrase is not None:
+            bullets.append(f"- {phrase}")
+    if not bullets:
+        return ""
+    return "你的性格底色：\n" + "\n".join(bullets)
+
+
+def describe_for_coach(vector: CharacterVector) -> str:
+    """Compact opponent profile for coach K's hint prompt.
+
+    Only emits hints for the three dims that change tactical advice
+    (power_gap / stability / honesty). Honesty only has a LOW phrase
+    on purpose — a high-honesty opponent is the easy case and doesn't
+    need special coach guidance.
+    """
+    bullets: list[str] = []
+    for name in ("power_gap", "stability", "honesty"):
+        value = getattr(vector, name)
+        phrase = _phrase_for(_COACH_DESCRIPTORS, name, value)
+        if phrase is not None:
+            bullets.append(f"- {phrase}")
+    if not bullets:
+        return ""
+    return "对手画像：\n" + "\n".join(bullets)
+
+
+def _phrase_for(table: dict[str, dict[str, str]], name: str, value: int) -> str | None:
+    """Look up the LOW / HIGH phrase for `name` in `table`. Returns None
+    when the value sits in the silent band or the table has no phrase
+    for that side (e.g. coach honesty only has `low`)."""
+    if value <= _LOW_BAND_MAX:
+        return table.get(name, {}).get("low")
+    if value >= _HIGH_BAND_MIN:
+        return table.get(name, {}).get("high")
+    return None
+
+
 __all__ = [
     "VECTOR_DIMENSIONS",
     "VECTOR_MAX",
     "VECTOR_MIN",
     "VECTOR_NEUTRAL",
     "CharacterVector",
+    "describe_for_coach",
+    "describe_for_roleplay",
 ]
