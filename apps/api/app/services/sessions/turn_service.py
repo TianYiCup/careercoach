@@ -43,6 +43,10 @@ from app.observability.langfuse import TurnTrace, begin_turn_trace
 from app.schemas.moderation import ModerationCheckRequest, RedirectResource
 from app.services.moderation import ModerationBackendError
 from app.services.moderation.service import ModerationService
+from app.services.scenarios.character_vector import (
+    describe_for_coach,
+    describe_for_roleplay,
+)
 from app.services.sessions.repository import SessionRepository
 from app.services.sessions.scenario_seed import get_scenario_seed
 from app.services.sessions.sse import SseFrame
@@ -75,18 +79,28 @@ def _build_roleplay_prompt(
     background: str,
     persona_title: str,
     user_goal: str,
+    character_descriptor: str = "",
 ) -> str:
     """System prompt for the AI opponent.
 
     Pins the LLM to the scenario, the persona, and — crucially — to
     the opposing side of the user's stated goal. Without the explicit
     "你在跟用户对立面" line, models defaulted to neutral friendly
-    chitchat and forgot they were a tough negotiation counterpart."""
+    chitchat and forgot they were a tough negotiation counterpart.
+
+    PR-L1.3: `character_descriptor` carries the 6-dim persona profile
+    rendered as a Chinese bullet list (see
+    `app.services.scenarios.character_vector.describe_for_roleplay`).
+    When the vector is at the neutral baseline the descriptor is empty
+    and the prompt collapses to the previous shape — so an unmigrated
+    custom scenario still works end-to-end."""
+    descriptor_block = f"\n{character_descriptor}\n\n" if character_descriptor else ""
     return (
         f"你扮演用户练习对话中的对手。场景：「{scenario_title}」。\n"
         f"场景背景：{background}\n"
         f"你的角色身份：{persona_title}。\n"
         f"用户的目标是：{user_goal}\n"
+        f"{descriptor_block}"
         "你站在与用户对立的一方，要让用户感受到压力，但不能爆粗、不能人身攻击。\n"
         "回应要自然、像真人说话，不超过 80 字。不要给用户建议，不要破坏角色，不要替用户说话。"
     )
@@ -96,17 +110,26 @@ def _build_coach_prompt(
     *,
     scenario_title: str,
     user_goal: str,
+    opponent_profile: str = "",
 ) -> str:
     """System prompt for教练 K's three-tone hint.
 
     PR-D4: K used to drift into the opponent's voice ("我打游戏关你什么事"
     in the 室友打游戏 scenario, said as if the user *was* the gamer
     instead of the one losing sleep). Pinning the user's side via
-    user_goal in the system prompt fixes the perspective."""
+    user_goal in the system prompt fixes the perspective.
+
+    PR-L1.3: `opponent_profile` (3-dim subset rendered by
+    `describe_for_coach`) lets K tune the hint to who the user is up
+    against —硬顶 a high-power_gap boss vs the same line to a peer
+    are very different advice. Empty when no dim is in the outer band
+    (e.g. fallback record); prompt then reads as before."""
+    opponent_block = f"\n{opponent_profile}\n\n" if opponent_profile else ""
     return (
         f"你是教练 K，正在指导【用户】练习对话。\n"
         f"场景：「{scenario_title}」\n"
         f"用户的目标：{user_goal}\n"
+        f"{opponent_block}"
         "你站在【用户这一边】，给出的提示是【用户接下来要说的话】，不是对手的话，"
         "也不是替用户分析对方。每行直接是用户可以照说的一句话。\n"
         "看完对手的回应，给用户三档下一句提示，每行 ≤ 30 字，按以下格式严格输出，"
@@ -436,6 +459,7 @@ class TurnService:
                         background=seed.background,
                         persona_title=seed.persona_title,
                         user_goal=session.user_goal,
+                        character_descriptor=describe_for_roleplay(seed.character_vector),
                     )
                 ),
                 *history,
@@ -501,6 +525,7 @@ class TurnService:
                 trace,
                 scenario_title=seed.scenario_title,
                 user_goal=session.user_goal,
+                opponent_profile=describe_for_coach(seed.character_vector),
             )
             yield SseFrame(
                 "coach.hint",
@@ -639,16 +664,23 @@ class TurnService:
         *,
         scenario_title: str,
         user_goal: str,
+        opponent_profile: str = "",
     ) -> CoachHintTrio:
         """Single LLM call → parse the three-tone block. Fallback on parse fail.
 
         PR-D4: `scenario_title` + `user_goal` are pinned into the system
         prompt so K speaks from the user's side rather than drifting
-        into the opponent's voice."""
+        into the opponent's voice.
+
+        PR-L1.3: `opponent_profile` is the compact 3-dim opponent
+        descriptor (power_gap / stability / honesty) so K can recommend
+        硬刚 vs 缓兵 based on who the user is up against, not just the
+        scenario name."""
         prompt = f"用户刚说：{user_content}\n对手回应：{opponent_reply}\n请按三档输出用户的下一句。"
         system_prompt = _build_coach_prompt(
             scenario_title=scenario_title,
             user_goal=user_goal,
+            opponent_profile=opponent_profile,
         )
         messages = [Message.system(system_prompt), Message.user(prompt)]
         usage: list[TokenUsage] = []

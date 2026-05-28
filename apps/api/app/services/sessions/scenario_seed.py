@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.services.scenarios.character_vector import CharacterVector
 from app.services.scenarios.seed_data import get_record_by_id
 
 
@@ -27,12 +28,20 @@ class ScenarioSeed:
 
     `background` is the one-line setting the LLM nodes use to anchor
     themselves in the scenario (PR-D4 fix: roleplay was drifting into
-    weather chitchat when it lacked this context)."""
+    weather chitchat when it lacked this context).
+
+    `character_vector` is the 6-dim persona profile (Character Engine
+    L1.3). TurnService translates it into a Chinese descriptor block
+    that goes into the roleplay / coach system prompts so the LLM can
+    differentiate "强硬型 HR" (high control + power_gap) from "操心的
+    母亲" (high empathy + low stability) at the prompt level, instead
+    of relying on one-size-fits-all "be adversarial" instructions."""
 
     scenario_title: str
     persona_title: str
     opening_line: str
     background: str
+    character_vector: CharacterVector
 
 
 def get_scenario_seed(scenario_id: str) -> ScenarioSeed:
@@ -47,6 +56,7 @@ def get_scenario_seed(scenario_id: str) -> ScenarioSeed:
         persona_title=record.persona_title,
         opening_line=record.opening_line,
         background=record.background,
+        character_vector=record.character_vector,
     )
 
 
