@@ -53,6 +53,8 @@ REQUIRED_ENDPOINTS: set[tuple[str, str]] = {
     ("get", "/v1/streak"),
     # R3-3: weakness profile (PRD §7.7, US-C3). Read-only, plain JWT.
     ("get", "/v1/users/me/weaknesses"),
+    # L5: strategy profile (Character Engine). Read-only, plain JWT.
+    ("get", "/v1/users/me/profile"),
     # R3-4: custom scenario creation (PRD §7.3, US-A1). Plain JWT.
     ("post", "/v1/scenarios/custom"),
     # US-A2: opponent persona catalog (PRD §7.3). Static, read-only, no auth.

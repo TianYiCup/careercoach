@@ -40,6 +40,7 @@ from app.schemas.sessions import (
     Score,
     WeaknessUpdate,
 )
+from app.services.profile import ProfileService, get_profile_service
 from app.services.sessions.aggregator import aggregate_session_score
 from app.services.sessions.repository import (
     SessionRecord,
@@ -72,11 +73,16 @@ class SessionService:
         score_repo: SessionScoreRepository,
         turn_repo: TurnRepository,
         llm: LLMProvider,
+        profile_service: ProfileService | None = None,
     ) -> None:
         self._repository = repository
         self._score_repo = score_repo
         self._turn_repo = turn_repo
         self._llm = llm
+        # PR-L5: adapts the opponent's starting vector to the user's
+        # profile (softer for beginners, harder on their crutch strategy).
+        # Shared singleton so it sees the same stats TurnService records.
+        self._profile = profile_service if profile_service is not None else get_profile_service()
 
     async def create_session(
         self,
@@ -87,6 +93,14 @@ class SessionService:
         session_id = _new_session_id()
         seed = get_scenario_seed(request.scenario_id)
 
+        # PR-L5: scale the scenario's static profile to this user before
+        # it becomes the session's starting mood + the radar's first
+        # shape. Best-effort inside the service — returns base on error.
+        adapted_vector = await self._profile.adapt_vector(
+            user_id=user_id,
+            base=seed.character_vector,
+        )
+
         record = SessionRecord(
             session_id=session_id,
             user_id=user_id,
@@ -96,9 +110,9 @@ class SessionService:
             user_goal=request.user_goal,
             status="active",
             created_at=utcnow(),
-            # PR-L3: seed live mood = scenario's static profile. The
+            # PR-L3: seed live mood = the L5-adapted profile. The
             # MoodArbiter mutates this on every user turn going forward.
-            mood_vector=seed.character_vector,
+            mood_vector=adapted_vector,
         )
         await self._repository.save(record)
 
@@ -111,7 +125,9 @@ class SessionService:
         return CreateSessionResponse(
             session_id=session_id,
             opening_line=seed.opening_line,
-            character_vector=CharacterVectorPayload(**seed.character_vector.to_dict()),
+            # L5: the radar shows the *adapted* vector — what this user
+            # actually faces — not the raw catalog profile.
+            character_vector=CharacterVectorPayload(**adapted_vector.to_dict()),
         )
 
     async def end_session(

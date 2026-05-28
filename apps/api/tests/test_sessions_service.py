@@ -16,6 +16,7 @@ import pytest
 from app.agents.state import TurnScore, Verdict
 from app.llm import LLMAuthError, Message, TokenUsage
 from app.schemas.sessions import CreateSessionRequest
+from app.services.profile import InMemoryProfileRepository, ProfileService
 from app.services.sessions import (
     InMemorySessionRepository,
     InMemoryTurnRepository,
@@ -90,6 +91,9 @@ def _service(
         score_repo=score_repo,
         turn_repo=turn_repo,
         llm=llm or _StubLLM(),
+        # Fresh profile per service so L5 adaptation can't leak the
+        # singleton's accumulated stats across tests.
+        profile_service=ProfileService(repo=InMemoryProfileRepository()),
     )
     return svc, score_repo, turn_repo
 

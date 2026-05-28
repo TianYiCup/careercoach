@@ -16,6 +16,7 @@ from app.agents.state import Verdict
 from app.llm import LLMProvider, Message, TokenUsage
 from app.services.moderation import LogOnlyEventSink, ModerationService, NoopBackend
 from app.services.moderation.types import Decision
+from app.services.profile import InMemoryProfileRepository, ProfileService
 from app.services.sessions.repository import InMemorySessionRepository, SessionRecord
 from app.services.sessions.sse import SseFrame
 from app.services.sessions.turn_repository import InMemoryTurnRepository
@@ -175,6 +176,9 @@ def _service(
         session_repo=session_repo,
         turn_repo=turn_repo,
         langfuse_client=langfuse_client,
+        # Fresh profile per service so L5 per-turn recording stays
+        # isolated from the process-wide singleton across tests.
+        profile_service=ProfileService(repo=InMemoryProfileRepository()),
     )
     return svc, session_repo, turn_repo
 

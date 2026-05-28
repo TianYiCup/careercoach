@@ -95,6 +95,10 @@ class Settings(BaseSettings):
     # Weakness (communication-weakness profile) persistence — same rule.
     weakness_repo_backend: Literal["memory", "postgres"] = Field(default="memory")
 
+    # User strategy-stats (Character Engine L5 — per-strategy usage +
+    # win rate) persistence — same memory/postgres rule.
+    profile_repo_backend: Literal["memory", "postgres"] = Field(default="memory")
+
     # LLM call (per-generation token accounting) persistence — same
     # defaulting rule. A-39 ships the schema + repo; A-40 wires the
     # observability `record_generation` callsites to actually insert.
