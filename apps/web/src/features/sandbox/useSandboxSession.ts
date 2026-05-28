@@ -8,6 +8,7 @@ import type {
   CreateSessionRequest,
   CreateSessionResponse,
   EndSessionResponse,
+  SessionMemory,
   SseEventFrame,
 } from '../../api/v1/types'
 import type { ToneLevel } from '../../components'
@@ -30,6 +31,9 @@ export interface SandboxState {
   /** Dramatic-arc stage (L2). Updated by the arc.update SSE frame each
    * turn; drives the stage bar. Defaults to 'opening' on session start. */
   arcStage: ArcStage
+  /** L6: the opponent's recall of past sessions in this scenario, set on
+   * session create. Null on a first visit; drives the "对手记得你" badge. */
+  memory: SessionMemory | null
   messages: ChatMessage[]
   /** Current streaming opponent text (not yet in messages) */
   streamingText: string
@@ -71,6 +75,7 @@ const INITIAL_STATE: SandboxState = {
   sessionId: null,
   characterVector: null,
   arcStage: 'opening',
+  memory: null,
   messages: [],
   streamingText: '',
   isStreaming: false,
@@ -166,6 +171,7 @@ export function useSandboxSession() {
           sessionId: res.session_id,
           characterVector: res.character_vector,
           arcStage: 'opening',
+          memory: res.memory ?? null,
           started: true,
           messages: [{ role: 'opponent', text: res.opening_line }],
         }))

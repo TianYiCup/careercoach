@@ -38,8 +38,10 @@ from app.schemas.sessions import (
     CreateSessionResponse,
     EndSessionResponse,
     Score,
+    SessionMemoryPayload,
     WeaknessUpdate,
 )
+from app.services.memory import MemoryService, get_memory_service
 from app.services.profile import ProfileService, get_profile_service
 from app.services.sessions.aggregator import aggregate_session_score
 from app.services.sessions.repository import (
@@ -74,6 +76,7 @@ class SessionService:
         turn_repo: TurnRepository,
         llm: LLMProvider,
         profile_service: ProfileService | None = None,
+        memory_service: MemoryService | None = None,
     ) -> None:
         self._repository = repository
         self._score_repo = score_repo
@@ -83,6 +86,10 @@ class SessionService:
         # profile (softer for beginners, harder on their crutch strategy).
         # Shared singleton so it sees the same stats TurnService records.
         self._profile = profile_service if profile_service is not None else get_profile_service()
+        # PR-L6: records the episode at session end + recalls it at create
+        # for the "对手记得你" badge. Shared singleton so TurnService's
+        # per-turn recall sees what session end wrote.
+        self._memory = memory_service if memory_service is not None else get_memory_service()
 
     async def create_session(
         self,
@@ -122,12 +129,29 @@ class SessionService:
             scenario_id=request.scenario_id,
             mode=request.mode,
         )
+
+        # L6: surface the opponent's memory of this (user, scenario) so
+        # the frontend can show a "对手记得你" badge from the first frame.
+        episode = await self._memory.recall(
+            user_id=user_id,
+            scenario_id=request.scenario_id,
+        )
+        memory_payload = (
+            SessionMemoryPayload(
+                visit_count=episode.visit_count,
+                last_result=episode.last_result,
+            )
+            if episode is not None and episode.visit_count >= 1
+            else None
+        )
+
         return CreateSessionResponse(
             session_id=session_id,
             opening_line=seed.opening_line,
             # L5: the radar shows the *adapted* vector — what this user
             # actually faces — not the raw catalog profile.
             character_vector=CharacterVectorPayload(**adapted_vector.to_dict()),
+            memory=memory_payload,
         )
 
     async def end_session(
@@ -158,6 +182,18 @@ class SessionService:
         # Writing here is what makes a freshly-ended session render a real card
         # instead of 404.
         await self._score_repo.add(session_id, card_data)
+
+        # L6: remember this session so the opponent recalls it next time
+        # the user practises this scenario. Only record sessions with
+        # actual turns — an empty session has no story worth remembering.
+        # Best-effort: a memory-store hiccup must not fail the scorecard.
+        if turns:
+            await self._memory.record_safe(
+                user_id=user_id,
+                scenario_id=existing.scenario_id,
+                result=score.result,
+                takeaway=score.failures,
+            )
 
         logger.info(
             "session_ended",

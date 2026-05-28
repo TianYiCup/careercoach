@@ -32,7 +32,9 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
 from app.llm import LLMProvider, Message, TokenUsage
+from app.services.memory import InMemoryEpisodeRepository, MemoryService
 from app.services.moderation import LogOnlyEventSink, ModerationService, NoopBackend
+from app.services.profile import InMemoryProfileRepository, ProfileService
 from app.services.scenarios.character_vector import VECTOR_DIMENSIONS, CharacterVector
 from app.services.scenarios.seed_data import get_record_by_id
 from app.services.sessions.repository import InMemorySessionRepository, SessionRecord
@@ -110,6 +112,10 @@ def _service(
         moderation=ModerationService(backend=NoopBackend(), event_sink=LogOnlyEventSink()),
         session_repo=session_repo,
         turn_repo=turn_repo,
+        # Fresh profile + memory so L5/L6 singletons can't leak into the
+        # descriptor assertions across tests.
+        profile_service=ProfileService(repo=InMemoryProfileRepository()),
+        memory_service=MemoryService(repo=InMemoryEpisodeRepository()),
     )
     return svc, session_repo, turn_repo
 

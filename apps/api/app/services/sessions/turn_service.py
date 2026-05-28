@@ -42,6 +42,7 @@ from app.agents.state import TurnScore
 from app.llm import LLMProvider, Message, TokenUsage
 from app.observability.langfuse import TurnTrace, begin_turn_trace
 from app.schemas.moderation import ModerationCheckRequest, RedirectResource
+from app.services.memory import MemoryService, build_memory_note, get_memory_service
 from app.services.moderation import ModerationBackendError
 from app.services.moderation.service import ModerationService
 from app.services.profile import ProfileService, get_profile_service
@@ -100,6 +101,7 @@ def _build_roleplay_prompt(
     persona_title: str,
     user_goal: str,
     character_descriptor: str = "",
+    memory_note: str = "",
 ) -> str:
     """System prompt for the AI opponent.
 
@@ -113,14 +115,21 @@ def _build_roleplay_prompt(
     `app.services.scenarios.character_vector.describe_for_roleplay`).
     When the vector is at the neutral baseline the descriptor is empty
     and the prompt collapses to the previous shape — so an unmigrated
-    custom scenario still works end-to-end."""
+    custom scenario still works end-to-end.
+
+    PR-L6: `memory_note` carries the opponent's recall of past sessions
+    in this scenario ("你之前和这个用户交手过 N 次..."). Empty on a
+    first visit, so the prompt is unchanged for new (user, scenario)
+    pairs."""
     descriptor_block = f"\n{character_descriptor}\n\n" if character_descriptor else ""
+    memory_block = f"\n{memory_note}\n" if memory_note else ""
     return (
         f"你扮演用户练习对话中的对手。场景：「{scenario_title}」。\n"
         f"场景背景：{background}\n"
         f"你的角色身份：{persona_title}。\n"
         f"用户的目标是：{user_goal}\n"
         f"{descriptor_block}"
+        f"{memory_block}"
         "你站在与用户对立的一方，要让用户感受到压力，但不能爆粗、不能人身攻击。\n"
         "回应要自然、像真人说话，不超过 80 字。不要给用户建议，不要破坏角色，不要替用户说话。"
     )
@@ -277,6 +286,7 @@ class TurnService:
         mood_arbiter: MoodArbiter | None = None,
         arc_director: ArcDirector | None = None,
         profile_service: ProfileService | None = None,
+        memory_service: MemoryService | None = None,
     ) -> None:
         self._llm = llm
         self._moderation = moderation
@@ -293,6 +303,9 @@ class TurnService:
         # so the opponent's intensity adapts over time. Shared singleton
         # so the session-create adaptation sees the same data.
         self._profile = profile_service if profile_service is not None else get_profile_service()
+        # PR-L6: recalls past (user, scenario) episodes so the opponent's
+        # roleplay prompt carries a "你之前交手过 N 次" memory note.
+        self._memory = memory_service if memory_service is not None else get_memory_service()
         # `None` is a real, supported value — when Langfuse keys aren't
         # configured `begin_turn_trace` returns a no-op `TurnTrace` so
         # `stream_turn` never branches on observability state.
@@ -529,6 +542,14 @@ class TurnService:
                 await self._session_repo.save(replace(session, mood_vector=next_mood))
             yield SseFrame("mood.update", next_mood.to_dict())
 
+            # PR-L6: recall the opponent's memory of this (user, scenario)
+            # so the roleplay prompt carries a "你之前交手过 N 次" note.
+            # Empty on a first visit; best-effort inside MemoryService.
+            episode = await self._memory.recall(
+                user_id=validated.user_id,
+                scenario_id=session.scenario_id,
+            )
+
             roleplay_messages: list[Message] = [
                 Message.system(
                     _build_roleplay_prompt(
@@ -537,6 +558,7 @@ class TurnService:
                         persona_title=seed.persona_title,
                         user_goal=session.user_goal,
                         character_descriptor=describe_for_roleplay(next_mood),
+                        memory_note=build_memory_note(episode),
                     )
                 ),
                 *history,

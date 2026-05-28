@@ -92,6 +92,8 @@ ignore = [
 # defaults is the canonical FastAPI dependency pattern (same exception
 # the route layer uses).
 "app/services/**/*.py" = ["B008", "RUF001", "RUF002", "RUF003"]
+# L6 episode model docstring quotes the opponent's Chinese recall line.
+"app/models/session_episode.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/test_moderation_*.py" = ["RUF001", "RUF002", "RUF003"]
 # Sessions tests carry Chinese fixtures and implement `LLMProvider` stubs that
 # require the `timeout=` parameter to match the protocol signature.
@@ -111,6 +113,7 @@ ignore = [
 "tests/test_profile_intensity.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/test_profile_service.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/test_profile_route.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/test_memory_service.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/test_sessions_character_vector_e2e.py" = ["RUF001", "RUF002", "RUF003", "ASYNC109"]
 # Custom-scenario tests carry Chinese scenario descriptions + sample copy,
 # and stub LLMProvider with the contract-required `timeout=` parameter.
