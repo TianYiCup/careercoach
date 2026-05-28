@@ -14,6 +14,7 @@ from app.models.sharecard import ShareCard
 from app.models.streak import Streak
 from app.models.turn import Turn
 from app.models.user import PersonaType, User
+from app.models.user_strategy_stat import UserStrategyStat
 from app.models.vibe_log import VibeLog
 from app.models.weakness import Weakness
 
@@ -31,6 +32,7 @@ __all__ = [
     "Streak",
     "Turn",
     "User",
+    "UserStrategyStat",
     "VibeLog",
     "Weakness",
 ]

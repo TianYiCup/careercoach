@@ -15,6 +15,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.schemas.auth import SmsVerifyResponse, UpdateBirthYearRequest
+from app.schemas.profile import StrategyProfileResponse, StrategyStatItem
 from app.schemas.weakness import WeaknessItem, WeaknessProfileResponse
 from app.services.auth import (
     AuthService,
@@ -23,6 +24,7 @@ from app.services.auth import (
     get_auth_service,
     get_current_user,
 )
+from app.services.profile import ProfileService, get_profile_service
 from app.services.scenarios import get_scenario_service
 from app.services.scenarios.service import ScenarioService
 from app.services.weakness import WeaknessService, get_weakness_service
@@ -95,4 +97,36 @@ async def get_my_weaknesses(
             WeaknessItem(tag=r.tag, frequency=r.frequency, last_seen=r.last_seen) for r in records
         ],
         recommended_scenarios=catalog.items[:_MAX_RECOMMENDATIONS],
+    )
+
+
+@router.get(
+    "/me/profile",
+    response_model=StrategyProfileResponse,
+    summary="Get the caller's strategy profile (usage + win rate + crutch)",
+)
+async def get_my_profile(
+    profile_service: ProfileService = Depends(get_profile_service),
+    current: CurrentUser = Depends(get_current_user),
+) -> StrategyProfileResponse:
+    """Strategy profile (Character Engine L5). Empty until coach K reads
+    the caller's first turn; each turn folds one strategy read in. The
+    `overrelied_strategy` is the crutch the opponent's intensity is
+    built to punish. No age gate — reading a profile touches no LLM."""
+    summary = await profile_service.get_summary(current.user_id)
+    return StrategyProfileResponse(
+        stats=[
+            StrategyStatItem(
+                strategy=s.strategy,
+                count=s.count,
+                good=s.good,
+                mixed=s.mixed,
+                poor=s.poor,
+                win_rate=round(s.win_rate, 2),
+                last_seen=s.last_seen,
+            )
+            for s in summary.stats
+        ],
+        total_observations=summary.total_observations,
+        overrelied_strategy=summary.overrelied_strategy,
     )

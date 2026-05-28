@@ -44,6 +44,7 @@ from app.observability.langfuse import TurnTrace, begin_turn_trace
 from app.schemas.moderation import ModerationCheckRequest, RedirectResource
 from app.services.moderation import ModerationBackendError
 from app.services.moderation.service import ModerationService
+from app.services.profile import ProfileService, get_profile_service
 from app.services.scenarios.character_vector import (
     describe_for_coach,
     describe_for_roleplay,
@@ -275,6 +276,7 @@ class TurnService:
         langfuse_client: Langfuse | None = None,
         mood_arbiter: MoodArbiter | None = None,
         arc_director: ArcDirector | None = None,
+        profile_service: ProfileService | None = None,
     ) -> None:
         self._llm = llm
         self._moderation = moderation
@@ -287,6 +289,10 @@ class TurnService:
         # PR-L2: arc director shapes the dramatic stage that biases the
         # arbiter. Same default-over-llm + injectable pattern.
         self._arc_director = arc_director if arc_director is not None else ArcDirector(llm)
+        # PR-L5: records each coach strategy read into the user profile
+        # so the opponent's intensity adapts over time. Shared singleton
+        # so the session-create adaptation sees the same data.
+        self._profile = profile_service if profile_service is not None else get_profile_service()
         # `None` is a real, supported value — when Langfuse keys aren't
         # configured `begin_turn_trace` returns a no-op `TurnTrace` so
         # `stream_turn` never branches on observability state.
@@ -610,6 +616,15 @@ class TurnService:
                     "strategy": coach.strategy.to_dict() if coach.strategy else None,
                 },
             )
+
+            # PR-L5: fold this turn's strategy read into the user profile.
+            # Best-effort — a stats-store hiccup must never fail the turn.
+            if coach.strategy is not None:
+                await self._profile.record_safe(
+                    user_id=validated.user_id,
+                    strategy=coach.strategy.strategy,
+                    effect=coach.strategy.effect,
+                )
 
             turn_score = await self._judge_turn(validated.content, full_reply, trace)
 
