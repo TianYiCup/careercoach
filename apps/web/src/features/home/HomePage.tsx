@@ -37,7 +37,6 @@ import {
   GlowText,
   HudFrame,
   MagneticButton,
-  NeonChart,
   NeuralParticles,
   StatCard,
   TiltCard,
@@ -59,16 +58,12 @@ type Page =
 
 const ALL_VIBES: UiVibeType[] = ['燃爆', '想躺平', '莫名烦', '雄心勃勃', '佛系']
 
-// 24-bar sparkline placeholders. Will swap to live signals once a
-// per-day usage histogram lands on the API. Until then, the
-// PLACEHOLDER_TAG label above each stat surfaces them as sample data
-// so judges scanning the demo don't mistake them for live signals.
-const SPARK_SESSIONS = [
-  0.2, 0.3, 0.25, 0.4, 0.35, 0.5, 0.45, 0.6, 0.55, 0.65, 0.7, 0.6, 0.75, 0.7, 0.85, 0.8, 0.9, 0.85,
-  1.0, 0.92, 0.88, 0.95, 0.9, 0.98,
-]
-const ACTIVITY_LINE = [0.2, 0.35, 0.28, 0.5, 0.45, 0.62, 0.55, 0.72, 0.68, 0.85, 0.78, 0.92]
-const PLACEHOLDER_TAG = '示例'
+// PR-D5: previously this module held SPARK_SESSIONS, ACTIVITY_LINE and a
+// "示例" placeholder badge — all backed by hard-coded arrays. Judges
+// trying the app flagged that they didn't want to see any fake data at
+// all. The three stat blocks that consumed them (气场/嘴硬度/共情力,
+// SESSIONS 76 +12%, WEEKLY · ACTIVITY) are now gone. STREAK is the only
+// surviving stat and it reads from the real backend via useStreak.
 
 interface SidebarItem {
   key: Page
@@ -270,22 +265,10 @@ export function HomePage({ onNavigate }: { onNavigate: (page: Page) => void }) {
                   >
                     <MascotReaction expression="confident" size="md" />
                   </motion.div>
-                  <div className="grid w-full grid-cols-3 gap-2 text-center">
-                    <div>
-                      <p className="font-bebas text-[10px] tracking-widest text-white/50">气场</p>
-                      <p className="font-orbitron text-lg font-bold text-cyber-cyan">7.2</p>
-                    </div>
-                    <div>
-                      <p className="font-bebas text-[10px] tracking-widest text-white/50">嘴硬度</p>
-                      <p className="font-orbitron text-lg font-bold text-cyber-magenta">8.1</p>
-                    </div>
-                    <div>
-                      <p className="font-bebas text-[10px] tracking-widest text-white/50">共情力</p>
-                      <p className="font-orbitron text-lg font-bold text-cyber-lime">6.5</p>
-                    </div>
-                  </div>
-                  <p className="text-center font-mono text-[10px] text-white/40">
-                    {PLACEHOLDER_TAG} · 练完第一局生成你的画像
+                  <p className="text-center font-grotesk text-sm text-white/70">
+                    你的对话画像
+                    <span className="ml-1 text-white/30">·</span>
+                    <span className="ml-1 text-cyber-cyan">练完第一局生成</span>
                   </p>
                   <div className="flex flex-wrap items-center justify-center gap-2">
                     <StickerBadge variant="cyan">🐶 稳如老狗</StickerBadge>
@@ -295,35 +278,12 @@ export function HomePage({ onNavigate }: { onNavigate: (page: Page) => void }) {
                 </div>
               </HudFrame>
 
-              <div className="grid grid-cols-2 gap-3">
-                <StatCard
-                  label={`SESSIONS · ${PLACEHOLDER_TAG}`}
-                  value="76"
-                  suffix="+12%"
-                  spark={SPARK_SESSIONS}
-                  tone="cyan"
-                />
-                <StatCard
-                  label="STREAK"
-                  value={`${streakState.currentDays}d`}
-                  suffix="🔥"
-                  tone="magenta"
-                />
-              </div>
-
-              <HudFrame
-                label="WEEKLY · ACTIVITY"
-                tag={PLACEHOLDER_TAG}
-                className="cyber-glass-edge rounded-3xl p-5"
-              >
-                <NeonChart data={ACTIVITY_LINE} color="#00F0FF" height={64} />
-                <div className="mt-2 flex justify-between font-mono text-[10px] text-white/40">
-                  <span>MON</span>
-                  <span>WED</span>
-                  <span>FRI</span>
-                  <span>SUN</span>
-                </div>
-              </HudFrame>
+              <StatCard
+                label="STREAK"
+                value={`${streakState.currentDays}d`}
+                suffix={streakState.currentDays > 0 ? '🔥' : ''}
+                tone="magenta"
+              />
             </div>
           </section>
 
