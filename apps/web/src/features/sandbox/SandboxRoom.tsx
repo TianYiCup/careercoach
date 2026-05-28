@@ -45,26 +45,34 @@ function toScoreExpression(expr: MascotExpression): ScoreExpression {
 // pure-garbage one-character inputs.
 const CUSTOM_MIN_LENGTH = 6
 
+// PR-D7: ids MUST match `SCENARIO_CATALOG` in
+// `apps/api/app/services/scenarios/seed_data.py`. The earlier
+// `scenario_*` strings landed on the backend's FALLBACK_RECORD
+// (opening_line="我们来聊聊吧。") because they don't exist in the
+// catalog dict. persona ids match `apps/api/app/services/personas/
+// catalog.py` (`p_mild` / `p_hard` / `p_pua` / `p_passive_aggressive`)
+// — currently informational only at the backend, but kept aligned so
+// the next PR can wire it into the prompt builder.
 const PRESETS = [
   {
-    id: 'scenario_campus_overtime',
-    persona: 'boss_strict',
+    id: 'sc_001',
+    persona: 'p_hard',
     goal: '拒绝加班且不撕破脸',
     title: '周末加班谈判',
     en: 'OVERTIME · REFUSE',
     color: '#FF2DAA',
   },
   {
-    id: 'scenario_intern_salary',
-    persona: 'hr_friendly',
+    id: 'sc_002',
+    persona: 'p_hard',
     goal: '薪资谈判不卑不亢',
     title: '实习转正谈薪资',
     en: 'SALARY · NEGOTIATE',
     color: '#00F0FF',
   },
   {
-    id: 'scenario_roommate_noise',
-    persona: 'roommate_lazy',
+    id: 'sc_003',
+    persona: 'p_passive_aggressive',
     goal: '让室友安静但不撕逼',
     title: '室友深夜打游戏',
     en: 'ROOMMATE · CONFLICT',
