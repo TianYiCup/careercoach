@@ -2,6 +2,7 @@ import { useState, useCallback, useRef } from 'react'
 import { apiClient, ApiError } from '../../api/v1/client'
 import { postSSE } from '../../api/v1/sse'
 import type {
+  ArcStage,
   CharacterVector,
   CreateSessionRequest,
   CreateSessionResponse,
@@ -25,6 +26,9 @@ export interface SandboxState {
    * (L9). Null until startSession resolves so the radar can hide on a
    * fresh mount. */
   characterVector: CharacterVector | null
+  /** Dramatic-arc stage (L2). Updated by the arc.update SSE frame each
+   * turn; drives the stage bar. Defaults to 'opening' on session start. */
+  arcStage: ArcStage
   messages: ChatMessage[]
   /** Current streaming opponent text (not yet in messages) */
   streamingText: string
@@ -61,6 +65,7 @@ export interface SandboxState {
 const INITIAL_STATE: SandboxState = {
   sessionId: null,
   characterVector: null,
+  arcStage: 'opening',
   messages: [],
   streamingText: '',
   isStreaming: false,
@@ -154,6 +159,7 @@ export function useSandboxSession() {
           ...s,
           sessionId: res.session_id,
           characterVector: res.character_vector,
+          arcStage: 'opening',
           started: true,
           messages: [{ role: 'opponent', text: res.opening_line }],
         }))
@@ -196,6 +202,14 @@ export function useSandboxSession() {
           (frame: SseEventFrame) => {
             setState((s) => {
               switch (frame.event) {
+                case 'arc.update':
+                  // L2: dramatic-arc stage for this turn. Drives the
+                  // stage bar; lands before mood.update so the bar
+                  // advances ahead of the radar morph.
+                  return {
+                    ...s,
+                    arcStage: frame.data.stage,
+                  }
                 case 'mood.update':
                   // L3: opponent's live mood after this turn. Swapping
                   // characterVector re-renders the L9 radar to the new

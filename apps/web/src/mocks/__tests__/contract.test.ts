@@ -162,10 +162,17 @@ describe('POST /v1/sessions/:id/turns (SSE)', () => {
     // meta last.
     expect(events.indexOf('meta')).toBe(events.length - 1)
 
+    // L2: exactly one arc.update, before mood.update, carrying a stage.
+    expect(events.filter((e) => e === 'arc.update').length).toBe(1)
+    const arcIdx = events.indexOf('arc.update')
+    const arcStage = (frames[arcIdx]!.data as { stage: string }).stage
+    expect(['opening', 'conflict', 'turning', 'closing']).toContain(arcStage)
+
     // L3: exactly one mood.update, before any opponent.delta, carrying
     // the 6-dim payload the radar consumes.
     expect(events.filter((e) => e === 'mood.update').length).toBe(1)
     const moodIdx = events.indexOf('mood.update')
+    expect(arcIdx).toBeLessThan(moodIdx)
     expect(moodIdx).toBeLessThan(events.indexOf('opponent.delta'))
     const mood = frames[moodIdx]!.data as Record<string, number>
     for (const dim of ['aggression', 'empathy', 'control', 'honesty', 'stability', 'power_gap']) {

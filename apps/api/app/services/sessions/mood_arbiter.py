@@ -99,15 +99,21 @@ class MoodArbiter:
         opponent_last_reply: str | None,
         trace_id: str,
         session_id: str,
+        arc_directive: str = "",
     ) -> CharacterVector:
         """Compute the opponent's next mood. Returns `prev_mood` unchanged
         on LLM error / parse failure so the turn pipeline never blocks
-        on the arbiter."""
+        on the arbiter.
+
+        `arc_directive` (L2) biases the prediction toward the dramatic
+        beat — e.g. a closing directive pulls a hostile opponent toward
+        de-escalation. Empty when no arc is wired (pre-L2 paths)."""
         user_prompt = self._render_user_prompt(
             character_vector=character_vector,
             prev_mood=prev_mood,
             user_content=user_content,
             opponent_last_reply=opponent_last_reply,
+            arc_directive=arc_directive,
         )
         messages = [Message.system(_SYSTEM_PROMPT), Message.user(user_prompt)]
 
@@ -149,15 +155,18 @@ class MoodArbiter:
         prev_mood: CharacterVector,
         user_content: str,
         opponent_last_reply: str | None,
+        arc_directive: str = "",
     ) -> str:
         base = ", ".join(f"{name}={getattr(character_vector, name)}" for name in VECTOR_DIMENSIONS)
         prev = ", ".join(f"{name}={getattr(prev_mood, name)}" for name in VECTOR_DIMENSIONS)
         opponent_line = opponent_last_reply or "（这是用户的第一句，对手只说了开场白）"
+        arc_line = f"剧情节奏：{arc_directive}\n" if arc_directive else ""
         return (
             f"基础人格：{base}\n"
             f"上一轮情绪：{prev}\n"
             f"对手上句：{opponent_line}\n"
             f"用户刚说：{user_content}\n"
+            f"{arc_line}"
             "预测对手下一句的情绪向量。"
         )
 

@@ -84,6 +84,8 @@ describe('initial state', () => {
     expect(s.isQuietHours).toBe(false)
     expect(s.error).toBeNull()
     expect(s.redirectResource).toBeNull()
+    expect(s.characterVector).toBeNull()
+    expect(s.arcStage).toBe('opening')
   })
 })
 
@@ -220,6 +222,22 @@ describe('sendTurn SSE frame handling', () => {
     // User message + opponent done message
     expect(getState().messages).toHaveLength(3)
     expect(getState().messages[2]).toEqual({ role: 'opponent', text: '你好' })
+  })
+
+  it('arc.update advances the dramatic stage', async () => {
+    mockPostSSE.mockImplementation(async (_path, _body, onFrame) => {
+      onFrame({ event: 'arc.update', data: { stage: 'turning' } } as SseEventFrame)
+      onFrame({ event: 'opponent.done', data: { turn_id: 't_1', full_text: '哼' } } as SseEventFrame)
+    })
+
+    await setupActiveSession()
+    expect(getState().arcStage).toBe('opening')
+
+    await act(async () => {
+      await hookRef.result.current.sendTurn('我亮出了我的底牌')
+    })
+
+    expect(getState().arcStage).toBe('turning')
   })
 
   it('mood.update replaces characterVector for the L9 radar', async () => {
