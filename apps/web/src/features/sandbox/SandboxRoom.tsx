@@ -27,6 +27,7 @@ import {
   MagneticButton,
   MoodGauge,
   NeuralParticles,
+  StrategyCard,
   TiltCard,
 } from '../../components/cyber'
 import type { Score } from '../../api/v1/types'
@@ -407,6 +408,13 @@ export function SandboxRoom({ onExit, onScore }: SandboxRoomProps) {
               <OpponentBubble text={state.streamingText} isStreaming />
             )}
             {state.isStreaming && !state.streamingText && <OpponentTyping />}
+
+            {state.coachStrategy && (
+              <StrategyCard
+                read={state.coachStrategy}
+                className="mt-2 rounded-2xl border border-cyber-cyan/25 bg-cyber-cyan/5 px-4 py-3"
+              />
+            )}
 
             {state.hints && (
               <div className="mt-2">

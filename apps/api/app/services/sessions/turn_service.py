@@ -31,7 +31,7 @@ from __future__ import annotations
 import re
 import uuid
 from collections.abc import AsyncIterator
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 import structlog
@@ -49,6 +49,11 @@ from app.services.scenarios.character_vector import (
     describe_for_roleplay,
 )
 from app.services.sessions.arc_director import ArcDirector
+from app.services.sessions.coach_strategy import (
+    STRATEGY_PROMPT_BLOCK,
+    CoachStrategyRead,
+    parse_strategy_read,
+)
 from app.services.sessions.mood_arbiter import MoodArbiter
 from app.services.sessions.repository import SessionRepository
 from app.services.sessions.scenario_seed import get_scenario_seed
@@ -63,6 +68,17 @@ logger = structlog.get_logger(__name__)
 
 MAX_TURNS_PER_SESSION = 30
 """PRD §7.4 — soft cap per sandbox session. Surfaced in `meta.turns_left`."""
+
+
+@dataclass(frozen=True)
+class CoachResult:
+    """What the single coach LLM call yields (PR-L8): the persisted
+    three-tone hint trio plus the optional strategy read. `strategy` is
+    None when the model didn't emit a parseable on-vocabulary read —
+    the caller then omits the strategy card."""
+
+    hints: CoachHintTrio
+    strategy: CoachStrategyRead | None
 
 
 # Same prompts as the agents package, kept local so this service can
@@ -139,7 +155,9 @@ def _build_coach_prompt(
         "不要解释、不要任何额外文字：\n"
         "SAFE: <稳如老狗版>\n"
         "AGGRESSIVE: <正面刚版>\n"
-        "HUMOR: <整活版>"
+        "HUMOR: <整活版>\n"
+        # PR-L8: strategy read appended after the three tones.
+        f"{STRATEGY_PROMPT_BLOCK}"
     )
 
 
@@ -572,7 +590,7 @@ class TurnService:
                 {"turn_id": turn_id, "full_text": full_reply},
             )
 
-            coach_hint = await self._coach_three_tones(
+            coach = await self._coach_three_tones(
                 validated.content,
                 full_reply,
                 trace,
@@ -580,12 +598,16 @@ class TurnService:
                 user_goal=session.user_goal,
                 opponent_profile=describe_for_coach(next_mood),
             )
+            # PR-L8: the strategy read rides the same coach.hint frame as
+            # an optional `strategy` object — null when the model went
+            # off-vocabulary, so the frontend just omits the card.
             yield SseFrame(
                 "coach.hint",
                 {
-                    "safe": coach_hint.safe,
-                    "aggressive": coach_hint.aggressive,
-                    "humor": coach_hint.humor,
+                    "safe": coach.hints.safe,
+                    "aggressive": coach.hints.aggressive,
+                    "humor": coach.hints.humor,
+                    "strategy": coach.strategy.to_dict() if coach.strategy else None,
                 },
             )
 
@@ -596,7 +618,7 @@ class TurnService:
                 session_id=validated.session_id,
                 user_content=validated.content,
                 opponent_reply=full_reply,
-                coach_hint=coach_hint,
+                coach_hint=coach.hints,
                 turn_score=turn_score,
                 created_at=datetime.now(UTC),
             )
@@ -718,8 +740,9 @@ class TurnService:
         scenario_title: str,
         user_goal: str,
         opponent_profile: str = "",
-    ) -> CoachHintTrio:
-        """Single LLM call → parse the three-tone block. Fallback on parse fail.
+    ) -> CoachResult:
+        """Single LLM call → parse the three-tone block + the strategy
+        read. Fallback on parse fail.
 
         PR-D4: `scenario_title` + `user_goal` are pinned into the system
         prompt so K speaks from the user's side rather than drifting
@@ -728,7 +751,12 @@ class TurnService:
         PR-L1.3: `opponent_profile` is the compact 3-dim opponent
         descriptor (power_gap / stability / honesty) so K can recommend
         硬刚 vs 缓兵 based on who the user is up against, not just the
-        scenario name."""
+        scenario name.
+
+        PR-L8: the same call now also emits a strategy read (what tactic
+        the user played, whether it landed, the upgrade). Parsed
+        best-effort — `strategy` is None if the model went off-vocabulary,
+        and the three-tone hints still come back."""
         prompt = f"用户刚说：{user_content}\n对手回应：{opponent_reply}\n请按三档输出用户的下一句。"
         system_prompt = _build_coach_prompt(
             scenario_title=scenario_title,
@@ -745,7 +773,7 @@ class TurnService:
             output=raw,
             usage=usage[0] if usage else None,
         )
-        return _parse_three_tones(raw)
+        return CoachResult(hints=_parse_three_tones(raw), strategy=parse_strategy_read(raw))
 
     async def _judge_turn(
         self,

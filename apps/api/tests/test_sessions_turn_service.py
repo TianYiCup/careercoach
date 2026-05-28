@@ -418,6 +418,45 @@ async def test_coach_hint_frame_has_three_tones() -> None:
     assert hint["humor"] == "跟床约了不能放鸽子"
 
 
+async def test_coach_hint_strategy_null_when_model_omits_it() -> None:
+    """PR-L8: the default scripted coach output has no STRATEGY lines, so
+    the frame carries strategy=None and the UI drops the card."""
+    svc, session_repo, _ = _service()
+    await session_repo.save(_active_session())
+    validated = await svc.validate_turn_request(
+        session_id="ses_aaaa1111", content="hi", user_id="anonymous", trace_id="t1"
+    )
+
+    frames = await _collect(svc.stream_turn(validated))
+    hint = next(f for f in frames if f.event == "coach.hint").data
+    assert hint["strategy"] is None
+
+
+async def test_coach_hint_carries_strategy_read_when_model_emits_it() -> None:
+    """PR-L8: a coach output with the STRATEGY/EFFECT/UPGRADE block lands
+    in the frame as a parsed strategy object alongside the three tones."""
+    svc, session_repo, _ = _service(
+        llm_provider=_ScriptedProvider(
+            roleplay="什么安排比工作还重要？",
+            coach=(
+                "SAFE: 我理解\nAGGRESSIVE: 不合理\nHUMOR: 问菩萨\n"
+                "STRATEGY: placate\nEFFECT: poor\nUPGRADE: direct"
+            ),
+            judge="VERDICT: guolu\nRATING: 70",
+        )
+    )
+    await session_repo.save(_active_session())
+    validated = await svc.validate_turn_request(
+        session_id="ses_aaaa1111", content="求你了别让我加班", user_id="anonymous", trace_id="t1"
+    )
+
+    frames = await _collect(svc.stream_turn(validated))
+    hint = next(f for f in frames if f.event == "coach.hint").data
+    assert hint["strategy"] == {"strategy": "placate", "effect": "poor", "upgrade": "direct"}
+    # The three tones still come through unaffected.
+    assert hint["safe"] == "我理解"
+
+
 async def test_meta_turns_left_decreases_with_each_turn() -> None:
     svc, session_repo, _ = _service()
     await session_repo.save(_active_session())

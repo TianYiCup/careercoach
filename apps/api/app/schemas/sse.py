@@ -48,6 +48,32 @@ class OpponentDoneEvent(BaseModel):
     )
 
 
+class CoachStrategyRead(BaseModel):
+    """K's read of the user's just-played turn (Character Engine L8).
+
+    `strategy` / `upgrade` are closed-set keys (placate / concede /
+    avoid / deflect / counter / reason / direct); `effect` is good /
+    mixed / poor. The frontend owns the Chinese gloss per key. When the
+    model goes off-vocabulary the whole object is null on the parent.
+    """
+
+    strategy: str = Field(
+        ...,
+        description="What tactic the user just played (closed-set key).",
+        examples=["placate"],
+    )
+    effect: str = Field(
+        ...,
+        description="Whether it landed: good | mixed | poor.",
+        examples=["poor"],
+    )
+    upgrade: str = Field(
+        ...,
+        description="Recommended next tactic (closed-set key). Equal to `strategy` means 保持.",
+        examples=["direct"],
+    )
+
+
 class CoachHintEvent(BaseModel):
     """Three-tier coach suggestions surfaced after the opponent finishes (design-spec §6).
 
@@ -69,6 +95,13 @@ class CoachHintEvent(BaseModel):
         ...,
         description="整活儿 🤡 — humor / deflection.",
         examples=["用 '离婚' 当借口"],
+    )
+    strategy: CoachStrategyRead | None = Field(
+        default=None,
+        description=(
+            "L8 strategy read of the user's just-played turn. Null when "
+            "the model produced no parseable on-vocabulary read."
+        ),
     )
 
 

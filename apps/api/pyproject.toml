@@ -107,6 +107,7 @@ ignore = [
 "tests/test_turn_service_prompt_injection.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/test_mood_arbiter.py" = ["RUF001", "RUF002", "RUF003", "ASYNC109"]
 "tests/test_arc_director.py" = ["RUF001", "RUF002", "RUF003", "ASYNC109"]
+"tests/test_coach_strategy.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/test_sessions_character_vector_e2e.py" = ["RUF001", "RUF002", "RUF003", "ASYNC109"]
 # Custom-scenario tests carry Chinese scenario descriptions + sample copy,
 # and stub LLMProvider with the contract-required `timeout=` parameter.

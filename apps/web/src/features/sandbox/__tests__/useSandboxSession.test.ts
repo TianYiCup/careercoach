@@ -86,6 +86,7 @@ describe('initial state', () => {
     expect(s.redirectResource).toBeNull()
     expect(s.characterVector).toBeNull()
     expect(s.arcStage).toBe('opening')
+    expect(s.coachStrategy).toBeNull()
   })
 })
 
@@ -287,6 +288,34 @@ describe('sendTurn SSE frame handling', () => {
     expect(s.mascotExpression).toBe('fired-up')
     expect(s.turnsUsed).toBe(1)
     expect(s.turnsLeft).toBe(29)
+    // No strategy field on this frame → coachStrategy stays null.
+    expect(s.coachStrategy).toBeNull()
+  })
+
+  it('coach.hint with a strategy read stores it for the L8 card', async () => {
+    mockPostSSE.mockImplementation(async (_path, _body, onFrame) => {
+      onFrame({ event: 'opponent.done', data: { turn_id: 't_1', full_text: '哼' } } as SseEventFrame)
+      onFrame({
+        event: 'coach.hint',
+        data: {
+          safe: '稳',
+          aggressive: '刚',
+          humor: '活',
+          strategy: { strategy: 'placate', effect: 'poor', upgrade: 'direct' },
+        },
+      } as SseEventFrame)
+    })
+
+    await setupActiveSession()
+    await act(async () => {
+      await hookRef.result.current.sendTurn('求你了')
+    })
+
+    expect(getState().coachStrategy).toEqual({
+      strategy: 'placate',
+      effect: 'poor',
+      upgrade: 'direct',
+    })
   })
 
   it('moderation redirect sets redirectResource and stops streaming', async () => {
