@@ -50,6 +50,7 @@ from app.services.scenarios.character_vector import (
     describe_for_coach,
     describe_for_roleplay,
 )
+from app.services.scenarios.corpus import build_corpus_examples, retrieve
 from app.services.sessions.arc_director import ArcDirector
 from app.services.sessions.coach_strategy import (
     STRATEGY_PROMPT_BLOCK,
@@ -102,6 +103,7 @@ def _build_roleplay_prompt(
     user_goal: str,
     character_descriptor: str = "",
     memory_note: str = "",
+    corpus_examples: str = "",
 ) -> str:
     """System prompt for the AI opponent.
 
@@ -120,9 +122,16 @@ def _build_roleplay_prompt(
     PR-L6: `memory_note` carries the opponent's recall of past sessions
     in this scenario ("你之前和这个用户交手过 N 次..."). Empty on a
     first visit, so the prompt is unchanged for new (user, scenario)
-    pairs."""
+    pairs.
+
+    PR-L4: `corpus_examples` carries a few-shot block of real Chinese
+    lines whose persona profile is nearest the opponent's live mood, so
+    it talks in a real register instead of translation-ese. Placed last,
+    just before the response rules, so it's the freshest context the
+    model reads before generating. Empty when the corpus returns nothing."""
     descriptor_block = f"\n{character_descriptor}\n\n" if character_descriptor else ""
     memory_block = f"\n{memory_note}\n" if memory_note else ""
+    corpus_block = f"\n{corpus_examples}\n" if corpus_examples else ""
     return (
         f"你扮演用户练习对话中的对手。场景：「{scenario_title}」。\n"
         f"场景背景：{background}\n"
@@ -130,6 +139,7 @@ def _build_roleplay_prompt(
         f"用户的目标是：{user_goal}\n"
         f"{descriptor_block}"
         f"{memory_block}"
+        f"{corpus_block}"
         "你站在与用户对立的一方，要让用户感受到压力，但不能爆粗、不能人身攻击。\n"
         "回应要自然、像真人说话，不超过 80 字。不要给用户建议，不要破坏角色，不要替用户说话。"
     )
@@ -559,6 +569,9 @@ class TurnService:
                         user_goal=session.user_goal,
                         character_descriptor=describe_for_roleplay(next_mood),
                         memory_note=build_memory_note(episode),
+                        # PR-L4: retrieve real Chinese lines nearest the
+                        # *live* mood so the register shifts with it.
+                        corpus_examples=build_corpus_examples(retrieve(next_mood)),
                     )
                 ),
                 *history,
