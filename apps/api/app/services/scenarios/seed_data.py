@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from app.services.scenarios.character_vector import CharacterVector
+
 # PRD §3.0.5 D — "每个场景需 ≥ 5 真实学生认证". This constant is the
 # single source of truth for that threshold; bumping it requires also
 # refreshing the placeholder seed IDs below and the repository invariant
@@ -48,6 +50,11 @@ class ScenarioRecord:
     certified_student_ids: tuple[str, ...]
     persona_title: str
     opening_line: str
+    # Character Engine L1 — 6-dim persona profile (PR-L1.1). Defaults to
+    # neutral so an un-backfilled scenario still hands the prompt builder
+    # a complete vector. L1.2 backfills the remaining 37 catalog rows
+    # with curated values; until then they all read 50/50/50/50/50/50.
+    character_vector: CharacterVector = field(default_factory=CharacterVector.neutral)
 
     # Convenience so callers can do `record.scenario_title` to match the
     # PR-4a-vintage seed shape without renaming the canonical field.
@@ -81,6 +88,10 @@ class _FallbackRecord:
     background: str = "未匹配到场景库中的条目，进入自由练习。"
     certification_count: int = 0
     certified_student_ids: tuple[str, ...] = field(default_factory=tuple)
+    # Neutral 50s across all six dims — the fallback record stands in
+    # when a typo / demo request comes in with no real scenario, so
+    # there's no opinionated persona to model.
+    character_vector: CharacterVector = field(default_factory=CharacterVector.neutral)
 
     @property
     def scenario_title(self) -> str:
@@ -134,6 +145,14 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         certified_student_ids=_placeholder_ids("sc_001"),
         persona_title="强硬型 HR",
         opening_line="小林啊，这个周末项目得加个班，应该没问题吧？",
+        character_vector=CharacterVector(
+            aggression=60,
+            empathy=30,
+            control=75,
+            honesty=50,
+            stability=80,
+            power_gap=70,
+        ),
     ),
     ScenarioRecord(
         id="sc_002",
@@ -146,6 +165,14 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         certified_student_ids=_placeholder_ids("sc_002"),
         persona_title="老 HR",
         opening_line="坐吧，转正的事情我们聊聊。你的期望薪资是多少？",
+        character_vector=CharacterVector(
+            aggression=40,
+            empathy=35,
+            control=70,
+            honesty=30,
+            stability=85,
+            power_gap=65,
+        ),
     ),
     ScenarioRecord(
         id="sc_003",
@@ -158,6 +185,14 @@ SCENARIO_CATALOG: tuple[ScenarioRecord, ...] = (
         certified_student_ids=(),
         persona_title="同寝室友",
         opening_line="嘿，再来一把？这把一定赢！",
+        character_vector=CharacterVector(
+            aggression=25,
+            empathy=20,
+            control=20,
+            honesty=70,
+            stability=45,
+            power_gap=10,
+        ),
     ),
     ScenarioRecord(
         id="sc_004",

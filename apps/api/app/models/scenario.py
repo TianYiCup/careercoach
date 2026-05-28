@@ -66,6 +66,26 @@ class Scenario(Base):
     persona_title: Mapped[str] = mapped_column(String(64), nullable=False)
     opening_line: Mapped[str] = mapped_column(String(300), nullable=False)
 
+    # Character Engine L1 — 6-dim persona profile (aggression / empathy /
+    # control / honesty / stability / power_gap, each 0-100). The JSON
+    # shape mirrors `CharacterVector.to_dict()` in
+    # `app.services.scenarios.character_vector` so the same dataclass
+    # round-trips through DB storage. Server default is the neutral
+    # vector (all 50s) so a future migration adding a row without
+    # supplying a vector still hands the prompt builder valid data.
+    character_vector: Mapped[dict[str, int]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=lambda: {
+            "aggression": 50,
+            "empathy": 50,
+            "control": 50,
+            "honesty": 50,
+            "stability": 50,
+            "power_gap": 50,
+        },
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
