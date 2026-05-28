@@ -19,6 +19,7 @@ from app.services.scenarios.character_vector import (
     describe_for_coach,
     describe_for_roleplay,
 )
+from app.services.scenarios.corpus import build_corpus_examples, retrieve
 from app.services.sessions.turn_service import _build_coach_prompt, _build_roleplay_prompt
 
 
@@ -73,6 +74,46 @@ def test_roleplay_prompt_collapses_to_baseline_for_neutral_vector() -> None:
 
     assert neutral_prompt == legacy_prompt
     assert "你的性格底色" not in neutral_prompt
+
+
+def test_roleplay_prompt_contains_corpus_few_shot_block() -> None:
+    """L4: retrieved corpus snippets land in the prompt as a few-shot
+    block, placed after the persona descriptor and before the framing
+    rules."""
+    mood = CharacterVector(
+        aggression=80, empathy=25, control=82, honesty=65, stability=78, power_gap=80
+    )
+    examples = build_corpus_examples(retrieve(mood, k=3))
+
+    prompt = _build_roleplay_prompt(
+        scenario_title="周末加班谈判",
+        background="老板群里@你周末加班",
+        persona_title="强硬型 HR",
+        user_goal="拒绝加班但不撕破脸",
+        character_descriptor=describe_for_roleplay(mood),
+        corpus_examples=examples,
+    )
+
+    assert "参考下面这些真实中文语气" in prompt
+    # The few-shot block sits after the persona descriptor and before
+    # the adversarial framing line.
+    descriptor_idx = prompt.index("你的性格底色：")
+    corpus_idx = prompt.index("参考下面这些真实中文语气")
+    framing_idx = prompt.index("你站在与用户对立的一方")
+    assert descriptor_idx < corpus_idx < framing_idx
+
+
+def test_roleplay_prompt_collapses_to_baseline_for_empty_corpus() -> None:
+    """No corpus examples → the prompt is byte-identical to a build that
+    never passed the parameter."""
+    with_empty = _build_roleplay_prompt(
+        scenario_title="X", background="Y", persona_title="Z", user_goal="W", corpus_examples=""
+    )
+    legacy = _build_roleplay_prompt(
+        scenario_title="X", background="Y", persona_title="Z", user_goal="W"
+    )
+    assert with_empty == legacy
+    assert "参考下面这些真实中文语气" not in with_empty
 
 
 def test_coach_prompt_contains_opponent_profile_for_powerful_opponent() -> None:

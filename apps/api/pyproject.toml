@@ -107,6 +107,7 @@ ignore = [
 # sibling test_scenarios_* / test_sessions_* patterns.
 "tests/test_character_vector.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/test_turn_service_prompt_injection.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/test_corpus.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/test_mood_arbiter.py" = ["RUF001", "RUF002", "RUF003", "ASYNC109"]
 "tests/test_arc_director.py" = ["RUF001", "RUF002", "RUF003", "ASYNC109"]
 "tests/test_coach_strategy.py" = ["RUF001", "RUF002", "RUF003"]
