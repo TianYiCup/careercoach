@@ -1,17 +1,20 @@
 /**
- * CharacterRadar — 6-axis radar chart for the Character Engine L1 vector.
+ * CharacterRadar — 6-axis radar chart for the Character Engine vector.
  *
  * Hand-rolled SVG (same approach as NeonChart) so we control the cyber
  * glow filter and don't bend recharts to a hexagonal shape. Six axes in
  * VECTOR_DIMENSIONS order — aggression at the top, then clockwise to
  * empathy / control / honesty / stability / power_gap.
  *
- * v1 is a static snapshot of the opponent's profile at session start.
- * When L3 Mood Arbiter lands, the same component will receive a moving
- * vector (transitions handled by the `<polygon>` `points` interpolation).
+ * L9.2: when `animate` is on (default) the polygon morphs smoothly from
+ * its previous shape to the new `vector` via `useAnimatedVector` — the
+ * L3 mood arbiter moves the vector every turn, and the morph makes that
+ * change legible instead of a jarring snap. `prefers-reduced-motion`
+ * falls back to a snap inside the hook.
  */
 
 import { useId } from 'react'
+import { useAnimatedVector } from './useAnimatedVector'
 
 export interface RadarVector {
   aggression: number
@@ -28,6 +31,9 @@ interface CharacterRadarProps {
   size?: number
   /** Stroke + fill colour. */
   color?: string
+  /** Morph between vectors on change. Default true. Set false for a
+   * static one-shot render (e.g. a snapshot in a share card). */
+  animate?: boolean
   className?: string
 }
 
@@ -74,12 +80,17 @@ export function CharacterRadar({
   vector,
   size = 200,
   color = '#00F0FF',
+  animate = true,
   className = '',
 }: CharacterRadarProps) {
   const id = useId().replace(/:/g, '')
+  // Hook is called unconditionally (rules of hooks); when `animate` is
+  // off we discard its output and render the raw target directly.
+  const animated = useAnimatedVector(vector)
+  const shown = animate ? animated : vector
 
   const polygonPoints = AXES.map(({ key, angleDeg }) => {
-    const [x, y] = pointAt(angleDeg, valueToDist(vector[key as AxisKey]))
+    const [x, y] = pointAt(angleDeg, valueToDist(shown[key as AxisKey]))
     return `${x.toFixed(2)},${y.toFixed(2)}`
   }).join(' ')
 
@@ -144,7 +155,7 @@ export function CharacterRadar({
 
       {/* Value dots at each vertex — pops the high dims visually. */}
       {AXES.map(({ key, angleDeg }) => {
-        const [x, y] = pointAt(angleDeg, valueToDist(vector[key as AxisKey]))
+        const [x, y] = pointAt(angleDeg, valueToDist(shown[key as AxisKey]))
         return (
           <circle
             key={key}
