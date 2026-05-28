@@ -8,6 +8,9 @@ import { useState, useCallback } from 'react'
 import { apiClient, ApiError } from '../../api/v1/client'
 import type { CustomScenarioRequest, CustomScenarioResponse } from '../../api/v1/types'
 
+// PR-D4: was 30 — matches the backend min_length and the SandboxRoom UI gate.
+const CUSTOM_MIN_LENGTH = 6
+
 export interface CustomScenarioState {
   /** Generated scenario (null = not yet generated) */
   scenario: CustomScenarioResponse | null
@@ -25,8 +28,8 @@ export function useCustomScenario() {
 
   /** Generate a custom scenario from user description */
   const generate = useCallback(async (description: string) => {
-    if (description.trim().length < 30) {
-      setState(prev => ({ ...prev, error: '描述至少 30 个字哦' }))
+    if (description.trim().length < CUSTOM_MIN_LENGTH) {
+      setState(prev => ({ ...prev, error: `描述至少 ${CUSTOM_MIN_LENGTH} 个字哦` }))
       return null
     }
 

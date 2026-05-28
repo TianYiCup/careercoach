@@ -23,11 +23,16 @@ from app.services.scenarios.seed_data import get_record_by_id
 
 @dataclass(frozen=True)
 class ScenarioSeed:
-    """The subset of fields the session service needs at create + end."""
+    """The subset of fields the session service needs at create + end.
+
+    `background` is the one-line setting the LLM nodes use to anchor
+    themselves in the scenario (PR-D4 fix: roleplay was drifting into
+    weather chitchat when it lacked this context)."""
 
     scenario_title: str
     persona_title: str
     opening_line: str
+    background: str
 
 
 def get_scenario_seed(scenario_id: str) -> ScenarioSeed:
@@ -41,6 +46,7 @@ def get_scenario_seed(scenario_id: str) -> ScenarioSeed:
         scenario_title=record.scenario_title,
         persona_title=record.persona_title,
         opening_line=record.opening_line,
+        background=record.background,
     )
 
 

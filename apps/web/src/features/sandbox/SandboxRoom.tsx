@@ -40,6 +40,11 @@ function toScoreExpression(expr: MascotExpression): ScoreExpression {
   return 'confident'
 }
 
+// PR-D4: was 30 — judges in a demo write a short phrase, not a paragraph.
+// Lowering the gate to 6 catches "导师骂我怎么办" while still rejecting
+// pure-garbage one-character inputs.
+const CUSTOM_MIN_LENGTH = 6
+
 const PRESETS = [
   {
     id: 'scenario_campus_overtime',
@@ -251,25 +256,33 @@ export function SandboxRoom({ onExit, onScore }: SandboxRoomProps) {
               </p>
               <HudFrame
                 label="CUSTOM · INPUT"
-                tag={`${customDesc.trim().length}/30`}
+                tag={`${customDesc.trim().length}/${CUSTOM_MIN_LENGTH}`}
                 className="cyber-glass-edge rounded-3xl p-6"
               >
                 <div className="space-y-3">
                   <textarea
                     value={customDesc}
                     onChange={e => setCustomDesc(e.target.value)}
-                    placeholder="描述你的场景，比如「导师让我帮忙做私活该怎么拒绝」…（至少 30 字）"
+                    placeholder="描述你想练的场景，比如「导师骂我怎么办」、「室友打游戏吵我睡觉」…"
                     rows={3}
                     className="font-grotesk w-full resize-none rounded-2xl border border-cyber-hairline bg-cyber-deep/60 px-4 py-3 text-sm text-white placeholder:text-white/30 focus:border-cyber-cyan focus:bg-cyber-deep/80 focus:outline-none focus:ring-2 focus:ring-cyber-cyan/30"
                   />
                   {customState.error && (
                     <p className="font-mono text-xs text-cyber-magenta">⚠ {customState.error}</p>
                   )}
-                  <div className="flex justify-end">
+                  <div className="flex items-center justify-between">
+                    <p className="font-mono text-[10px] text-white/40">
+                      {customDesc.trim().length < CUSTOM_MIN_LENGTH
+                        ? `再写 ${CUSTOM_MIN_LENGTH - customDesc.trim().length} 个字就能开练`
+                        : '场景就绪'}
+                    </p>
                     <MagneticButton
                       type="button"
                       onClick={handleStartCustom}
-                      disabled={customState.isGenerating || customDesc.trim().length < 30}
+                      disabled={
+                        customState.isGenerating ||
+                        customDesc.trim().length < CUSTOM_MIN_LENGTH
+                      }
                     >
                       <Sparkles className="h-4 w-4" />
                       {customState.isGenerating ? '生成中…' : '生成并开始'}
