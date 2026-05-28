@@ -352,6 +352,10 @@ async def test_turns_coach_hint_carries_three_tones(
         "safe": "反问 deadline",
         "aggressive": "引用劳动法",
         "humor": "跟床约了不能放鸽子",
+        # PR-L8: the coach frame now carries an optional strategy read.
+        # The route fixture's scripted coach output has no STRATEGY block,
+        # so it parses to None — the three tones are unaffected.
+        "strategy": None,
     }
 
 
