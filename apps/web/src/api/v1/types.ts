@@ -388,6 +388,109 @@ export interface CustomScenarioResponse {
   opening_line: string
 }
 
+// --- Personas (PR #144 / US-A2) ---
+
+export interface PersonaCard {
+  /** Persona id, e.g. "p_hard" */
+  id: string
+  /** Display name, e.g. "赵刚" */
+  name: string
+  /** Archetype label, e.g. "强硬型" */
+  style: string
+  /** Persona's age */
+  age: number
+  /** Avatar asset key the client maps to an image */
+  avatar: string
+  /** One-line persona blurb shown on the picker card */
+  background: string
+  /** 1 = easy / 5 = hard. Drives easy→hard ordering. */
+  difficulty: number
+}
+
+export interface PersonaListResponse {
+  items: PersonaCard[]
+  total: number
+}
+
+// --- Email Auth (PR #160-161 / PR-A2) ---
+
+export interface EmailSendRequest {
+  /** Recipient email address. */
+  email: string
+}
+
+export interface EmailSendResponse {
+  /** Seconds until the user may request another code. Hardcoded 60s in v0.1. */
+  ttl: number
+}
+
+export interface EmailVerifyRequest {
+  email: string
+  /** 6-digit verification code received by email. */
+  code: string
+}
+
+export interface EmailVerifyResponse {
+  /** JWT bearer token. Pass as `Authorization: Bearer <token>`. */
+  token: string
+  user: UserPublic
+}
+
+// --- TTS (PR #147-149 / US-B2) ---
+
+export type TtsAudioFormat = 'mp3' | 'ogg' | 'wav'
+
+export interface TTSSynthesizeRequest {
+  /** Mandarin text to synthesize. ≤200 chars. Subject to red-line moderation. */
+  text: string
+  /** Voice id. v1 ships only "k-warm". */
+  voice?: 'k-warm'
+  /** Audio container for the response body. Default mp3. */
+  audio_format?: TtsAudioFormat
+}
+
+// --- Mascot Timeline (PR #151 / PRD §7.10) ---
+
+export type MascotTimelineExpression =
+  | 'confident'
+  | 'burning'
+  | 'thinking'
+  | 'shenfeng'
+  | 'fanche'
+  | 'integrate'
+  | 'caring'
+  | 'sleeping'
+
+export interface MascotMoment {
+  turn_idx: number
+  expression: MascotTimelineExpression
+  /** UTC timestamp the moment was recorded (CLAUDE.md §6). */
+  at: string
+}
+
+export interface LogMascotMomentRequest {
+  session_id: string
+  turn_idx: number
+  expression: MascotTimelineExpression
+}
+
+export interface MascotExpressionTimelineResponse {
+  items: MascotMoment[]
+  total: number
+}
+
+// --- Voice Turn SSE Frame (PR #145 / US-A3) ---
+
+export interface VoiceTranscribedFrame {
+  event: 'user.transcribed'
+  data: { text: string }
+}
+
+// SSE frames now include VoiceTranscribedFrame
+export type SseEventFrameWithVoice =
+  | SseEventFrame
+  | VoiceTranscribedFrame
+
 // --- API error codes (emitted as body.code on 4xx) ---
 
 export type ApiErrorCode =
@@ -396,9 +499,13 @@ export type ApiErrorCode =
   | 'MINOR_FORBIDDEN'
   | 'SMS_SEND_COOLDOWN'
   | 'SMS_VERIFY_LOCKED'
+  | 'EMAIL_SEND_COOLDOWN'
+  | 'EMAIL_VERIFY_LOCKED'
   | 'USER_INPUT_BLOCKED'
   | 'CAPTION_BLOCKED'
   | 'SCENARIO_BLOCKED'
+  | 'TTS_INPUT_BLOCKED'
+  | 'TTS_UNAVAILABLE'
   | 'RATE_LIMIT_EXCEEDED'
   | 'INVALID_CODE'
   | 'NOT_FOUND'

@@ -21,6 +21,11 @@ import type {
   CustomScenarioRequest,
   CustomScenarioResponse,
   WeaknessProfileResponse,
+  PersonaListResponse,
+  EmailSendRequest,
+  EmailSendResponse,
+  EmailVerifyRequest,
+  EmailVerifyResponse,
 } from '../../api/v1/types'
 
 // Wildcard origin so handlers match both relative dev fetches (`/v1/...`)
@@ -462,6 +467,43 @@ export const handlers = [
         { id: 'sc_002', title: '实习转正薪资谈判', category: 'jobhunt', difficulty: 4, tags: ['薪资', '谈判'], background: '实习期结束，HR约你聊转正，薪资比你预期低30%。', real_user_certified: true },
       ],
     }
+    return HttpResponse.json(response)
+  }),
+
+  // GET /v1/personas — PR #144 / US-A2
+  http.get(`${BASE}/personas`, async () => {
+    await delay(200)
+    const response: PersonaListResponse = {
+      items: [
+        { id: 'p_easy', name: '小林', style: '温和型', age: 28, avatar: 'persona-easy', background: '话不多、态度温和，容易让步，适合入门练习。', difficulty: 1 },
+        { id: 'p_medium', name: '王姐', style: '话术型', age: 35, avatar: 'persona-medium', background: '经验丰富、善于引导话题，喜欢用反问打断你。', difficulty: 3 },
+        { id: 'p_hard', name: '赵刚', style: '强硬型', age: 45, avatar: 'persona-hard', background: '目标明确、节奏快，习惯用权威和数字压人，不爱绕弯子。', difficulty: 4 },
+        { id: 'p_boss', name: '陈总', style: '压迫型', age: 50, avatar: 'persona-boss', background: '身居高位，气场强，常用沉默和注视施压，需要你主动破局。', difficulty: 5 },
+      ],
+      total: 4,
+    }
+    return HttpResponse.json(response)
+  }),
+
+  // POST /v1/auth/email/send — PR #160-161 / PR-A2
+  http.post(`${BASE}/auth/email/send`, async ({ request }) => {
+    await delay(400)
+    const body = (await request.json()) as EmailSendRequest
+    const response: EmailSendResponse = { ttl: 60 }
+    void body.email
+    return HttpResponse.json(response)
+  }),
+
+  // POST /v1/auth/email/verify — PR #160-161 / PR-A2
+  http.post(`${BASE}/auth/email/verify`, async ({ request }) => {
+    await delay(500)
+    const body = (await request.json()) as EmailVerifyRequest
+    // Accept any 6-digit code in mock mode
+    const response: EmailVerifyResponse = {
+      token: `mock_jwt_${crypto.randomUUID().slice(0, 16)}`,
+      user: { id: `usr_${crypto.randomUUID().slice(0, 8)}`, nickname: '练习生', persona_type: 'intern', is_minor: false },
+    }
+    void body.code
     return HttpResponse.json(response)
   }),
 ]
