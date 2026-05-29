@@ -93,12 +93,12 @@ describe('CharacterRadar', () => {
       .getAttribute('points')!
       .split(/[\s,]+/)
       .map(Number)
-    // All vertices must stay inside the 160x160 viewBox — a 200 value
-    // that escaped the clamp would push x past 130 (center 80 + radius
+    // All vertices must stay inside the 180x180 viewBox — a 200 value
+    // that escaped the clamp would push x past 140 (center 90 + radius
     // 50). With clamp, max distance is exactly 50 from center.
     for (const v of coords) {
       expect(v).toBeGreaterThanOrEqual(0)
-      expect(v).toBeLessThanOrEqual(160)
+      expect(v).toBeLessThanOrEqual(180)
     }
   })
 
