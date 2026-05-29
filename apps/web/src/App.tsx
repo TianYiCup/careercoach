@@ -9,8 +9,9 @@ import { ReviewUploadPage } from './features/review/ReviewUploadPage'
 import { ReviewResultPage } from './features/review/ReviewResultPage'
 import { CopilotPage } from './features/copilot'
 import { WeaknessProfilePage } from './features/weakness'
+import { StrategyProfilePage } from './features/profile'
 
-type Page = 'home' | 'sandbox' | 'copilot' | 'wrapped' | 'score' | 'reviewUpload' | 'reviewResult' | 'weakness'
+type Page = 'home' | 'sandbox' | 'copilot' | 'wrapped' | 'score' | 'reviewUpload' | 'reviewResult' | 'weakness' | 'profile'
 
 /**
  * AppGate — auth boundary + page navigation.
@@ -44,6 +45,7 @@ function AppGate() {
       )}
       {page === 'copilot' && <CopilotPage onBack={() => setPage('home')} />}
       {page === 'weakness' && <WeaknessProfilePage onBack={() => setPage('home')} />}
+      {page === 'profile' && <StrategyProfilePage onBack={() => setPage('home')} />}
       {page === 'wrapped' && <WrappedPage onBack={() => setPage('home')} />}
       {page === 'reviewUpload' && (
         <ReviewUploadPage

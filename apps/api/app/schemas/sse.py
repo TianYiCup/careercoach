@@ -105,6 +105,22 @@ class CoachHintEvent(BaseModel):
     )
 
 
+class SafetySoftenEvent(BaseModel):
+    """Deep emotional-safety intervention (Character Engine L7).
+
+    Fired before `mood.update` on a turn where accumulated harm crossed
+    the threshold and the opponent was force-softened. The frontend shows
+    a "教练 K 介入 · 对手收力了" indicator. Rare by design — it only fires
+    when a session is grinding the user down."""
+
+    crash_streak: int = Field(
+        ...,
+        ge=0,
+        description="Consecutive turns the user was crushed before K stepped in.",
+        examples=[3],
+    )
+
+
 class ArcUpdateEvent(BaseModel):
     """Dramatic-arc stage for the turn (Character Engine L2).
 
@@ -190,6 +206,7 @@ class UserTranscribedEvent(BaseModel):
 SseEventName = Literal[
     "user.transcribed",
     "arc.update",
+    "safety.soften",
     "mood.update",
     "opponent.delta",
     "opponent.done",
@@ -219,6 +236,11 @@ class _ArcUpdateFrame(BaseModel):
     data: ArcUpdateEvent
 
 
+class _SafetySoftenFrame(BaseModel):
+    event: Literal["safety.soften"] = "safety.soften"
+    data: SafetySoftenEvent
+
+
 class _MoodUpdateFrame(BaseModel):
     event: Literal["mood.update"] = "mood.update"
     data: MoodUpdateEvent
@@ -242,6 +264,7 @@ class _UserTranscribedFrame(BaseModel):
 SseEventFrame = Annotated[
     _UserTranscribedFrame
     | _ArcUpdateFrame
+    | _SafetySoftenFrame
     | _MoodUpdateFrame
     | _OpponentDeltaFrame
     | _OpponentDoneFrame

@@ -12,15 +12,20 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
 import pytest
-from app.agents.state import Verdict
+from app.agents.state import TurnScore, Verdict
 from app.llm import LLMProvider, Message, TokenUsage
 from app.services.memory import InMemoryEpisodeRepository, MemoryService
 from app.services.moderation import LogOnlyEventSink, ModerationService, NoopBackend
 from app.services.moderation.types import Decision
 from app.services.profile import InMemoryProfileRepository, ProfileService
+from app.services.scenarios.character_vector import CharacterVector
 from app.services.sessions.repository import InMemorySessionRepository, SessionRecord
 from app.services.sessions.sse import SseFrame
-from app.services.sessions.turn_repository import InMemoryTurnRepository
+from app.services.sessions.turn_repository import (
+    CoachHintTrio,
+    InMemoryTurnRepository,
+    TurnRecord,
+)
 from app.services.sessions.turn_service import (
     SessionEndedForTurnError,
     SessionNotFoundForTurnError,
@@ -202,6 +207,36 @@ async def _collect(stream: AsyncIterator[SseFrame]) -> list[SseFrame]:
     return [f async for f in stream]
 
 
+_HARSH_MOOD = CharacterVector(
+    aggression=85, empathy=20, control=85, honesty=60, stability=30, power_gap=85
+)
+
+
+def _harsh_session() -> SessionRecord:
+    """A session whose live mood is a harsh, high-pressure opponent — the
+    arbiter falls back to this (scripted provider can't answer the arbiter
+    prompt), so next_mood == this and the L7 pressure term is high."""
+    record = _active_session()
+    return SessionRecord(**{**record.__dict__, "mood_vector": _HARSH_MOOD})
+
+
+async def _seed_crash_turns(turn_repo: InMemoryTurnRepository, n: int) -> None:
+    """Append `n` turns that all ended in 翻车 so the L7 crash-streak signal
+    fires."""
+    for i in range(n):
+        await turn_repo.append(
+            TurnRecord(
+                turn_id=f"t_crash{i:04d}",
+                session_id="ses_aaaa1111",
+                user_content="我尽力了",
+                opponent_reply="这就是你的水平？",
+                coach_hint=CoachHintTrio(safe="稳住", aggressive="刚回去", humor="搞笑"),
+                turn_score=TurnScore(verdict=Verdict.FANCHE, rating=20),
+                created_at=datetime(2026, 5, 13, 23, 0, tzinfo=UTC),
+            )
+        )
+
+
 # --- validate_turn_request ---
 
 
@@ -359,6 +394,42 @@ async def test_stream_emits_arc_update_before_mood_update() -> None:
     arc_frame = frames[arc_idx]
     # Turn 1 is always opening (deterministic edge guard).
     assert arc_frame.data["stage"] == "opening"
+
+
+async def test_safety_soften_fires_after_sustained_crushing() -> None:
+    """PR-L7: a harsh opponent + a 3-turn crash streak crosses the harm
+    threshold → a safety.soften frame fires (before mood.update) and the
+    softened mood has lower aggression than the harsh fallback."""
+    svc, session_repo, turn_repo = _service()
+    await session_repo.save(_harsh_session())
+    await _seed_crash_turns(turn_repo, 3)
+    validated = await svc.validate_turn_request(
+        session_id="ses_aaaa1111", content="我真的不行了", user_id="anonymous", trace_id="t1"
+    )
+
+    frames = await _collect(svc.stream_turn(validated))
+    events = [f.event for f in frames]
+
+    assert events.count("safety.soften") == 1
+    safety_idx = events.index("safety.soften")
+    mood_idx = events.index("mood.update")
+    assert safety_idx < mood_idx  # softens before the radar updates
+    assert frames[safety_idx].data["crash_streak"] == 3
+    # The mood the radar receives is softened below the harsh fallback.
+    assert frames[mood_idx].data["aggression"] < _HARSH_MOOD.aggression
+
+
+async def test_safety_soften_does_not_fire_in_a_normal_turn() -> None:
+    """No crash history + the default neutral session mood → no harm, no
+    safety frame. The guardrail is rare by design."""
+    svc, session_repo, _ = _service()
+    await session_repo.save(_active_session())
+    validated = await svc.validate_turn_request(
+        session_id="ses_aaaa1111", content="老板我周末有事", user_id="anonymous", trace_id="t1"
+    )
+
+    frames = await _collect(svc.stream_turn(validated))
+    assert all(f.event != "safety.soften" for f in frames)
 
 
 async def test_stream_emits_mood_update_before_opponent_deltas() -> None:

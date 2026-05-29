@@ -26,6 +26,7 @@ import type {
   EmailSendResponse,
   EmailVerifyRequest,
   EmailVerifyResponse,
+  StrategyProfileResponse,
 } from '../../api/v1/types'
 
 // Wildcard origin so handlers match both relative dev fetches (`/v1/...`)
@@ -504,6 +505,21 @@ export const handlers = [
       user: { id: `usr_${crypto.randomUUID().slice(0, 8)}`, nickname: '练习生', persona_type: 'intern', is_minor: false },
     }
     void body.code
+    return HttpResponse.json(response)
+  }),
+
+  // GET /v1/users/me/profile — Character Engine L5
+  http.get(`${BASE}/users/me/profile`, async () => {
+    await delay(400)
+    const response: StrategyProfileResponse = {
+      stats: [
+        { strategy: 'placate', count: 7, good: 2, mixed: 2, poor: 3, win_rate: 0.29, last_seen: '2026-05-29' },
+        { strategy: 'reason', count: 5, good: 3, mixed: 1, poor: 1, win_rate: 0.6, last_seen: '2026-05-28' },
+        { strategy: 'direct', count: 3, good: 3, mixed: 0, poor: 0, win_rate: 1.0, last_seen: '2026-05-27' },
+      ],
+      total_observations: 15,
+      overrelied_strategy: 'placate',
+    }
     return HttpResponse.json(response)
   }),
 ]

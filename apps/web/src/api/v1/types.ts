@@ -91,6 +91,7 @@ export interface CoachHintData {
 
 export type SseEventFrame =
   | { event: 'arc.update'; data: { stage: ArcStage } }
+  | { event: 'safety.soften'; data: { crash_streak: number } }
   | { event: 'mood.update'; data: CharacterVector }
   | { event: 'opponent.delta'; data: { text: string } }
   | { event: 'opponent.done'; data: { turn_id: string; full_text: string } }
@@ -370,6 +371,28 @@ export interface WeaknessProfileResponse {
   }>
   /** Scenarios to train against (max 3) */
   recommended_scenarios: ScenarioSummary[]
+}
+
+// --- Strategy Profile (Character Engine L5) ---
+
+export interface StrategyStatItem {
+  strategy: CoachStrategyKey
+  count: number
+  good: number
+  mixed: number
+  poor: number
+  /** good / count — share of times this strategy landed, 0..1. */
+  win_rate: number
+  last_seen: string
+}
+
+export interface StrategyProfileResponse {
+  /** Per-strategy stats, highest-count first. Empty until the first coached turn. */
+  stats: StrategyStatItem[]
+  /** Sum of all strategy counts — the experience signal driving opponent intensity. */
+  total_observations: number
+  /** The over-relied-but-failing strategy the opponent is built to punish, or null. */
+  overrelied_strategy: CoachStrategyKey | null
 }
 
 // --- Custom Scenario (PRD §7.3 / PR #132-133) ---
