@@ -274,7 +274,7 @@ export function SandboxRoom({ onExit, onScore }: SandboxRoomProps) {
                 <div className="space-y-3">
                   <textarea
                     value={customDesc}
-                    onChange={e => setCustomDesc(e.target.value)}
+                    onChange={(e) => setCustomDesc(e.target.value)}
                     placeholder="描述你想练的场景，比如「导师骂我怎么办」、「室友打游戏吵我睡觉」…"
                     rows={3}
                     className="font-grotesk w-full resize-none rounded-2xl border border-cyber-hairline bg-cyber-deep/60 px-4 py-3 text-sm text-white placeholder:text-white/30 focus:border-cyber-cyan focus:bg-cyber-deep/80 focus:outline-none focus:ring-2 focus:ring-cyber-cyan/30"
@@ -292,8 +292,7 @@ export function SandboxRoom({ onExit, onScore }: SandboxRoomProps) {
                       type="button"
                       onClick={handleStartCustom}
                       disabled={
-                        customState.isGenerating ||
-                        customDesc.trim().length < CUSTOM_MIN_LENGTH
+                        customState.isGenerating || customDesc.trim().length < CUSTOM_MIN_LENGTH
                       }
                     >
                       <Sparkles className="h-4 w-4" />
@@ -405,9 +404,84 @@ export function SandboxRoom({ onExit, onScore }: SandboxRoomProps) {
             </div>
           )}
 
-          {state.characterVector && (
-            <div className="relative z-10 mx-auto mt-4 flex w-full max-w-5xl justify-end px-6">
-              <div className="w-48 space-y-2">
+          {/* 2-column on large screens: the chat scrolls on the left while
+              the HUD is a side column that stays in view as you scroll
+              (保持跟随) and never overlaps the conversation text. Stacks on
+              mobile with the HUD pinned on top. */}
+          <div className="relative z-10 mx-auto mt-4 flex min-h-0 w-full max-w-5xl flex-1 flex-col gap-4 px-6 lg:flex-row lg:items-start">
+            <main className="order-2 flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto pb-32 lg:order-1">
+              {state.messages.map((msg, i) =>
+                msg.role === 'opponent' ? (
+                  <OpponentBubble key={i} text={msg.text} />
+                ) : (
+                  <UserBubble key={i} text={msg.text} />
+                ),
+              )}
+              {state.isStreaming && state.streamingText && (
+                <OpponentBubble text={state.streamingText} isStreaming />
+              )}
+              {state.isStreaming && !state.streamingText && <OpponentTyping />}
+
+              {state.coachStrategy && (
+                <StrategyCard
+                  read={state.coachStrategy}
+                  className="mt-2 rounded-2xl border border-cyber-cyan/25 bg-cyber-cyan/5 px-4 py-3"
+                />
+              )}
+
+              {state.hints && (
+                <div className="mt-2">
+                  <HintCardV2
+                    hint={
+                      state.activeTone === 'safe'
+                        ? state.hints.safe
+                        : state.activeTone === 'fun'
+                          ? state.hints.humor
+                          : state.hints.aggressive
+                    }
+                    activeTone={state.activeTone}
+                    onToneChange={setTone}
+                  />
+                </div>
+              )}
+
+              {state.score && (
+                <div className="mt-6 flex justify-center">
+                  <MagneticButton
+                    type="button"
+                    variant="lime"
+                    onClick={() =>
+                      onScore(
+                        state.score!.score,
+                        toScoreExpression(state.mascotExpression),
+                        state.sessionId,
+                      )
+                    }
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    查看评分
+                  </MagneticButton>
+                </div>
+              )}
+
+              {state.started && !state.score && (
+                <div className="mt-2 flex justify-center">
+                  <button
+                    type="button"
+                    onClick={() => void endSession()}
+                    disabled={state.isStreaming}
+                    className="inline-flex items-center gap-1 rounded-full border border-cyber-hairline px-4 py-1.5 font-bebas text-[11px] tracking-[0.24em] text-white/60 transition-colors hover:border-cyber-magenta/40 hover:text-cyber-magenta disabled:opacity-50"
+                  >
+                    END · COMBAT
+                  </button>
+                </div>
+              )}
+
+              <div ref={chatEndRef} />
+            </main>
+
+            {state.characterVector && (
+              <aside className="order-1 w-48 shrink-0 space-y-2 self-end lg:order-2 lg:self-start">
                 {/* Arc bar in its own (label-less) frame — it carries its
                     own 剧情节奏 label, so nesting it under the 对手情绪
                     HudFrame label collided. Conversation-level vs
@@ -419,80 +493,9 @@ export function SandboxRoom({ onExit, onScore }: SandboxRoomProps) {
                   <CharacterRadar vector={state.characterVector} size={160} />
                   <MoodGauge vector={state.characterVector} className="mt-1 px-1" />
                 </HudFrame>
-              </div>
-            </div>
-          )}
-
-          <main className="relative z-10 mx-auto mt-4 flex w-full max-w-5xl flex-1 flex-col gap-4 overflow-y-auto px-6 pb-32">
-            {state.messages.map((msg, i) =>
-              msg.role === 'opponent' ? (
-                <OpponentBubble key={i} text={msg.text} />
-              ) : (
-                <UserBubble key={i} text={msg.text} />
-              ),
+              </aside>
             )}
-            {state.isStreaming && state.streamingText && (
-              <OpponentBubble text={state.streamingText} isStreaming />
-            )}
-            {state.isStreaming && !state.streamingText && <OpponentTyping />}
-
-            {state.coachStrategy && (
-              <StrategyCard
-                read={state.coachStrategy}
-                className="mt-2 rounded-2xl border border-cyber-cyan/25 bg-cyber-cyan/5 px-4 py-3"
-              />
-            )}
-
-            {state.hints && (
-              <div className="mt-2">
-                <HintCardV2
-                  hint={
-                    state.activeTone === 'safe'
-                      ? state.hints.safe
-                      : state.activeTone === 'fun'
-                        ? state.hints.humor
-                        : state.hints.aggressive
-                  }
-                  activeTone={state.activeTone}
-                  onToneChange={setTone}
-                />
-              </div>
-            )}
-
-            {state.score && (
-              <div className="mt-6 flex justify-center">
-                <MagneticButton
-                  type="button"
-                  variant="lime"
-                  onClick={() =>
-                    onScore(
-                      state.score!.score,
-                      toScoreExpression(state.mascotExpression),
-                      state.sessionId,
-                    )
-                  }
-                >
-                  <Sparkles className="h-4 w-4" />
-                  查看评分
-                </MagneticButton>
-              </div>
-            )}
-
-            {state.started && !state.score && (
-              <div className="mt-2 flex justify-center">
-                <button
-                  type="button"
-                  onClick={() => void endSession()}
-                  disabled={state.isStreaming}
-                  className="inline-flex items-center gap-1 rounded-full border border-cyber-hairline px-4 py-1.5 font-bebas text-[11px] tracking-[0.24em] text-white/60 transition-colors hover:border-cyber-magenta/40 hover:text-cyber-magenta disabled:opacity-50"
-                >
-                  END · COMBAT
-                </button>
-              </div>
-            )}
-
-            <div ref={chatEndRef} />
-          </main>
+          </div>
 
           <footer className="fixed bottom-0 left-0 right-0 z-20">
             <div className="mx-auto w-full max-w-5xl px-6 pb-6">
@@ -500,7 +503,7 @@ export function SandboxRoom({ onExit, onScore }: SandboxRoomProps) {
                 <input
                   type="text"
                   value={input}
-                  onChange={e => setInput(e.target.value)}
+                  onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
                   disabled={state.isStreaming}
                   placeholder="说点什么…（Enter 发送）"

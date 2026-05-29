@@ -50,9 +50,16 @@ const AXES = [
 
 type AxisKey = (typeof AXES)[number]['key']
 
-const VIEW_BOX = 160
-const CENTER = 80
+// The viewBox carries a generous margin around the RADIUS ring so the
+// axis labels sit fully outside the data polygon (max radius === RADIUS)
+// and never get clipped at the edge. Polygon spans CENTER ± RADIUS
+// (40..140); labels live in the margin band beyond that.
+const VIEW_BOX = 180
+const CENTER = 90
 const RADIUS = 50
+// Labels are pushed this far past the outer ring — comfortably clear of
+// the polygon vertices + their glow so the cyan shape never covers text.
+const LABEL_RADIUS = RADIUS + 20
 const RING_LEVELS = [0.25, 0.5, 0.75, 1] as const
 
 /* Math → SVG point. θ is measured in standard math convention (0° = +x,
@@ -168,16 +175,21 @@ export function CharacterRadar({
         )
       })}
 
-      {/* Axis labels. Placed just outside the radius ring so they sit
-       * inside the viewBox margin without colliding with the polygon. */}
+      {/* Axis labels. Placed in the viewBox margin beyond the outer ring,
+       * and anchored *away* from the chart per side (right axes start at
+       * their point and run right, left axes end at their point and run
+       * left) so the text extends outward into the margin instead of back
+       * over the polygon. */}
       {AXES.map(({ key, label, angleDeg }) => {
-        const [x, y] = pointAt(angleDeg, RADIUS + 14)
+        const [x, y] = pointAt(angleDeg, LABEL_RADIUS)
+        const cos = Math.cos((angleDeg * Math.PI) / 180)
+        const textAnchor = cos > 0.3 ? 'start' : cos < -0.3 ? 'end' : 'middle'
         return (
           <text
             key={key}
             x={x.toFixed(2)}
             y={y.toFixed(2)}
-            textAnchor="middle"
+            textAnchor={textAnchor}
             dominantBaseline="middle"
             className="fill-white/70"
             style={{ fontSize: 9, letterSpacing: '0.1em', fontFamily: 'inherit' }}
