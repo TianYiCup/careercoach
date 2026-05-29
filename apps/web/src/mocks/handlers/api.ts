@@ -21,6 +21,7 @@ import type {
   CustomScenarioRequest,
   CustomScenarioResponse,
   WeaknessProfileResponse,
+  StrategyProfileResponse,
 } from '../../api/v1/types'
 
 // Wildcard origin so handlers match both relative dev fetches (`/v1/...`)
@@ -461,6 +462,21 @@ export const handlers = [
         { id: 'sc_001', title: '拒绝加班谈判', category: 'intern', difficulty: 3, tags: ['拒绝', '上下级'], background: '你刚结束周五的项目，老板在群里@你让周末加班赶进度。', real_user_certified: true },
         { id: 'sc_002', title: '实习转正薪资谈判', category: 'jobhunt', difficulty: 4, tags: ['薪资', '谈判'], background: '实习期结束，HR约你聊转正，薪资比你预期低30%。', real_user_certified: true },
       ],
+    }
+    return HttpResponse.json(response)
+  }),
+
+  // GET /v1/users/me/profile — Character Engine L5
+  http.get(`${BASE}/users/me/profile`, async () => {
+    await delay(400)
+    const response: StrategyProfileResponse = {
+      stats: [
+        { strategy: 'placate', count: 7, good: 2, mixed: 2, poor: 3, win_rate: 0.29, last_seen: '2026-05-29' },
+        { strategy: 'reason', count: 5, good: 3, mixed: 1, poor: 1, win_rate: 0.6, last_seen: '2026-05-28' },
+        { strategy: 'direct', count: 3, good: 3, mixed: 0, poor: 0, win_rate: 1.0, last_seen: '2026-05-27' },
+      ],
+      total_observations: 15,
+      overrelied_strategy: 'placate',
     }
     return HttpResponse.json(response)
   }),
