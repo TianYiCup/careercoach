@@ -24,6 +24,7 @@ import {
   Activity,
   Bot,
   Brain,
+  Crosshair,
   Headphones,
   Home,
   LogOut,
@@ -55,6 +56,7 @@ type Page =
   | 'reviewUpload'
   | 'reviewResult'
   | 'weakness'
+  | 'profile'
 
 const ALL_VIBES: UiVibeType[] = ['燃爆', '想躺平', '莫名烦', '雄心勃勃', '佛系']
 
@@ -77,6 +79,7 @@ const SIDEBAR: SidebarItem[] = [
   { key: 'copilot', label: 'COPILOT', icon: Headphones },
   { key: 'reviewUpload', label: 'REVIEW', icon: ScanSearch },
   { key: 'weakness', label: 'WEAKNESS', icon: Brain },
+  { key: 'profile', label: 'STRATEGY', icon: Crosshair },
   { key: 'wrapped', label: 'WRAPPED', icon: Trophy },
 ]
 

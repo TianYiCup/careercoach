@@ -373,6 +373,28 @@ export interface WeaknessProfileResponse {
   recommended_scenarios: ScenarioSummary[]
 }
 
+// --- Strategy Profile (Character Engine L5) ---
+
+export interface StrategyStatItem {
+  strategy: CoachStrategyKey
+  count: number
+  good: number
+  mixed: number
+  poor: number
+  /** good / count — share of times this strategy landed, 0..1. */
+  win_rate: number
+  last_seen: string
+}
+
+export interface StrategyProfileResponse {
+  /** Per-strategy stats, highest-count first. Empty until the first coached turn. */
+  stats: StrategyStatItem[]
+  /** Sum of all strategy counts — the experience signal driving opponent intensity. */
+  total_observations: number
+  /** The over-relied-but-failing strategy the opponent is built to punish, or null. */
+  overrelied_strategy: CoachStrategyKey | null
+}
+
 // --- Custom Scenario (PRD §7.3 / PR #132-133) ---
 
 export interface CustomScenarioRequest {
