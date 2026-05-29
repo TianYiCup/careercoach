@@ -38,8 +38,8 @@ import structlog
 from langfuse import Langfuse
 
 from app.agents.judge import parse_judge_output
-from app.agents.state import TurnScore
-from app.llm import LLMProvider, Message, TokenUsage
+from app.agents.state import TurnScore, Verdict
+from app.llm import LLMError, LLMProvider, Message, TokenUsage
 from app.observability.langfuse import TurnTrace, begin_turn_trace
 from app.schemas.moderation import ModerationCheckRequest, RedirectResource
 from app.services.memory import MemoryService, build_memory_note, get_memory_service
@@ -215,6 +215,12 @@ _COACH_FALLBACK = CoachHintTrio(
 # text into future turns. Frontend can render it as "[opponent fell
 # silent]" or similar based on the verdict_output trace tag.
 _ROLEPLAY_REDACTED_PLACEHOLDER = "……"
+
+# Canned opponent line emitted when the roleplay LLM produces nothing or
+# times out (both providers missed the first-byte budget). It's our own
+# safe copy, so output moderation skips it — same treatment as the
+# redacted placeholder above.
+_ROLEPLAY_FALLBACK_LINE = "（对面顿了顿，没接话）"
 
 
 class SessionNotFoundForTurnError(LookupError):
@@ -606,17 +612,34 @@ class TurnService:
 
             roleplay_usage: list[TokenUsage] = []
             full_reply_parts: list[str] = []
-            async for chunk in self._llm.stream_chat(roleplay_messages, usage_sink=roleplay_usage):
-                if not chunk:
-                    continue
-                full_reply_parts.append(chunk)
-                yield SseFrame("opponent.delta", {"text": chunk})
+            try:
+                async for chunk in self._llm.stream_chat(
+                    roleplay_messages, usage_sink=roleplay_usage
+                ):
+                    if not chunk:
+                        continue
+                    full_reply_parts.append(chunk)
+                    yield SseFrame("opponent.delta", {"text": chunk})
+            except LLMError as exc:
+                # Both providers missed the first-byte budget (or failed
+                # mid-stream). Don't let it kill the SSE stream — that
+                # leaves the UI stuck on the typing indicator forever.
+                # Fall through to the empty-reply fallback below so the
+                # turn still emits opponent.done / coach / meta and
+                # terminates cleanly.
+                logger.warning(
+                    "turn_roleplay_llm_failed",
+                    session_id=validated.session_id,
+                    trace_id=validated.trace_id,
+                    error=str(exc),
+                )
 
             full_reply = "".join(full_reply_parts).strip()
             if not full_reply:
-                # LLM hung up before producing anything — emit a graceful
-                # fallback line so the UI doesn't render an empty bubble.
-                full_reply = "……"
+                # LLM hung up before producing anything (or errored) — emit
+                # a graceful fallback line so the UI doesn't render an empty
+                # bubble or hang on the typing indicator.
+                full_reply = _ROLEPLAY_FALLBACK_LINE
                 yield SseFrame("opponent.delta", {"text": full_reply})
 
             trace.record_generation(
@@ -771,7 +794,10 @@ class TurnService:
         per-turn UX. The trace stays untagged so an operator can
         still detect the silent-allow window from backend metrics.
         """
-        if not roleplay_reply.strip() or roleplay_reply == _ROLEPLAY_REDACTED_PLACEHOLDER:
+        if not roleplay_reply.strip() or roleplay_reply in (
+            _ROLEPLAY_REDACTED_PLACEHOLDER,
+            _ROLEPLAY_FALLBACK_LINE,
+        ):
             # Nothing meaningful to check — the empty-reply fallback
             # has already redacted any content. Treat-as-allow with
             # no tag so the Langfuse UI is honest about no decision.
@@ -841,7 +867,14 @@ class TurnService:
         )
         messages = [Message.system(system_prompt), Message.user(prompt)]
         usage: list[TokenUsage] = []
-        raw = await _collect(self._llm.stream_chat(messages, usage_sink=usage))
+        try:
+            raw = await _collect(self._llm.stream_chat(messages, usage_sink=usage))
+        except LLMError as exc:
+            # LLM unavailable / timed out — return canned hints rather
+            # than crash the turn. The three tones still render; the
+            # strategy card is just omitted this turn.
+            logger.warning("turn_coach_llm_failed", error=str(exc))
+            return CoachResult(hints=_COACH_FALLBACK, strategy=None)
         trace.record_generation(
             name="coach.three_tones",
             model=self._llm.name,
@@ -861,7 +894,14 @@ class TurnService:
         prompt = f"用户的话：{user_content}\n对手的回应：{opponent_reply}\n请评分。"
         messages = [Message.system(_JUDGE_PROMPT), Message.user(prompt)]
         usage: list[TokenUsage] = []
-        raw = await _collect(self._llm.stream_chat(messages, usage_sink=usage))
+        try:
+            raw = await _collect(self._llm.stream_chat(messages, usage_sink=usage))
+        except LLMError as exc:
+            # LLM unavailable / timed out — default to a neutral 路过
+            # score rather than crash the turn. Keeps the meter moving;
+            # the end-of-session aggregate just leans neutral.
+            logger.warning("turn_judge_llm_failed", error=str(exc))
+            return TurnScore(verdict=Verdict.GUOLU, rating=50)
         trace.record_generation(
             name="judge",
             model=self._llm.name,

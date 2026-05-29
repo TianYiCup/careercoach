@@ -399,16 +399,19 @@ export function SandboxRoom({ onExit, onScore }: SandboxRoomProps) {
 
           {state.characterVector && (
             <div className="relative z-10 mx-auto mt-4 flex w-full max-w-5xl justify-end px-6">
-              <HudFrame
-                label="对手情绪"
-                tag="LIVE MOOD"
-                color="#00F0FF"
-                className="w-48 px-3 py-3"
-              >
-                <ArcStageBar stage={state.arcStage} className="mb-2 px-1" />
-                <CharacterRadar vector={state.characterVector} size={160} />
-                <MoodGauge vector={state.characterVector} className="mt-1 px-1" />
-              </HudFrame>
+              <div className="w-48 space-y-2">
+                {/* Arc bar in its own (label-less) frame — it carries its
+                    own 剧情节奏 label, so nesting it under the 对手情绪
+                    HudFrame label collided. Conversation-level vs
+                    opponent-level, kept visually distinct. */}
+                <HudFrame color="#A78BFA" className="px-3 py-2">
+                  <ArcStageBar stage={state.arcStage} />
+                </HudFrame>
+                <HudFrame label="对手情绪" tag="LIVE MOOD" color="#00F0FF" className="px-3 py-3">
+                  <CharacterRadar vector={state.characterVector} size={160} />
+                  <MoodGauge vector={state.characterVector} className="mt-1 px-1" />
+                </HudFrame>
+              </div>
             </div>
           )}
 

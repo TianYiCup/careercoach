@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 import pytest
 from app.agents.state import TurnScore, Verdict
 from app.llm import LLMProvider, Message, TokenUsage
+from app.llm.errors import LLMTimeoutError
 from app.services.memory import InMemoryEpisodeRepository, MemoryService
 from app.services.moderation import LogOnlyEventSink, ModerationService, NoopBackend
 from app.services.moderation.types import Decision
@@ -67,6 +68,36 @@ class _ScriptedProvider:
                 yield response[len(response) // 2 :]
                 return
         raise AssertionError(f"unscripted system prompt: {system[:60]!r}")
+
+
+class _TimeoutOnRoleplayProvider:
+    """Raises LLMTimeoutError before the first roleplay chunk (both
+    providers missed the first-byte budget), but answers coach + judge.
+    Exercises the L7-era graceful-fallback path so a roleplay timeout
+    can't hang the SSE stream."""
+
+    name = "timeout-roleplay"
+
+    async def stream_chat(
+        self,
+        messages: list[Message],
+        *,
+        temperature: float = 0.7,
+        timeout: float = 8.0,
+        usage_sink: list[TokenUsage] | None = None,
+    ) -> AsyncIterator[str]:
+        _ = (temperature, timeout, usage_sink)
+        system = messages[0].content if messages else ""
+        if "你扮演用户练习对话中的对手" in system:
+            raise LLMTimeoutError("qwen did not produce first chunk within 2.5s", provider="qwen")
+        if "你是教练 K" in system:
+            yield "SAFE: 稳住\nAGGRESSIVE: 刚回去\nHUMOR: 搞笑一下"
+            return
+        if "你是评委" in system:
+            yield "VERDICT: guolu\nRATING: 50"
+            return
+        # arc / arbiter / mood prompts — answer empty so they fall back.
+        yield ""
 
 
 def _moderation(
@@ -394,6 +425,31 @@ async def test_stream_emits_arc_update_before_mood_update() -> None:
     arc_frame = frames[arc_idx]
     # Turn 1 is always opening (deterministic edge guard).
     assert arc_frame.data["stage"] == "opening"
+
+
+async def test_roleplay_llm_timeout_does_not_hang_the_stream() -> None:
+    """A roleplay first-byte timeout must NOT crash the SSE stream (which
+    leaves the UI stuck on the typing indicator forever). The turn falls
+    back to a canned opponent line and still emits opponent.done / coach /
+    meta so it terminates cleanly."""
+    svc, session_repo, turn_repo = _service(llm_provider=_TimeoutOnRoleplayProvider())
+    await session_repo.save(_active_session())
+    validated = await svc.validate_turn_request(
+        session_id="ses_aaaa1111", content="别废话", user_id="anonymous", trace_id="t1"
+    )
+
+    frames = await _collect(svc.stream_turn(validated))
+    events = [f.event for f in frames]
+
+    # Stream terminates with the normal terminal frames — no hang.
+    assert events.count("opponent.done") == 1
+    assert events.count("coach.hint") == 1
+    assert events.count("meta") == 1
+    # The opponent reply is the graceful fallback, not empty / missing.
+    done = next(f for f in frames if f.event == "opponent.done")
+    assert done.data["full_text"]
+    # The turn was still persisted so history stays consistent.
+    assert len(await turn_repo.list_for_session("ses_aaaa1111")) == 1
 
 
 async def test_safety_soften_fires_after_sustained_crushing() -> None:
