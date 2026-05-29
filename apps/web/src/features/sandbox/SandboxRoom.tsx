@@ -389,10 +389,18 @@ export function SandboxRoom({ onExit, onScore }: SandboxRoomProps) {
             </div>
           )}
 
-          {state.safetyIntervened && (
+          {state.safetyIntervention === 'soften' && (
             <div className="relative z-10 mx-auto mt-2 w-full max-w-5xl px-6 text-center">
               <span className="inline-flex items-center gap-1.5 rounded-full border border-cyber-lime/40 bg-cyber-lime/10 px-3 py-1 font-bebas text-[11px] tracking-[0.2em] text-cyber-lime">
                 🛡 教练 K 介入 · 对手收力了
+              </span>
+            </div>
+          )}
+
+          {state.safetyIntervention === 'offramp' && (
+            <div className="relative z-10 mx-auto mt-2 w-full max-w-5xl px-6 text-center">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-cyber-amber/40 bg-cyber-amber/10 px-3 py-1 font-bebas text-[11px] tracking-[0.2em] text-cyber-amber">
+                🛡 K：这局压力不小 · 扛得住就接着刚,想撤随时退出
               </span>
             </div>
           )}

@@ -215,12 +215,16 @@ export const handlers = [
       },
     }
 
+    // PR-OPT1: the real backend runs the arc/mood engine concurrently
+    // with the roleplay stream, so arc.update / mood.update land AFTER
+    // opponent.done (radar morphs right after the reply). Mirror that
+    // order here so dev-mode matches prod.
     const frames = [
-      arcFrame,
-      moodFrame,
       { event: 'opponent.delta', data: { text: reply.slice(0, 2) } },
       { event: 'opponent.delta', data: { text: reply.slice(2) } },
       { event: 'opponent.done', data: { turn_id: turnId, full_text: reply } },
+      arcFrame,
+      moodFrame,
       { event: 'coach.hint', data: coachHints },
       { event: 'meta', data: { turns_used: turnCounter, turns_left: 30 - turnCounter } },
     ]

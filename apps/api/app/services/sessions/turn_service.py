@@ -28,6 +28,7 @@ the stub Score from PR 4a.
 
 from __future__ import annotations
 
+import asyncio
 import re
 import uuid
 from collections.abc import AsyncIterator
@@ -47,6 +48,7 @@ from app.services.moderation import ModerationBackendError
 from app.services.moderation.service import ModerationService
 from app.services.profile import ProfileService, get_profile_service
 from app.services.scenarios.character_vector import (
+    CharacterVector,
     describe_for_coach,
     describe_for_roleplay,
 )
@@ -61,7 +63,7 @@ from app.services.sessions.emotional_safety import assess as assess_emotional_ha
 from app.services.sessions.emotional_safety import soften as soften_mood
 from app.services.sessions.mood_arbiter import MoodArbiter
 from app.services.sessions.repository import SessionRepository
-from app.services.sessions.scenario_seed import get_scenario_seed
+from app.services.sessions.scenario_seed import ScenarioSeed, get_scenario_seed
 from app.services.sessions.sse import SseFrame
 from app.services.sessions.turn_repository import (
     CoachHintTrio,
@@ -512,6 +514,10 @@ class TurnService:
             ],
         )
 
+        # PR-OPT1: the arc/mood engine runs in this background task. Held
+        # at method scope so the `except` can cancel it if the turn errors
+        # before it's awaited (otherwise it'd leak as a pending task).
+        mood_task: asyncio.Task[tuple[str, CharacterVector]] | None = None
         try:
             seed = get_scenario_seed(session.scenario_id)
             history = _build_history(
@@ -522,67 +528,64 @@ class TurnService:
             last_opponent_reply = (
                 validated.prior_turns[-1].opponent_reply if validated.prior_turns else None
             )
-
-            # PR-L2: resolve the dramatic-arc stage first — it biases the
-            # mood arbiter (e.g. a `closing` stage pulls a hostile
-            # opponent toward de-escalation). turn_index is 1-based;
-            # turns_left counts what remains AFTER this turn so the arc
-            # winds down near the cap. arc.update lands before mood.update
-            # so the UI stage bar updates ahead of the radar.
             turn_index = len(validated.prior_turns) + 1
-            arc = await self._arc_director.resolve(
-                turn_index=turn_index,
-                turns_left=MAX_TURNS_PER_SESSION - turn_index,
-                user_content=validated.content,
-                opponent_last_reply=last_opponent_reply,
-                trace_id=validated.trace_id,
-                session_id=validated.session_id,
-            )
-            yield SseFrame("arc.update", {"stage": arc.stage})
-
-            # PR-L3: run the mood arbiter so the roleplay prompt reflects
-            # the opponent's *updated* mood, not the stale one. The
-            # arbiter reads the static persona + previous mood + what the
-            # user just said + the arc directive, and falls back to the
-            # previous mood on any LLM / parse failure (never blocks the
-            # turn). The `mood.update` frame morphs the L9 radar.
             prev_mood = session.mood_vector
-            next_mood = await self._mood_arbiter.next_mood(
-                character_vector=seed.character_vector,
-                prev_mood=prev_mood,
-                user_content=validated.content,
-                opponent_last_reply=last_opponent_reply,
-                trace_id=validated.trace_id,
-                session_id=validated.session_id,
-                arc_directive=arc.directive,
-            )
 
-            # PR-L7: deep emotional-safety layer. If accumulated harm
-            # (crash streak + current pressure) crossed the threshold —
-            # stricter for minors — force-soften the mood so the opponent
-            # backs off, and emit a `safety.soften` frame before the
-            # mood.update so the radar shows the softened shape and the UI
-            # can flag K stepping in. Heuristic + stateless: never blocks.
+            # PR-L7 (off-ramp redesign): the deep emotional-safety check is
+            # heuristic + instant, so it runs *before* roleplay on the mood
+            # the opponent is about to speak with (prev_mood). If harm
+            # crossed the threshold:
+            #   * minor → auto-soften this reply (compliance §3.0.5 C); the
+            #     soften lands on the SAME turn (no lag) since roleplay uses
+            #     the softened mood below.
+            #   * adult → emit a non-blocking `safety.offramp` so K checks
+            #     in but the difficulty is NOT lowered — the user keeps
+            #     agency and the practice stays real.
             harm = assess_emotional_harm(
                 prior_turn_scores=[t.turn_score for t in validated.prior_turns],
-                next_mood=next_mood,
+                mood=prev_mood,
                 is_minor=validated.is_minor,
             )
-            if harm.should_soften:
-                next_mood = soften_mood(next_mood)
+            roleplay_mood = prev_mood
+            if harm.should_intervene and validated.is_minor:
+                roleplay_mood = soften_mood(prev_mood)
                 logger.info(
                     "emotional_safety_softened",
                     session_id=validated.session_id,
                     trace_id=validated.trace_id,
                     crash_streak=harm.crash_streak,
                     harm=round(harm.harm, 1),
-                    is_minor=validated.is_minor,
                 )
                 yield SseFrame("safety.soften", {"crash_streak": harm.crash_streak})
+            elif harm.should_intervene:
+                logger.info(
+                    "emotional_safety_offramp",
+                    session_id=validated.session_id,
+                    trace_id=validated.trace_id,
+                    crash_streak=harm.crash_streak,
+                    harm=round(harm.harm, 1),
+                )
+                yield SseFrame("safety.offramp", {"crash_streak": harm.crash_streak})
 
-            if next_mood != prev_mood:
-                await self._session_repo.save(replace(session, mood_vector=next_mood))
-            yield SseFrame("mood.update", next_mood.to_dict())
+            # PR-L3 (concurrency): the opponent replies in the mood it
+            # *carried into* this turn (roleplay_mood), so roleplay starts
+            # immediately — the user sees the first token in ~1 LLM call,
+            # not after arc + arbiter. The arc/mood engine runs in a
+            # background task to compute how the mood *shifts* in response
+            # to what the user just said; its arc.update / mood.update
+            # land after opponent.done (radar morphs right after the reply)
+            # and the new mood seeds the next turn.
+            mood_task = asyncio.create_task(
+                self._resolve_arc_and_mood(
+                    seed=seed,
+                    prev_mood=prev_mood,
+                    user_content=validated.content,
+                    opponent_last_reply=last_opponent_reply,
+                    turn_index=turn_index,
+                    trace_id=validated.trace_id,
+                    session_id=validated.session_id,
+                )
+            )
 
             # PR-L6: recall the opponent's memory of this (user, scenario)
             # so the roleplay prompt carries a "你之前交手过 N 次" note.
@@ -599,11 +602,11 @@ class TurnService:
                         background=seed.background,
                         persona_title=seed.persona_title,
                         user_goal=session.user_goal,
-                        character_descriptor=describe_for_roleplay(next_mood),
+                        character_descriptor=describe_for_roleplay(roleplay_mood),
                         memory_note=build_memory_note(episode),
-                        # PR-L4: retrieve real Chinese lines nearest the
-                        # *live* mood so the register shifts with it.
-                        corpus_examples=build_corpus_examples(retrieve(next_mood)),
+                        # PR-L4: retrieve real Chinese lines nearest the mood
+                        # the opponent is speaking with this turn.
+                        corpus_examples=build_corpus_examples(retrieve(roleplay_mood)),
                     )
                 ),
                 *history,
@@ -680,13 +683,33 @@ class TurnService:
                 {"turn_id": turn_id, "full_text": full_reply},
             )
 
-            coach = await self._coach_three_tones(
-                validated.content,
-                full_reply,
-                trace,
-                scenario_title=seed.scenario_title,
-                user_goal=session.user_goal,
-                opponent_profile=describe_for_coach(next_mood),
+            # PR-L3: the arc/mood engine ran concurrently with the
+            # roleplay stream — collect it now (almost always already
+            # done, hidden under the stream). It never raises (arc +
+            # arbiter fall back internally). A minor who was softened this
+            # turn keeps the de-escalation into the next turn's starting
+            # mood, so they aren't re-crushed on the next reply.
+            arc_stage, next_mood = await mood_task
+            if harm.should_intervene and validated.is_minor:
+                next_mood = soften_mood(next_mood)
+            if next_mood != prev_mood:
+                await self._session_repo.save(replace(session, mood_vector=next_mood))
+            yield SseFrame("arc.update", {"stage": arc_stage})
+            yield SseFrame("mood.update", next_mood.to_dict())
+
+            # PR-OPT1: coach and judge are independent (both only need the
+            # user line + opponent reply) — run them concurrently so the
+            # turn finishes in max(coach, judge), not coach + judge.
+            coach, turn_score = await asyncio.gather(
+                self._coach_three_tones(
+                    validated.content,
+                    full_reply,
+                    trace,
+                    scenario_title=seed.scenario_title,
+                    user_goal=session.user_goal,
+                    opponent_profile=describe_for_coach(next_mood),
+                ),
+                self._judge_turn(validated.content, full_reply, trace),
             )
             # PR-L8: the strategy read rides the same coach.hint frame as
             # an optional `strategy` object — null when the model went
@@ -709,8 +732,6 @@ class TurnService:
                     strategy=coach.strategy.strategy,
                     effect=coach.strategy.effect,
                 )
-
-            turn_score = await self._judge_turn(validated.content, full_reply, trace)
 
             record = TurnRecord(
                 turn_id=turn_id,
@@ -754,8 +775,50 @@ class TurnService:
             # Exception — it falls through this handler unmarked so we
             # don't paint normal cancellation as a server failure on
             # the Langfuse UI.
+            # Don't leak the background arc/mood task if we bailed before
+            # awaiting it.
+            if mood_task is not None and not mood_task.done():
+                mood_task.cancel()
             trace.fail(exc)
             raise
+
+    async def _resolve_arc_and_mood(
+        self,
+        *,
+        seed: ScenarioSeed,
+        prev_mood: CharacterVector,
+        user_content: str,
+        opponent_last_reply: str | None,
+        turn_index: int,
+        trace_id: str,
+        session_id: str,
+    ) -> tuple[str, CharacterVector]:
+        """Resolve the dramatic-arc stage (L2) then the opponent's next
+        mood (L3), returning `(stage, next_mood)`.
+
+        Runs in a background task concurrently with the roleplay stream
+        (PR-OPT1) so its two LLM calls are hidden under the streaming
+        reply instead of blocking the first token. Both sub-steps fall
+        back internally (arc → `conflict`, arbiter → `prev_mood`), so
+        this never raises — the caller can `await` it safely."""
+        arc = await self._arc_director.resolve(
+            turn_index=turn_index,
+            turns_left=MAX_TURNS_PER_SESSION - turn_index,
+            user_content=user_content,
+            opponent_last_reply=opponent_last_reply,
+            trace_id=trace_id,
+            session_id=session_id,
+        )
+        next_mood = await self._mood_arbiter.next_mood(
+            character_vector=seed.character_vector,
+            prev_mood=prev_mood,
+            user_content=user_content,
+            opponent_last_reply=opponent_last_reply,
+            trace_id=trace_id,
+            session_id=session_id,
+            arc_directive=arc.directive,
+        )
+        return arc.stage, next_mood
 
     async def _output_passes_moderation(
         self,
