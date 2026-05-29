@@ -95,10 +95,15 @@ def get_llm_router() -> LLMRouter:
         providers.append(NoCredentialsProvider())
 
     primary, *backups = providers
-    router = LLMRouter(primary=primary, backups=tuple(backups))
+    router = LLMRouter(
+        primary=primary,
+        backups=tuple(backups),
+        first_byte_budget_s=settings.llm_first_byte_budget_s,
+    )
     logger.info(
         "llm_router_wired",
         primary=primary.name,
         backups=[p.name for p in backups],
+        first_byte_budget_s=settings.llm_first_byte_budget_s,
     )
     return router

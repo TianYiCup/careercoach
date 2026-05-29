@@ -227,6 +227,16 @@ class Settings(BaseSettings):
     qwen_base_url: str = Field(default="https://dashscope.aliyuncs.com/compatible-mode")
     qwen_model: str = Field(default="qwen-max")
 
+    # LLM · per-provider first-byte failover budget. The router waits at
+    # most this long for a provider's first streamed chunk before failing
+    # over to the next. 0.8s assumed a datacenter to the API; real
+    # DeepSeek/Qwen first-token latency on a residential network is
+    # 1-3s, so the old default failed over both providers and crashed
+    # every turn. 2.5s lets a responsive provider commit while still
+    # failing over a genuinely-down one reasonably fast. Bump higher in
+    # `.env` (e.g. 5.0) on a slow connection.
+    llm_first_byte_budget_s: float = Field(default=2.5, gt=0)
+
     # Langfuse · LLM trace observability (foundation §3.7.1).
     # Empty keys mean trace is disabled — `get_langfuse_client` returns
     # None and callers skip instrumentation, so dev runs without a
