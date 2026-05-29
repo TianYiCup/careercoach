@@ -88,6 +88,7 @@ describe('initial state', () => {
     expect(s.arcStage).toBe('opening')
     expect(s.coachStrategy).toBeNull()
     expect(s.memory).toBeNull()
+    expect(s.safetyIntervened).toBe(false)
   })
 })
 
@@ -270,6 +271,22 @@ describe('sendTurn SSE frame handling', () => {
     })
 
     expect(getState().arcStage).toBe('turning')
+  })
+
+  it('safety.soften flips the K-intervention flag for the turn', async () => {
+    mockPostSSE.mockImplementation(async (_path, _body, onFrame) => {
+      onFrame({ event: 'safety.soften', data: { crash_streak: 3 } } as SseEventFrame)
+      onFrame({ event: 'opponent.done', data: { turn_id: 't_1', full_text: '算了' } } as SseEventFrame)
+    })
+
+    await setupActiveSession()
+    expect(getState().safetyIntervened).toBe(false)
+
+    await act(async () => {
+      await hookRef.result.current.sendTurn('我真的撑不住了')
+    })
+
+    expect(getState().safetyIntervened).toBe(true)
   })
 
   it('mood.update replaces characterVector for the L9 radar', async () => {

@@ -57,6 +57,8 @@ from app.services.sessions.coach_strategy import (
     CoachStrategyRead,
     parse_strategy_read,
 )
+from app.services.sessions.emotional_safety import assess as assess_emotional_harm
+from app.services.sessions.emotional_safety import soften as soften_mood
 from app.services.sessions.mood_arbiter import MoodArbiter
 from app.services.sessions.repository import SessionRepository
 from app.services.sessions.scenario_seed import get_scenario_seed
@@ -548,6 +550,30 @@ class TurnService:
                 session_id=validated.session_id,
                 arc_directive=arc.directive,
             )
+
+            # PR-L7: deep emotional-safety layer. If accumulated harm
+            # (crash streak + current pressure) crossed the threshold —
+            # stricter for minors — force-soften the mood so the opponent
+            # backs off, and emit a `safety.soften` frame before the
+            # mood.update so the radar shows the softened shape and the UI
+            # can flag K stepping in. Heuristic + stateless: never blocks.
+            harm = assess_emotional_harm(
+                prior_turn_scores=[t.turn_score for t in validated.prior_turns],
+                next_mood=next_mood,
+                is_minor=validated.is_minor,
+            )
+            if harm.should_soften:
+                next_mood = soften_mood(next_mood)
+                logger.info(
+                    "emotional_safety_softened",
+                    session_id=validated.session_id,
+                    trace_id=validated.trace_id,
+                    crash_streak=harm.crash_streak,
+                    harm=round(harm.harm, 1),
+                    is_minor=validated.is_minor,
+                )
+                yield SseFrame("safety.soften", {"crash_streak": harm.crash_streak})
+
             if next_mood != prev_mood:
                 await self._session_repo.save(replace(session, mood_vector=next_mood))
             yield SseFrame("mood.update", next_mood.to_dict())

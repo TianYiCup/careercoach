@@ -34,6 +34,10 @@ export interface SandboxState {
   /** L6: the opponent's recall of past sessions in this scenario, set on
    * session create. Null on a first visit; drives the "对手记得你" badge. */
   memory: SessionMemory | null
+  /** L7: true on a turn where the deep emotional-safety layer force-
+   * softened the opponent (sustained crushing crossed the harm
+   * threshold). Reset each turn; drives the "教练 K 介入" indicator. */
+  safetyIntervened: boolean
   messages: ChatMessage[]
   /** Current streaming opponent text (not yet in messages) */
   streamingText: string
@@ -76,6 +80,7 @@ const INITIAL_STATE: SandboxState = {
   characterVector: null,
   arcStage: 'opening',
   memory: null,
+  safetyIntervened: false,
   messages: [],
   streamingText: '',
   isStreaming: false,
@@ -202,6 +207,7 @@ export function useSandboxSession() {
         streamingText: '',
         hints: null,
         coachStrategy: null,
+        safetyIntervened: false,
         messages: [...s.messages, { role: 'user', text: content }],
       }))
 
@@ -222,6 +228,14 @@ export function useSandboxSession() {
                   return {
                     ...s,
                     arcStage: frame.data.stage,
+                  }
+                case 'safety.soften':
+                  // L7: the deep safety layer force-softened the opponent
+                  // this turn. Flag it for the "教练 K 介入" indicator;
+                  // the softened mood arrives in the following mood.update.
+                  return {
+                    ...s,
+                    safetyIntervened: true,
                   }
                 case 'mood.update':
                   // L3: opponent's live mood after this turn. Swapping
