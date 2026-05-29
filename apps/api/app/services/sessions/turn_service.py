@@ -317,8 +317,9 @@ class TurnService:
         # mood frame entirely on the pre-L3 paths).
         self._mood_arbiter = mood_arbiter if mood_arbiter is not None else MoodArbiter(llm)
         # PR-L2: arc director shapes the dramatic stage that biases the
-        # arbiter. Same default-over-llm + injectable pattern.
-        self._arc_director = arc_director if arc_director is not None else ArcDirector(llm)
+        # arbiter. PR-OPT2: it's now a pure deterministic edge-resolver
+        # (no LLM) — middle-window classification rides the arbiter's call.
+        self._arc_director = arc_director if arc_director is not None else ArcDirector()
         # PR-L5: records each coach strategy read into the user profile
         # so the opponent's intensity adapts over time. Shared singleton
         # so the session-create adaptation sees the same data.
@@ -793,32 +794,46 @@ class TurnService:
         trace_id: str,
         session_id: str,
     ) -> tuple[str, CharacterVector]:
-        """Resolve the dramatic-arc stage (L2) then the opponent's next
+        """Resolve the dramatic-arc stage (L2) and the opponent's next
         mood (L3), returning `(stage, next_mood)`.
 
         Runs in a background task concurrently with the roleplay stream
-        (PR-OPT1) so its two LLM calls are hidden under the streaming
-        reply instead of blocking the first token. Both sub-steps fall
-        back internally (arc → `conflict`, arbiter → `prev_mood`), so
-        this never raises — the caller can `await` it safely."""
-        arc = await self._arc_director.resolve(
+        (PR-OPT1) so its LLM call is hidden under the streaming reply
+        instead of blocking the first token. PR-OPT2: at the arc's
+        deterministic edges the stage is free (no LLM) and only the mood
+        needs a call; in the middle window a single merged call
+        classifies the stage AND predicts the mood, replacing the
+        previous two serial LLM calls. Every sub-step falls back
+        internally (arc stage → `conflict`, mood → `prev_mood`), so this
+        never raises — the caller can `await` it safely."""
+        arc = self._arc_director.resolve(
             turn_index=turn_index,
             turns_left=MAX_TURNS_PER_SESSION - turn_index,
-            user_content=user_content,
-            opponent_last_reply=opponent_last_reply,
-            trace_id=trace_id,
-            session_id=session_id,
         )
-        next_mood = await self._mood_arbiter.next_mood(
+        if arc is not None:
+            # Deterministic edge (opening / closing): stage known, so we
+            # only spend one LLM call on the mood, biased by the edge
+            # directive.
+            next_mood = await self._mood_arbiter.next_mood(
+                character_vector=seed.character_vector,
+                prev_mood=prev_mood,
+                user_content=user_content,
+                opponent_last_reply=opponent_last_reply,
+                trace_id=trace_id,
+                session_id=session_id,
+                arc_directive=arc.directive,
+            )
+            return arc.stage, next_mood
+
+        # Middle window: one merged LLM call does both jobs.
+        return await self._mood_arbiter.next_mood_with_stage(
             character_vector=seed.character_vector,
             prev_mood=prev_mood,
             user_content=user_content,
             opponent_last_reply=opponent_last_reply,
             trace_id=trace_id,
             session_id=session_id,
-            arc_directive=arc.directive,
         )
-        return arc.stage, next_mood
 
     async def _output_passes_moderation(
         self,

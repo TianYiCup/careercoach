@@ -427,6 +427,78 @@ async def test_stream_emits_arc_then_mood_after_opponent_done() -> None:
     assert arc_frame.data["stage"] == "opening"
 
 
+class _ScriptedWithArbiterProvider:
+    """Scripts roleplay / coach / judge AND the merged stage+mood arbiter
+    prompt, so the middle-window path (PR-OPT2) can be asserted end-to-end:
+    one arbiter call returns both the dramatic stage and the next mood."""
+
+    name = "scripted-arbiter"
+
+    async def stream_chat(
+        self,
+        messages: list[Message],
+        *,
+        temperature: float = 0.7,
+        timeout: float = 8.0,
+        usage_sink: list[TokenUsage] | None = None,
+    ) -> AsyncIterator[str]:
+        _ = (temperature, timeout, usage_sink)
+        system = messages[0].content if messages else ""
+        if "你扮演用户练习对话中的对手" in system:
+            yield "什么安排比工作还重要？"
+        elif "你是教练 K" in system:
+            yield "SAFE: a\nAGGRESSIVE: b\nHUMOR: c"
+        elif "你是评委" in system:
+            yield "VERDICT: shenfeng\nRATING: 85"
+        elif "你是对话情绪导演" in system:
+            yield (
+                "stage: turning\naggression: 60\nempathy: 35\n"
+                "control: 78\nhonesty: 55\nstability: 78\npower_gap: 72"
+            )
+        else:
+            raise AssertionError(f"unscripted system prompt: {system[:60]!r}")
+
+
+async def _seed_neutral_turns(turn_repo: InMemoryTurnRepository, n: int) -> None:
+    """Append `n` neutral (路过) turns so the next turn lands in the arc's
+    middle window without tripping the L7 crash-streak guard."""
+    for i in range(n):
+        await turn_repo.append(
+            TurnRecord(
+                turn_id=f"t_mid{i:04d}",
+                session_id="ses_aaaa1111",
+                user_content="我再说说我的想法",
+                opponent_reply="你接着说",
+                coach_hint=CoachHintTrio(safe="稳住", aggressive="刚回去", humor="搞笑"),
+                turn_score=TurnScore(verdict=Verdict.GUOLU, rating=60),
+                created_at=datetime(2026, 5, 13, 23, 0, tzinfo=UTC),
+            )
+        )
+
+
+async def test_middle_window_uses_merged_arc_mood_call() -> None:
+    """PR-OPT2: past the opening edge, the arc stage is classified by the
+    arbiter's single merged call (not a separate ArcDirector LLM call).
+    With 3 prior turns the next turn is turn_index 4 → middle window, so
+    the scripted merged response's `stage: turning` surfaces on arc.update
+    and its mood on mood.update."""
+    svc, session_repo, turn_repo = _service(llm_provider=_ScriptedWithArbiterProvider())
+    await session_repo.save(_active_session())
+    await _seed_neutral_turns(turn_repo, 3)
+    validated = await svc.validate_turn_request(
+        session_id="ses_aaaa1111", content="我有个新提议", user_id="anonymous", trace_id="t1"
+    )
+
+    frames = await _collect(svc.stream_turn(validated))
+    events = [f.event for f in frames]
+
+    arc_frame = frames[events.index("arc.update")]
+    assert arc_frame.data["stage"] == "turning"
+    mood_frame = frames[events.index("mood.update")]
+    # Mood came back populated from the same merged call (clamped to band).
+    assert 0 <= mood_frame.data["aggression"] <= 100
+
+
 async def test_roleplay_llm_timeout_does_not_hang_the_stream() -> None:
     """A roleplay first-byte timeout must NOT crash the SSE stream (which
     leaves the UI stuck on the typing indicator forever). The turn falls
