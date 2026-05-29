@@ -184,3 +184,83 @@ async def test_handles_fullwidth_colon() -> None:
 
     assert mood.aggression == 55
     assert mood.empathy == 38
+
+
+# --- PR-OPT2: the merged stage + mood call (middle-window path) ---------
+
+
+async def _arbitrate_with_stage(
+    llm: object, *, prev_mood: CharacterVector | None = None
+) -> tuple[str, CharacterVector]:
+    arbiter = MoodArbiter(llm)  # type: ignore[arg-type]
+    return await arbiter.next_mood_with_stage(
+        character_vector=BASE,
+        prev_mood=prev_mood if prev_mood is not None else BASE,
+        user_content="我家里确实有事，这周末真的没办法",
+        opponent_last_reply="这个项目很重要，你再想想",
+        trace_id="t1",
+        session_id="ses_test",
+    )
+
+
+async def test_with_stage_parses_stage_and_mood() -> None:
+    """One call yields both the dramatic stage and a clamped mood."""
+    response = (
+        "stage: turning\n"
+        "aggression: 55\nempathy: 38\ncontrol: 70\nhonesty: 50\nstability: 78\npower_gap: 70"
+    )
+
+    stage, mood = await _arbitrate_with_stage(_ScriptedLLM(response))
+
+    assert stage == "turning"
+    assert mood.aggression == 55
+    assert mood.empathy == 38
+
+
+async def test_with_stage_clamps_mood_to_drift_band() -> None:
+    """The merged path clamps the same way the mood-only path does."""
+    response = (
+        "stage: conflict\n"
+        "aggression: 100\nempathy: 30\ncontrol: 75\nhonesty: 50\nstability: 80\npower_gap: 70"
+    )
+
+    stage, mood = await _arbitrate_with_stage(_ScriptedLLM(response))
+
+    assert stage == "conflict"
+    assert mood.aggression == BASE.aggression + MOOD_DRIFT_BAND  # clamped to 80
+
+
+async def test_with_stage_unparseable_stage_falls_back_to_conflict() -> None:
+    """Mood parses but the stage line is missing → conflict (keep
+    pressing), mood still applied."""
+    response = "aggression: 55\nempathy: 38\ncontrol: 70\nhonesty: 50\nstability: 78\npower_gap: 70"
+
+    stage, mood = await _arbitrate_with_stage(_ScriptedLLM(response))
+
+    assert stage == "conflict"
+    assert mood.aggression == 55
+
+
+async def test_with_stage_partial_mood_keeps_stage_falls_back_mood() -> None:
+    """Stage parses but the mood block is incomplete → keep the stage,
+    fall back to prev_mood."""
+    prev = CharacterVector(
+        aggression=58, empathy=32, control=72, honesty=50, stability=79, power_gap=70
+    )
+    response = "stage: closing\naggression: 55\nempathy: 38\ncontrol: 70\npower_gap: 70"
+
+    stage, mood = await _arbitrate_with_stage(_ScriptedLLM(response), prev_mood=prev)
+
+    assert stage == "closing"
+    assert mood == prev
+
+
+async def test_with_stage_llm_exception_returns_conflict_and_prev_mood() -> None:
+    prev = CharacterVector(
+        aggression=58, empathy=32, control=72, honesty=50, stability=79, power_gap=70
+    )
+
+    stage, mood = await _arbitrate_with_stage(_RaisingLLM(), prev_mood=prev)
+
+    assert stage == "conflict"
+    assert mood == prev
