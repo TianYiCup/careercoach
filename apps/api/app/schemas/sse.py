@@ -106,17 +106,34 @@ class CoachHintEvent(BaseModel):
 
 
 class SafetySoftenEvent(BaseModel):
-    """Deep emotional-safety intervention (Character Engine L7).
+    """Deep emotional-safety auto-soften (Character Engine L7, minors).
 
-    Fired before `mood.update` on a turn where accumulated harm crossed
-    the threshold and the opponent was force-softened. The frontend shows
-    a "教练 K 介入 · 对手收力了" indicator. Rare by design — it only fires
-    when a session is grinding the user down."""
+    Fired at the top of a turn where accumulated harm crossed the
+    threshold for an under-18 user — the opponent was force-softened for
+    this reply (PRD §3.0.5 C). The frontend shows a "教练 K 介入 ·
+    对手收力了" indicator. Rare by design."""
 
     crash_streak: int = Field(
         ...,
         ge=0,
         description="Consecutive turns the user was crushed before K stepped in.",
+        examples=[3],
+    )
+
+
+class SafetyOfframpEvent(BaseModel):
+    """Deep emotional-safety off-ramp (Character Engine L7, adults).
+
+    Fired at the top of a turn where accumulated harm crossed the
+    threshold for an adult. Unlike the minor path, the difficulty is NOT
+    lowered — the opponent presses on. K just surfaces a check-in so the
+    user keeps agency (push through, ease off, or step out), which keeps
+    the practice real. The frontend renders a non-blocking K prompt."""
+
+    crash_streak: int = Field(
+        ...,
+        ge=0,
+        description="Consecutive turns the user was crushed when K checked in.",
         examples=[3],
     )
 
@@ -205,11 +222,12 @@ class UserTranscribedEvent(BaseModel):
 
 SseEventName = Literal[
     "user.transcribed",
-    "arc.update",
     "safety.soften",
-    "mood.update",
+    "safety.offramp",
     "opponent.delta",
     "opponent.done",
+    "arc.update",
+    "mood.update",
     "coach.hint",
     "meta",
     "moderation",
@@ -241,6 +259,11 @@ class _SafetySoftenFrame(BaseModel):
     data: SafetySoftenEvent
 
 
+class _SafetyOfframpFrame(BaseModel):
+    event: Literal["safety.offramp"] = "safety.offramp"
+    data: SafetyOfframpEvent
+
+
 class _MoodUpdateFrame(BaseModel):
     event: Literal["mood.update"] = "mood.update"
     data: MoodUpdateEvent
@@ -265,6 +288,7 @@ SseEventFrame = Annotated[
     _UserTranscribedFrame
     | _ArcUpdateFrame
     | _SafetySoftenFrame
+    | _SafetyOfframpFrame
     | _MoodUpdateFrame
     | _OpponentDeltaFrame
     | _OpponentDoneFrame

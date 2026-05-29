@@ -68,10 +68,15 @@ _SOFTEN_STEP = 25
 
 @dataclass(frozen=True)
 class HarmAssessment:
-    """Result of one turn's harm check."""
+    """Result of one turn's harm check.
+
+    `should_intervene` means harm crossed the threshold. The caller acts
+    on it differently by audience (PR-OPT1): minors get an auto-soften
+    (compliance, §3.0.5 C); adults get a non-blocking off-ramp prompt so
+    they keep agency and the challenge isn't silently lowered."""
 
     harm: float
-    should_soften: bool
+    should_intervene: bool
     crash_streak: int
 
 
@@ -90,19 +95,21 @@ def _crash_streak(prior_turns: list[TurnScore]) -> int:
 def assess(
     *,
     prior_turn_scores: list[TurnScore],
-    next_mood: CharacterVector,
+    mood: CharacterVector,
     is_minor: bool,
 ) -> HarmAssessment:
-    """Compute accumulated emotional harm and whether to force-soften.
+    """Compute accumulated emotional harm and whether to intervene.
 
     `prior_turn_scores` is the judge verdict of each completed turn
-    (oldest → newest). `next_mood` is the mood the arbiter just produced
-    for this turn — we soften *before* it reaches the roleplay prompt."""
+    (oldest → newest). `mood` is the mood the opponent is about to speak
+    with this turn — assessed *before* roleplay so a minor soften lands
+    on the same reply (no one-turn lag) and an adult off-ramp surfaces in
+    time."""
     streak = _crash_streak(prior_turn_scores)
-    pressure = mood_pressure(next_mood)
+    pressure = mood_pressure(mood)
     harm = streak * _CRASH_WEIGHT + max(0.0, pressure - _PRESSURE_BASELINE) * _PRESSURE_WEIGHT
     threshold = _HARM_THRESHOLD_MINOR if is_minor else _HARM_THRESHOLD_ADULT
-    return HarmAssessment(harm=harm, should_soften=harm >= threshold, crash_streak=streak)
+    return HarmAssessment(harm=harm, should_intervene=harm >= threshold, crash_streak=streak)
 
 
 def soften(mood: CharacterVector) -> CharacterVector:

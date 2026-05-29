@@ -399,11 +399,11 @@ async def test_stream_emits_four_event_types_in_order() -> None:
     assert meta_idx == len(events) - 1
 
 
-async def test_stream_emits_arc_update_before_mood_update() -> None:
-    """PR-L2: the arc.update frame fires once, before mood.update (which
-    is before the deltas). Turn 1 with no prior turns → the arc director
-    short-circuits to `opening` deterministically, so the scripted
-    provider that raises on the arc prompt is never consulted here."""
+async def test_stream_emits_arc_then_mood_after_opponent_done() -> None:
+    """PR-OPT1: the arc/mood engine runs concurrently with the roleplay
+    stream, so arc.update + mood.update now land *after* opponent.done
+    (the radar morphs right after the reply, not before the first token).
+    arc still precedes mood. Turn 1 → arc is `opening` (deterministic)."""
     svc, session_repo, _ = _service()
     await session_repo.save(_active_session())
     validated = await svc.validate_turn_request(
@@ -417,10 +417,10 @@ async def test_stream_emits_arc_update_before_mood_update() -> None:
     events = [f.event for f in frames]
 
     assert events.count("arc.update") == 1
+    done_idx = events.index("opponent.done")
     arc_idx = events.index("arc.update")
     mood_idx = events.index("mood.update")
-    first_delta_idx = events.index("opponent.delta")
-    assert arc_idx < mood_idx < first_delta_idx
+    assert done_idx < arc_idx < mood_idx
 
     arc_frame = frames[arc_idx]
     # Turn 1 is always opening (deterministic edge guard).
@@ -452,15 +452,20 @@ async def test_roleplay_llm_timeout_does_not_hang_the_stream() -> None:
     assert len(await turn_repo.list_for_session("ses_aaaa1111")) == 1
 
 
-async def test_safety_soften_fires_after_sustained_crushing() -> None:
-    """PR-L7: a harsh opponent + a 3-turn crash streak crosses the harm
-    threshold → a safety.soften frame fires (before mood.update) and the
-    softened mood has lower aggression than the harsh fallback."""
+async def test_safety_minor_softens_after_sustained_crushing() -> None:
+    """PR-OPT1 L7: a MINOR + harsh opponent + 3-turn crash streak crosses
+    the (stricter) harm threshold → safety.soften fires before the deltas
+    (it's a pre-roleplay check), and the opponent's reply this turn uses
+    the softened mood — surfaced on the post-reply mood.update."""
     svc, session_repo, turn_repo = _service()
     await session_repo.save(_harsh_session())
     await _seed_crash_turns(turn_repo, 3)
     validated = await svc.validate_turn_request(
-        session_id="ses_aaaa1111", content="我真的不行了", user_id="anonymous", trace_id="t1"
+        session_id="ses_aaaa1111",
+        content="我真的不行了",
+        user_id="anonymous",
+        is_minor=True,
+        trace_id="t1",
     )
 
     frames = await _collect(svc.stream_turn(validated))
@@ -468,16 +473,42 @@ async def test_safety_soften_fires_after_sustained_crushing() -> None:
 
     assert events.count("safety.soften") == 1
     safety_idx = events.index("safety.soften")
-    mood_idx = events.index("mood.update")
-    assert safety_idx < mood_idx  # softens before the radar updates
+    first_delta_idx = events.index("opponent.delta")
+    assert safety_idx < first_delta_idx  # softens before the reply streams
     assert frames[safety_idx].data["crash_streak"] == 3
-    # The mood the radar receives is softened below the harsh fallback.
+    # Minor: the persisted/next mood is softened below the harsh baseline.
+    mood_idx = events.index("mood.update")
     assert frames[mood_idx].data["aggression"] < _HARSH_MOOD.aggression
 
 
-async def test_safety_soften_does_not_fire_in_a_normal_turn() -> None:
-    """No crash history + the default neutral session mood → no harm, no
-    safety frame. The guardrail is rare by design."""
+async def test_safety_adult_gets_offramp_not_soften() -> None:
+    """PR-OPT1 L7: the SAME crushing as above, but for an ADULT, surfaces
+    a safety.offramp (K check-in) — the difficulty is NOT lowered, so the
+    opponent keeps its harsh mood and no safety.soften fires."""
+    svc, session_repo, turn_repo = _service()
+    await session_repo.save(_harsh_session())
+    await _seed_crash_turns(turn_repo, 3)
+    validated = await svc.validate_turn_request(
+        session_id="ses_aaaa1111",
+        content="我真的不行了",
+        user_id="anonymous",
+        is_minor=False,
+        trace_id="t1",
+    )
+
+    frames = await _collect(svc.stream_turn(validated))
+    events = [f.event for f in frames]
+
+    assert events.count("safety.offramp") == 1
+    assert events.count("safety.soften") == 0
+    offramp_idx = events.index("safety.offramp")
+    assert offramp_idx < events.index("opponent.delta")
+    assert frames[offramp_idx].data["crash_streak"] == 3
+
+
+async def test_safety_does_not_fire_in_a_normal_turn() -> None:
+    """No crash history + the default neutral session mood → no harm,
+    neither soften nor offramp. The guardrail is rare by design."""
     svc, session_repo, _ = _service()
     await session_repo.save(_active_session())
     validated = await svc.validate_turn_request(
@@ -485,15 +516,17 @@ async def test_safety_soften_does_not_fire_in_a_normal_turn() -> None:
     )
 
     frames = await _collect(svc.stream_turn(validated))
-    assert all(f.event != "safety.soften" for f in frames)
+    events = [f.event for f in frames]
+    assert "safety.soften" not in events
+    assert "safety.offramp" not in events
 
 
-async def test_stream_emits_mood_update_before_opponent_deltas() -> None:
-    """PR-L3: the mood.update frame fires once, before any opponent
-    delta, so the L9 radar morphs as the reply streams in. The scripted
-    provider raises on the arbiter prompt, so the arbiter falls back to
-    the session's seeded mood — the frame still carries a valid 6-dim
-    payload."""
+async def test_stream_emits_mood_update_after_opponent_done() -> None:
+    """PR-OPT1: the arc/mood engine runs concurrently with the reply, so
+    mood.update fires once, after opponent.done (radar morphs right after
+    the reply). The scripted provider raises on the arbiter prompt, so the
+    arbiter falls back to the session's seeded mood — the frame still
+    carries a valid 6-dim payload."""
     svc, session_repo, _ = _service()
     await session_repo.save(_active_session())
     validated = await svc.validate_turn_request(
@@ -508,8 +541,8 @@ async def test_stream_emits_mood_update_before_opponent_deltas() -> None:
 
     assert events.count("mood.update") == 1
     mood_idx = events.index("mood.update")
-    first_delta_idx = events.index("opponent.delta")
-    assert mood_idx < first_delta_idx
+    done_idx = events.index("opponent.done")
+    assert done_idx < mood_idx
 
     mood_frame = frames[mood_idx]
     for dim in ("aggression", "empathy", "control", "honesty", "stability", "power_gap"):
@@ -677,9 +710,11 @@ async def test_stream_turn_with_no_langfuse_client_works_unchanged() -> None:
     )
 
     frames = await _collect(svc.stream_turn(validated))
-    # Same event ordering as the un-instrumented tests.
+    # Same event ordering as the un-instrumented tests. PR-OPT1 moved
+    # arc/mood after opponent.done, so the tail is coach.hint → meta.
     events = [f.event for f in frames]
-    assert events[-3:] == ["opponent.done", "coach.hint", "meta"]
+    assert events[-2:] == ["coach.hint", "meta"]
+    assert "opponent.done" in events
 
 
 async def test_stream_turn_emits_trace_with_three_generations() -> None:

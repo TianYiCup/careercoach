@@ -42,17 +42,17 @@ def test_pressure_in_range() -> None:
 def test_no_harm_for_calm_opponent_no_crashes() -> None:
     result = assess(
         prior_turn_scores=_scores(Verdict.GUOLU, Verdict.SHENFENG),
-        next_mood=CALM,
+        mood=CALM,
         is_minor=False,
     )
-    assert not result.should_soften
+    assert not result.should_intervene
     assert result.crash_streak == 0
 
 
 def test_crash_streak_counts_trailing_fanche() -> None:
     result = assess(
         prior_turn_scores=_scores(Verdict.GUOLU, Verdict.FANCHE, Verdict.FANCHE, Verdict.FANCHE),
-        next_mood=HARSH,
+        mood=HARSH,
         is_minor=False,
     )
     assert result.crash_streak == 3
@@ -62,7 +62,7 @@ def test_crash_streak_resets_on_non_crash() -> None:
     """A win in the middle breaks the streak — only trailing crashes count."""
     result = assess(
         prior_turn_scores=_scores(Verdict.FANCHE, Verdict.FANCHE, Verdict.SHENFENG),
-        next_mood=HARSH,
+        mood=HARSH,
         is_minor=False,
     )
     assert result.crash_streak == 0
@@ -71,10 +71,10 @@ def test_crash_streak_resets_on_non_crash() -> None:
 def test_adult_softens_after_sustained_crushing() -> None:
     result = assess(
         prior_turn_scores=_scores(Verdict.FANCHE, Verdict.FANCHE, Verdict.FANCHE),
-        next_mood=HARSH,
+        mood=HARSH,
         is_minor=False,
     )
-    assert result.should_soften
+    assert result.should_intervene
 
 
 def test_calm_opponent_does_not_trip_even_with_crashes() -> None:
@@ -82,10 +82,10 @@ def test_calm_opponent_does_not_trip_even_with_crashes() -> None:
     user isn't being ground down, they're just losing on the merits."""
     result = assess(
         prior_turn_scores=_scores(Verdict.FANCHE),
-        next_mood=CALM,
+        mood=CALM,
         is_minor=False,
     )
-    assert not result.should_soften
+    assert not result.should_intervene
 
 
 def test_minor_threshold_is_stricter() -> None:
@@ -93,18 +93,18 @@ def test_minor_threshold_is_stricter() -> None:
     a minor (PRD §3.0.5 C)."""
     scores = _scores(Verdict.FANCHE, Verdict.FANCHE)
 
-    adult = assess(prior_turn_scores=scores, next_mood=HARSH, is_minor=False)
-    minor = assess(prior_turn_scores=scores, next_mood=HARSH, is_minor=True)
+    adult = assess(prior_turn_scores=scores, mood=HARSH, is_minor=False)
+    minor = assess(prior_turn_scores=scores, mood=HARSH, is_minor=True)
 
-    assert minor.should_soften
-    assert not adult.should_soften
+    assert minor.should_intervene
+    assert not adult.should_intervene
     assert minor.harm == adult.harm  # same harm, different threshold
 
 
 def test_no_history_no_soften() -> None:
-    result = assess(prior_turn_scores=[], next_mood=HARSH, is_minor=False)
+    result = assess(prior_turn_scores=[], mood=HARSH, is_minor=False)
     assert result.crash_streak == 0
-    assert not result.should_soften
+    assert not result.should_intervene
 
 
 # --- soften ------------------------------------------------------------------
