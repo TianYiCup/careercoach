@@ -216,7 +216,7 @@ describe('useMicCapture', () => {
     expect(onUtteranceEnd).not.toHaveBeenCalled()
 
     vi.advanceTimersByTime(900)
-    fireFrame(buf(), 0.04) // past the 800ms hold → boundary
+    fireFrame(buf(), 0.04) // past the 500ms hold → boundary
     expect(onUtteranceEnd).toHaveBeenCalledTimes(1)
   })
 

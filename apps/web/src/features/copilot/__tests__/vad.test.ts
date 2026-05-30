@@ -34,7 +34,7 @@ describe('createVad', () => {
     // run (≥ speechFramesToLatch), then quiet.
     feed(vad, 0.04, 5, 0)
     feed(vad, 0.2, 4, 500) // sustained speech, latches
-    // Back to noise floor; boundary after silenceHoldMs (800ms).
+    // Back to noise floor; boundary after silenceHoldMs (500ms).
     const { ended } = feed(vad, 0.04, 12, 900)
     expect(ended).toBe(true)
   })
