@@ -130,7 +130,13 @@ function StatusIndicator({ status }: { status: string }) {
 /* ── Page orchestrator ────────────────────────────────────────────── */
 
 export function CopilotPage({ onBack }: { onBack: () => void }) {
-  const { state, startSession, reset } = useCopilotSession()
+  // Single session instance for the whole page. CopilotHUD MUST receive
+  // this same instance via props — calling useCopilotSession() again
+  // inside the HUD would spin up a second, disconnected hook (its own
+  // WS + state), so the HUD would render an empty session while the
+  // real one (here) silently receives all the asr/hint events.
+  const session = useCopilotSession()
+  const { state, startSession, reset } = session
 
   if (!state.started) {
     return (
@@ -146,6 +152,7 @@ export function CopilotPage({ onBack }: { onBack: () => void }) {
 
   return (
     <CopilotHUD
+      session={session}
       onExit={() => {
         reset()
         onBack()
@@ -321,8 +328,14 @@ function readMutePref(): boolean {
   return localStorage.getItem(TTS_MUTE_KEY) === '1'
 }
 
-function CopilotHUD({ onExit }: { onExit: () => void }) {
-  const { state, endSession, setTone, dismissError } = useCopilotSession()
+function CopilotHUD({
+  session,
+  onExit,
+}: {
+  session: ReturnType<typeof useCopilotSession>
+  onExit: () => void
+}) {
+  const { state, endSession, setTone, dismissError } = session
   const [showExitConfirm, setShowExitConfirm] = useState(false)
   const [muted, setMuted] = useState<boolean>(readMutePref)
 

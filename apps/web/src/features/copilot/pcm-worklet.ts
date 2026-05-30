@@ -2,30 +2,42 @@
  * AudioWorklet processor — the real-time tap on the microphone graph.
  *
  * Runs on the audio render thread (not the main thread), so it must
- * stay allocation-light and never block. Per 128-sample render quantum
- * it accumulates Float32 samples; once a full ~100 ms frame is buffered
- * it converts to 16-bit PCM and `postMessage`s the raw bytes + the
- * frame's RMS back to the main thread, which forwards the bytes over
- * the copilot WebSocket and uses the RMS for voice-activity detection.
+ * stay allocation-light and never block. It accumulates ~100 ms of
+ * audio at the context's NATIVE sample rate, downsamples that chunk to
+ * 16 kHz, converts to 16-bit PCM, and `postMessage`s the raw bytes +
+ * the frame's RMS back to the main thread, which forwards the bytes
+ * over the copilot WebSocket and uses the RMS for voice-activity
+ * detection.
  *
- * Batching to ~100 ms (instead of shipping every 8 ms quantum) keeps
- * the WS message rate sane without adding meaningful latency to the
- * "耳机里挺你" hint loop.
+ * Why native rate + resample instead of forcing a 16 kHz context:
+ * `new AudioContext({ sampleRate: 16000 })` makes Chromium's
+ * MediaStreamSource emit *silence* on many machines (frames flow but
+ * every sample is 0). Capturing at the hardware rate and resampling
+ * here is the robust path. `sampleRate` is the AudioWorkletGlobalScope
+ * global carrying the actual context rate.
  *
- * Loaded via `audioContext.audioWorklet.addModule(new URL(...))`; Vite
- * bundles this entry and resolves the `./pcm` import into the worklet
- * chunk. Not unit-tested — AudioWorklet has no jsdom shim; the pure
- * conversion it delegates to (`./pcm`) carries the coverage instead.
+ * Loaded via `audioContext.audioWorklet.addModule(...?worker&url)`;
+ * Vite bundles this entry and resolves the `./pcm` import into the
+ * worklet chunk. Not unit-tested — AudioWorklet has no jsdom shim; the
+ * pure helpers it delegates to (`./pcm`) carry the coverage instead.
  */
 
-import { floatTo16BitPCM, rms } from './pcm'
+import { floatTo16BitPCM, resampleLinear, rms } from './pcm'
 
-// At the context's fixed 16 kHz, 1600 samples ≈ 100 ms per emitted frame.
-const FRAME_SAMPLES = 1600
+const TARGET_RATE = 16000
+
+// ~100 ms of native audio per emitted frame keeps the WS message rate
+// sane without adding meaningful latency to the hint loop.
+const FRAME_MS = 0.1
 
 class PcmEncoderProcessor extends AudioWorkletProcessor {
-  private buffer = new Float32Array(FRAME_SAMPLES)
+  private buffer: Float32Array
   private offset = 0
+
+  constructor() {
+    super()
+    this.buffer = new Float32Array(Math.round(sampleRate * FRAME_MS))
+  }
 
   process(inputs: Float32Array[][]): boolean {
     const channel = inputs[0]?.[0]
@@ -35,7 +47,7 @@ class PcmEncoderProcessor extends AudioWorkletProcessor {
 
     for (let i = 0; i < channel.length; i++) {
       this.buffer[this.offset++] = channel[i]!
-      if (this.offset === FRAME_SAMPLES) {
+      if (this.offset === this.buffer.length) {
         this.flush()
       }
     }
@@ -43,9 +55,11 @@ class PcmEncoderProcessor extends AudioWorkletProcessor {
   }
 
   private flush(): void {
-    const frame = this.buffer.subarray(0, this.offset)
-    const level = rms(frame)
-    const pcm = floatTo16BitPCM(frame)
+    const native = this.buffer.subarray(0, this.offset)
+    const down =
+      sampleRate === TARGET_RATE ? native : resampleLinear(native, sampleRate, TARGET_RATE)
+    const level = rms(down)
+    const pcm = floatTo16BitPCM(down)
     // Transfer the ArrayBuffer so the main thread owns it without a
     // copy. `pcm` is freshly allocated each flush, so handing it off is
     // safe — nothing else references it.
