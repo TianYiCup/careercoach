@@ -1128,7 +1128,12 @@ def _aliyun_provider_with_scripted_events(
     from app.asr import AliyunASRProvider
     from app.asr._aliyun_token import AccessToken, AliyunTokenCache
 
-    events_json: list[str | bytes] = []
+    events_json: list[str | bytes] = [
+        # The adapter now waits for the `TranscriptionStarted` handshake
+        # ack before it streams audio, so the scripted channel has to
+        # lead with it or `_await_started` blocks forever.
+        json.dumps({"header": {"name": "TranscriptionStarted", "status": 20000000}})
+    ]
     for text in partials:
         events_json.append(
             json.dumps(

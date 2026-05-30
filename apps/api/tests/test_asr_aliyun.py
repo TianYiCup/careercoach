@@ -50,12 +50,15 @@ class _FakeWSChannel:
         # naturally via socket I/O; our in-memory fake otherwise
         # starves any concurrent sender.
         await asyncio.sleep(0)
+        # Drain scripted frames first, THEN apply the configured raise —
+        # lets a test script the `TranscriptionStarted` handshake frame
+        # before simulating a mid-stream close.
+        if self._to_send:
+            return self._to_send.pop(0)
         if self._recv_raises is not None:
             raise self._recv_raises
-        if not self._to_send:
-            # Mimic a clean server close after the scripted messages.
-            raise ConnectionClosed(rcvd=None, sent=None)
-        return self._to_send.pop(0)
+        # Mimic a clean server close after the scripted messages.
+        raise ConnectionClosed(rcvd=None, sent=None)
 
     async def close(self, code: int = 1000, reason: str = "") -> None:
         self.close_calls.append((code, reason))
@@ -115,6 +118,12 @@ def _task_failed(message: str) -> str:
     )
 
 
+def _started() -> str:
+    """The `TranscriptionStarted` handshake frame the adapter now waits
+    for before sending audio (Aliyun rejects audio sent while ROUTING)."""
+    return json.dumps({"header": {"name": "TranscriptionStarted", "status": 20000000}})
+
+
 async def _gen(chunks: list[bytes]) -> AsyncIterator[bytes]:
     for c in chunks:
         yield c
@@ -148,6 +157,7 @@ async def test_transcribe_stream_yields_partials_then_final() -> None:
     don't see anything past it even if the script has more frames."""
     channel = _FakeWSChannel(
         to_send=[
+            _started(),
             _result_changed("你"),
             _result_changed("你好"),
             _sentence_end("你好世界"),
@@ -176,6 +186,7 @@ async def test_handshake_sends_start_then_audio_then_stop() -> None:
     immediately if data is queued."""
     channel = _FakeWSChannel(
         to_send=[
+            _started(),
             _result_changed("a"),
             _result_changed("ab"),
             _result_changed("abc"),
@@ -209,7 +220,7 @@ async def test_handshake_sends_start_then_audio_then_stop() -> None:
 
 
 async def test_url_carries_token_query_param() -> None:
-    channel = _FakeWSChannel(to_send=[_sentence_end("hi")])
+    channel = _FakeWSChannel(to_send=[_started(), _sentence_end("hi")])
     provider = _make_provider(channel)
 
     async for _ in provider.transcribe_stream(_gen([])):
@@ -223,7 +234,7 @@ async def test_url_carries_token_query_param() -> None:
 
 
 async def test_confidence_surfaces_when_vendor_reports_it() -> None:
-    channel = _FakeWSChannel(to_send=[_sentence_end("hi")])
+    channel = _FakeWSChannel(to_send=[_started(), _sentence_end("hi")])
     provider = _make_provider(channel)
 
     events = [e async for e in provider.transcribe_stream(_gen([]))]
@@ -235,7 +246,7 @@ async def test_confidence_surfaces_when_vendor_reports_it() -> None:
 
 
 async def test_task_failed_event_raises_upstream_error() -> None:
-    channel = _FakeWSChannel(to_send=[_task_failed("internal speech error")])
+    channel = _FakeWSChannel(to_send=[_started(), _task_failed("internal speech error")])
     provider = _make_provider(channel)
 
     with pytest.raises(ASRUpstreamError, match="internal speech error"):
@@ -246,7 +257,7 @@ async def test_task_failed_event_raises_upstream_error() -> None:
 async def test_unexpected_close_mid_stream_raises_upstream_error() -> None:
     """Server tore the connection down hard before SentenceEnd —
     surfaced as ASRUpstreamError so the WS bridge can react."""
-    channel = _FakeWSChannel(to_send=[])
+    channel = _FakeWSChannel(to_send=[_started()])
     channel.set_recv_raises(ConnectionClosedError(rcvd=None, sent=None))
     provider = _make_provider(channel)
 
@@ -259,8 +270,8 @@ async def test_clean_close_before_final_yields_empty_final() -> None:
     """Server closed cleanly (1000) before SentenceEnd. Protocol
     contract requires us to emit a terminal `final` so callers don't
     hang waiting for one — empty text is the honest report."""
-    channel = _FakeWSChannel(to_send=[_result_changed("partial")])
-    # After draining the one scripted message, our fake raises
+    channel = _FakeWSChannel(to_send=[_started(), _result_changed("partial")])
+    # After draining the scripted messages, our fake raises
     # ConnectionClosed by design.
     provider = _make_provider(channel)
 
@@ -274,6 +285,7 @@ async def test_malformed_json_frame_is_skipped() -> None:
     must NOT crash on them — drop and keep reading."""
     channel = _FakeWSChannel(
         to_send=[
+            _started(),
             "not-json-at-all",  # malformed
             _result_changed("hi"),
             _sentence_end("hi there"),

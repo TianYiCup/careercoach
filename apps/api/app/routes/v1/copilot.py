@@ -143,6 +143,14 @@ _WS_SESSION_ALREADY_USED_CODE = 4409
 
 _AUDIO_END_TYPE = "audio_end"
 
+# Upper bound on the transcript we moderate + feed the coach hint, in
+# characters. Mirrors `ModerationCheckRequest.content`'s max_length so an
+# over-long utterance is clamped instead of raising a `ValidationError`
+# that would crash the WS handler and drop the client's mic. Real ASR
+# utterances are short; this only bites pathological streams (e.g. the
+# dummy ASR echoing raw PCM bytes during local dev).
+_MAX_TRANSCRIPT_CHARS = 8000
+
 # Verdicts that pass the moderation gate and let the LLM hint emit.
 # `redirect` already surfaces a crisis-line resource via the moderation
 # event itself; `block` is a hard stop. Both suppress hint generation
@@ -393,6 +401,17 @@ async def _run_one_utterance(
     # for that case — the outer handler logs the disconnect and
     # an empty Langfuse trace would just be noise.
     _, (final_text, asr_error_type) = await asyncio.gather(feeder, streamer)
+
+    # Clamp before moderation/hint so a pathologically long transcript
+    # can't trip ModerationCheckRequest's max_length and crash the WS.
+    if len(final_text) > _MAX_TRANSCRIPT_CHARS:
+        logger.warning(
+            "copilot_transcript_clamped",
+            copilot_id=copilot_id,
+            original_chars=len(final_text),
+            kept_chars=_MAX_TRANSCRIPT_CHARS,
+        )
+        final_text = final_text[:_MAX_TRANSCRIPT_CHARS]
 
     trace = begin_copilot_trace(
         langfuse_client,

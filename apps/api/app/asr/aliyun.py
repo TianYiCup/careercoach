@@ -93,7 +93,19 @@ class _WSChannel(Protocol):
 
 
 WSFactory = Callable[[str], Awaitable["_WSConnection"]]
-"""Factory: URL -> awaited connection. Default is `websockets.connect`."""
+"""Factory: URL -> awaited connection (an async context manager)."""
+
+
+async def _default_ws_factory(url: str) -> _WSConnection:
+    """Real-websockets factory.
+
+    `websockets.connect(url)` returns a `Connect` that is itself an
+    async context manager — awaiting it would yield the bare protocol,
+    which is NOT a context manager. So we return the unawaited `Connect`
+    and let the caller `async with` it. This matches the `WSFactory`
+    contract the in-memory test fakes implement.
+    """
+    return ws_connect(url)  # type: ignore[return-value]
 
 
 class _WSConnection(Protocol):
@@ -135,10 +147,10 @@ class AliyunASRProvider:
         self._app_key = app_key
         self._ws_url = ws_url
         self._token_url = token_url
-        # Default to the real `websockets.connect` — tests inject a stub.
-        # The cast is purely structural: `connect` returns a `Connect`
-        # awaitable that satisfies `_WSConnection`.
-        self._ws_factory: WSFactory = ws_factory or ws_connect  # type: ignore[assignment]
+        # Default factory returns the unawaited Connect (an async CM) —
+        # tests inject a stub matching the same contract. Awaiting
+        # `connect()` would yield the bare protocol, which is not a CM.
+        self._ws_factory: WSFactory = ws_factory or _default_ws_factory
         self._token_cache = token_cache or AliyunTokenCache()
 
     async def transcribe_stream(
@@ -180,8 +192,18 @@ class AliyunASRProvider:
 
         async with connection as channel:
             await channel.send(_start_payload(task_id=task_id, app_key=self._app_key))
+            # Aliyun NLS rejects audio sent before it acknowledges the
+            # StartTranscription with a `TranscriptionStarted` event
+            # ("Invalid binary message while server state is 'ROUTING'").
+            # Block the feeder until that handshake completes.
+            await _await_started(channel, task_id=task_id)
             feeder: asyncio.Task[None] = asyncio.create_task(
-                _feed_audio(channel, audio_chunks=audio_chunks, task_id=task_id),
+                _feed_audio(
+                    channel,
+                    audio_chunks=audio_chunks,
+                    task_id=task_id,
+                    app_key=self._app_key,
+                ),
                 name="aliyun-asr-feeder",
             )
             try:
@@ -200,11 +222,53 @@ class AliyunASRProvider:
         return f"{self._ws_url}{sep}token={token}"
 
 
+async def _await_started(channel: _WSChannel, *, task_id: str) -> None:
+    """Block until the server emits `TranscriptionStarted`.
+
+    Aliyun NLS is a strict state machine: audio frames sent before the
+    server acknowledges `StartTranscription` are rejected with
+    `MESSAGE_INVALID ... server state is 'ROUTING'`. We consume control
+    frames until `TranscriptionStarted` arrives (drop other control
+    noise), raising on an early `TaskFailed` or a premature close.
+    """
+    while True:
+        try:
+            raw = await channel.recv()
+        except ConnectionClosedError as exc:
+            raise ASRUpstreamError(
+                f"aliyun ASR closed before start: {exc}",
+                provider=PROVIDER_NAME,
+            ) from exc
+        except ConnectionClosed as exc:
+            raise ASRUpstreamError(
+                "aliyun ASR closed before TranscriptionStarted",
+                provider=PROVIDER_NAME,
+            ) from exc
+
+        parsed = _parse_event(raw, task_id=task_id)
+        if parsed is None:
+            continue
+        name, payload = parsed
+        if name == _EVT_STARTED:
+            return
+        if name == _EVT_TASK_FAILED:
+            header = payload.get("header", {})
+            message = header.get("status_text", "task failed")
+            status_code = header.get("status")
+            raise ASRUpstreamError(
+                f"aliyun ASR task failed before start: {message}",
+                provider=PROVIDER_NAME,
+                status_code=int(status_code) if isinstance(status_code, int) else None,
+            )
+        # Other control frames before start — drop and keep waiting.
+
+
 async def _feed_audio(
     channel: _WSChannel,
     *,
     audio_chunks: AsyncIterator[bytes],
     task_id: str,
+    app_key: str,
 ) -> None:
     """Pump caller-supplied PCM frames into the WS, then send Stop.
 
@@ -221,7 +285,7 @@ async def _feed_audio(
             if not chunk:
                 continue
             await channel.send(chunk)
-        await channel.send(_stop_payload(task_id=task_id))
+        await channel.send(_stop_payload(task_id=task_id, app_key=app_key))
     except ConnectionClosed:
         # Server tore the connection down — consumer will see this
         # too via its own recv() and raise the right typed error.
@@ -374,7 +438,9 @@ def _start_payload(*, task_id: str, app_key: str) -> str:
     )
 
 
-def _stop_payload(*, task_id: str) -> str:
+def _stop_payload(*, task_id: str, app_key: str) -> str:
+    # Aliyun requires the appkey on StopTranscription too — omitting it
+    # fails the whole utterance with "Missing message appkey!".
     return json.dumps(
         {
             "header": {
@@ -382,6 +448,7 @@ def _stop_payload(*, task_id: str) -> str:
                 "task_id": task_id,
                 "namespace": "SpeechTranscriber",
                 "name": "StopTranscription",
+                "appkey": app_key,
             }
         }
     )

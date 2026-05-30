@@ -48,6 +48,14 @@ _NUM_CHANNELS = 1
 _SECONDS_PER_CHAR = 0.10
 _MIN_DURATION_SECONDS = 0.10
 
+# An *audible* placeholder tone — the docstring promises a "blip" and a
+# silent WAV breaks local end-to-end checks (you can't tell a working
+# audio path from a broken one). A soft 440 Hz sine at moderate
+# amplitude is unmistakable without being harsh. Real vendors (Edge /
+# Aliyun) replace this with actual speech.
+_TONE_HZ = 440.0
+_TONE_AMPLITUDE = 0.25  # fraction of full scale; gentle, not piercing
+
 
 class DummyTTSProvider:
     """In-process WAV synthesizer. Returns one chunk per call with the
@@ -71,7 +79,7 @@ class DummyTTSProvider:
     ) -> AsyncIterator[TTSAudioChunk]:
         duration_s = max(_MIN_DURATION_SECONDS, len(text) * _SECONDS_PER_CHAR)
         sample_count = math.ceil(duration_s * _SAMPLE_RATE)
-        audio = _wav_silence_bytes(sample_count)
+        audio = _wav_tone_bytes(sample_count)
 
         if audio_format != "wav":
             # Surface mismatch loudly — a real dev who wired the dummy
@@ -93,9 +101,11 @@ class DummyTTSProvider:
         yield TTSAudioChunk(audio=b"", is_final=True)
 
 
-def _wav_silence_bytes(sample_count: int) -> bytes:
+def _wav_tone_bytes(sample_count: int) -> bytes:
     """Build a minimal RIFF/WAVE blob containing `sample_count` PCM-16
-    zero samples (silence).
+    samples of a soft 440 Hz sine tone — an *audible* placeholder so a
+    working audio path is distinguishable from a broken one in local
+    end-to-end checks.
 
     The header layout (44 bytes) is the standard 16-bit-mono PCM WAV
     — keeping it spelled out instead of pulling in `wave` from the
@@ -123,4 +133,12 @@ def _wav_silence_bytes(sample_count: int) -> bytes:
         b"data",
         data_size,
     )
-    return header + b"\x00" * data_size
+    return header + _sine_pcm16(sample_count)
+
+
+def _sine_pcm16(sample_count: int) -> bytes:
+    """`sample_count` signed-16-bit-LE samples of a 440 Hz sine."""
+    peak = int(_TONE_AMPLITUDE * 0x7FFF)
+    step = 2.0 * math.pi * _TONE_HZ / _SAMPLE_RATE
+    values = (int(peak * math.sin(step * n)) for n in range(sample_count))
+    return struct.pack(f"<{sample_count}h", *values)
