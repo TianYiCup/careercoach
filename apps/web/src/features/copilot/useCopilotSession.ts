@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { apiClient, ApiError } from '../../api/v1/client'
+import { useMicCapture, type MicErrorKind } from './useMicCapture'
 import type {
   CreateCopilotSessionRequest,
   CreateCopilotSessionResponse,
@@ -11,13 +12,7 @@ import type { MascotExpression } from '../../components/mascot/types'
 
 // --- State shape ---
 
-export type CopilotStatus =
-  | 'idle'
-  | 'connecting'
-  | 'recording'
-  | 'thinking'
-  | 'hinting'
-  | 'error'
+export type CopilotStatus = 'idle' | 'connecting' | 'recording' | 'thinking' | 'hinting' | 'error'
 
 export interface CopilotHint {
   text: string
@@ -57,8 +52,19 @@ export interface CopilotState {
   durationSec: number
   /** Mascot expression */
   mascotExpression: MascotExpression
+  /** True once a real (non-mock) WS is open — gates mic capture */
+  audioConnected: boolean
   /** User-visible error */
   error: string | null
+}
+
+/** Mic acquisition failures, phrased in K's voice (no 亲/您). */
+const MIC_ERROR_MESSAGES: Record<MicErrorKind, string> = {
+  permission_denied: '麦克风没授权，副驾听不见——去浏览器权限里放行一下',
+  no_device: '没找到麦克风，插上耳麦再开副驾',
+  insecure_context: '副驾得在 HTTPS 下才能开麦',
+  unsupported: '这浏览器不支持实时录音，换 Chrome/Edge 或用桌面端',
+  unknown: '麦克风启动失败，重启下副驾',
 }
 
 const INITIAL_STATE: CopilotState = {
@@ -74,6 +80,7 @@ const INITIAL_STATE: CopilotState = {
   redirectResource: null,
   durationSec: 0,
   mascotExpression: 'confident',
+  audioConnected: false,
   error: null,
 }
 
@@ -119,9 +126,7 @@ function withExpression(
   return (prev: CopilotState) => {
     const next = typeof updater === 'function' ? updater(prev) : updater
     const expression = deriveExpression(next)
-    return expression === next.mascotExpression
-      ? next
-      : { ...next, mascotExpression: expression }
+    return expression === next.mascotExpression ? next : { ...next, mascotExpression: expression }
   }
 }
 
@@ -159,9 +164,7 @@ const MOCK_HINTS: Record<ToneLevel, string[]> = {
 
 let mockLineIndex = 0
 
-function startMockWsStream(
-  onEvent: (event: CopilotWsEvent) => void,
-): () => void {
+function startMockWsStream(onEvent: (event: CopilotWsEvent) => void): () => void {
   let cancelled = false
   const timers: ReturnType<typeof setTimeout>[] = []
 
@@ -215,12 +218,9 @@ export function useCopilotSession() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const startTimeRef = useRef<number>(0)
 
-  const setState = useCallback(
-    (updater: CopilotState | ((prev: CopilotState) => CopilotState)) => {
-      setRawState(withExpression(updater))
-    },
-    [],
-  )
+  const setState = useCallback((updater: CopilotState | ((prev: CopilotState) => CopilotState)) => {
+    setRawState(withExpression(updater))
+  }, [])
 
   // Duration timer
   const startTimer = useCallback(() => {
@@ -304,12 +304,13 @@ export function useCopilotSession() {
   /** Start a copilot session — POST /copilot/sessions then connect WS */
   const startSession = useCallback(
     async (req: CreateCopilotSessionRequest) => {
-      setState((s) => (s.error === null ? { ...s, status: 'connecting' } : { ...s, status: 'connecting', error: null }))
+      setState((s) =>
+        s.error === null
+          ? { ...s, status: 'connecting' }
+          : { ...s, status: 'connecting', error: null },
+      )
       try {
-        const res = await apiClient.post<CreateCopilotSessionResponse>(
-          '/copilot/sessions',
-          req,
-        )
+        const res = await apiClient.post<CreateCopilotSessionResponse>('/copilot/sessions', req)
         setState((s) => ({
           ...s,
           copilotId: res.copilot_id,
@@ -325,8 +326,12 @@ export function useCopilotSession() {
         } else {
           // Real WebSocket — RFC 6455
           const ws = new WebSocket(res.ws_url)
+          ws.binaryType = 'arraybuffer'
           ws.onopen = () => {
-            setState((s) => ({ ...s, status: 'recording' }))
+            // audioConnected flips on the mic-capture hook, which then
+            // acquires the microphone and starts streaming PCM frames
+            // through this same socket.
+            setState((s) => ({ ...s, status: 'recording', audioConnected: true }))
           }
           ws.onmessage = (ev) => {
             try {
@@ -340,17 +345,22 @@ export function useCopilotSession() {
             setState((s) => ({
               ...s,
               status: 'error',
+              audioConnected: false,
               error: '连接中断，请重启副驾',
             }))
           }
           ws.onclose = (ev) => {
-            // Custom close codes from backend: 4404 not found, 4409 already used
+            // Any close stops the mic (audioConnected → false). Custom
+            // close codes from backend: 4404 not found, 4409 already used.
             if (ev.code === 4404 || ev.code === 4409) {
               setState((s) => ({
                 ...s,
                 status: 'error',
+                audioConnected: false,
                 error: '会话已失效，请重新启动',
               }))
+            } else {
+              setState((s) => (s.audioConnected ? { ...s, audioConnected: false } : s))
             }
           }
           wsRef.current = ws
@@ -394,6 +404,7 @@ export function useCopilotSession() {
       ...s,
       status: 'idle',
       started: false,
+      audioConnected: false,
     }))
   }, [stopTimer, setState])
 
@@ -405,6 +416,34 @@ export function useCopilotSession() {
     // In mock mode, utterances auto-finalize — no-op
   }, [])
 
+  // --- Microphone capture (the upper half of the loop) ---------------
+  // When a real WS is open (`audioConnected`), acquire the mic, stream
+  // 16kHz PCM frames through the socket, and let the worklet's VAD fire
+  // `sendAudioEnd` after each sentence so segmentation is hands-free.
+  const handleMicFrame = useCallback((pcm: ArrayBuffer) => {
+    const ws = wsRef.current
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(pcm)
+  }, [])
+
+  const handleMicError = useCallback(
+    (kind: MicErrorKind) => {
+      setState((s) => ({
+        ...s,
+        status: 'error',
+        audioConnected: false,
+        error: MIC_ERROR_MESSAGES[kind],
+      }))
+    },
+    [setState],
+  )
+
+  useMicCapture({
+    active: state.audioConnected,
+    onFrame: handleMicFrame,
+    onUtteranceEnd: sendAudioEnd,
+    onError: handleMicError,
+  })
+
   /** Set active tone */
   const setTone = useCallback(
     (tone: ToneLevel) => {
@@ -415,7 +454,9 @@ export function useCopilotSession() {
 
   /** Dismiss error */
   const dismissError = useCallback(() => {
-    setState((s) => (s.error === null ? s : { ...s, error: null, status: s.started ? 'recording' : 'idle' }))
+    setState((s) =>
+      s.error === null ? s : { ...s, error: null, status: s.started ? 'recording' : 'idle' },
+    )
   }, [setState])
 
   /** Reset to initial state */
