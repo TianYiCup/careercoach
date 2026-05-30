@@ -82,6 +82,7 @@ class DeepSeekProvider:
         temperature: float = DEFAULT_TEMPERATURE,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         usage_sink: list[TokenUsage] | None = None,
+        max_tokens: int | None = None,
     ) -> AsyncIterator[str]:
         if not messages:
             raise ValueError("messages must not be empty")
@@ -96,6 +97,7 @@ class DeepSeekProvider:
             model=self._model,
             temperature=temperature,
             include_usage=usage_sink is not None,
+            max_tokens=max_tokens,
         )
 
         try:

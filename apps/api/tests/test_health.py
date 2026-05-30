@@ -79,7 +79,9 @@ def _install_llm_router(*, with_creds: bool) -> None:
         class _StubReadyProvider:
             name = "stub_provider"
 
-            async def stream_chat(self, messages, *, temperature=0.7, timeout=8.0, usage_sink=None):  # type: ignore[no-untyped-def]
+            async def stream_chat(
+                self, messages, *, temperature=0.7, timeout=8.0, usage_sink=None, max_tokens=None
+            ):  # type: ignore[no-untyped-def]
                 yield ""
 
         router = LLMRouter(primary=_StubReadyProvider())

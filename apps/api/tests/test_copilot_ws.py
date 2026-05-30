@@ -106,6 +106,11 @@ class _StubLLMRouter:
     ) -> None:
         self._chunks = chunks
         self._raises = raises
+        # Capture the generation params the caller passed so a test can
+        # assert the copilot hint bounds its output (max_tokens) and
+        # pulls temperature down. None until stream_chat is invoked.
+        self.last_temperature: float | None = None
+        self.last_max_tokens: int | None = None
 
     async def stream_chat(
         self,
@@ -114,8 +119,11 @@ class _StubLLMRouter:
         temperature: float = DEFAULT_TEMPERATURE,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         usage_sink: list[TokenUsage] | None = None,
+        max_tokens: int | None = None,
     ) -> AsyncIterator[str]:
-        _ = (messages, temperature, timeout, usage_sink)
+        _ = (messages, timeout, usage_sink)
+        self.last_temperature = temperature
+        self.last_max_tokens = max_tokens
         if self._raises is not None:
             raise self._raises
             yield ""  # unreachable; keeps this an async generator
@@ -464,6 +472,29 @@ def test_allow_verdict_streams_hint_deltas_then_done(client: TestClient) -> None
         "type": "hint_done",
         "text": "先回应对方观点，再说自己的需求。",
     }
+
+
+def test_hint_bounds_generation_params(client: TestClient) -> None:
+    """The coach hint is a single short line on the user-perceived
+    latency path, so it must cap `max_tokens` and lower `temperature`
+    when calling the LLM (perf P0/E). Asserting on the captured kwargs
+    pins the contract so a future refactor can't silently drop the cap
+    and let a rambling hint inflate the wait."""
+    from app.routes.v1.copilot import COACH_HINT_MAX_TOKENS, COACH_HINT_TEMPERATURE
+
+    stub = _install_llm(chunks=("先回应", "对方观点。"))
+    service, repo = _build_service()
+    app.dependency_overrides[get_copilot_service] = lambda: service
+    _seed_pending(repo, "cop_test0000000001")
+
+    with client.websocket_connect("/v1/copilot/sessions/cop_test0000000001/stream") as ws:
+        ws.send_bytes(b"the other side just spoke")
+        ws.send_text(_AUDIO_END_FRAME)
+        for _ in range(6):  # partial, final, moderation, delta x2, done
+            ws.receive_json()
+
+    assert stub.last_max_tokens == COACH_HINT_MAX_TOKENS
+    assert stub.last_temperature == COACH_HINT_TEMPERATURE
 
 
 def test_block_verdict_skips_hint(client: TestClient) -> None:
