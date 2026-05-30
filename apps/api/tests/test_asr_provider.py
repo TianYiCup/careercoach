@@ -21,6 +21,7 @@ from app.asr import (
     ASRProvider,
     DummyASRProvider,
 )
+from app.asr.dummy import _BINARY_PLACEHOLDER_TRANSCRIPT
 
 
 async def _chunks(*pieces: bytes) -> AsyncIterator[bytes]:
@@ -92,6 +93,21 @@ async def test_dummy_preserves_cjk_text_across_chunk_boundaries() -> None:
 
     # Final must be the round-tripped string — no replacement chars.
     assert events[-1] == ASREvent(kind="final", text="教练 K")
+
+
+async def test_dummy_substitutes_canned_line_for_binary_audio() -> None:
+    """Fed real PCM (not UTF-8 text), the dummy must NOT surface a flood
+    of replacement/null chars — that breaks the moderation length cap
+    and makes the coach-hint prompt huge. It returns a short canned
+    opponent line so the rest of the pipeline still exercises locally."""
+    provider = DummyASRProvider()
+    # PCM-ish: alternating high bytes + nulls that don't decode to text.
+    pcm = bytes([0x00, 0x00, 0xC8, 0x01, 0x00, 0x00, 0x96, 0xFF]) * 200
+    audio = _chunks(pcm)
+
+    events = [event async for event in provider.transcribe_stream(audio)]
+
+    assert events[-1] == ASREvent(kind="final", text=_BINARY_PLACEHOLDER_TRANSCRIPT)
 
 
 # --------------------------------------------------------------------- #

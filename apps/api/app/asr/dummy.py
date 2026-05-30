@@ -28,13 +28,41 @@ from app.asr.provider import (
 
 logger = structlog.get_logger(__name__)
 
+# When the dummy is fed *real* microphone audio (raw PCM, not UTF-8
+# text), decoding the bytes yields a flood of replacement/null chars
+# that (a) isn't a usable transcript and (b) blows past the moderation
+# length cap + makes the LLM hint prompt huge and slow. For local mic
+# testing we substitute a short, coherent opponent line so the rest of
+# the pipeline (moderation → coach hint → TTS) actually exercises.
+_BINARY_PLACEHOLDER_TRANSCRIPT = "我觉得这个方案风险太大了，还是再稳一点吧"  # noqa: RUF001
+
+# Fraction of undecodable chars above which the buffer is treated as
+# binary audio rather than text. Clean UTF-8 text (the test inputs)
+# decodes with zero replacement/null chars, so the round-trip path is
+# untouched.
+_BINARY_CHAR_RATIO = 0.1
+
+
+def _looks_like_binary_audio(text: str) -> bool:
+    if not text:
+        return False
+    undecodable = sum(1 for c in text if c == "�" or c == "\x00")
+    return undecodable / len(text) > _BINARY_CHAR_RATIO
+
+
+def _decode(buffer: bytearray) -> str:
+    text = buffer.decode("utf-8", errors="replace")
+    return _BINARY_PLACEHOLDER_TRANSCRIPT if _looks_like_binary_audio(text) else text
+
 
 class DummyASRProvider:
     """In-process echo ASR. Returns UTF-8-decoded chunks as partials,
     plus a trailing final event with the full transcript.
 
-    No network I/O; the `timeout` parameter is accepted for Protocol
-    conformance and otherwise ignored.
+    Real audio (raw PCM) doesn't decode to text, so a binary buffer is
+    surfaced as a short canned line instead of replacement-char noise —
+    see `_looks_like_binary_audio`. No network I/O; the `timeout`
+    parameter is accepted for Protocol conformance and otherwise ignored.
     """
 
     name = "dummy"
@@ -51,9 +79,8 @@ class DummyASRProvider:
         buffer = bytearray()
         async for chunk in audio_chunks:
             buffer.extend(chunk)
-            text = buffer.decode("utf-8", errors="replace")
-            yield ASREvent(kind="partial", text=text)
+            yield ASREvent(kind="partial", text=_decode(buffer))
 
-        final_text = buffer.decode("utf-8", errors="replace")
+        final_text = _decode(buffer)
         logger.info("asr_dummy_finalized", char_count=len(final_text))
         yield ASREvent(kind="final", text=final_text)
