@@ -41,7 +41,14 @@ export interface VadConfig {
 export const DEFAULT_VAD_CONFIG: VadConfig = {
   speechMargin: 0.04,
   silenceMargin: 0.015,
-  silenceHoldMs: 800,
+  // Trailing silence before we finalize the utterance. This sits at the
+  // very front of the latency chain — the user can't get a hint until
+  // `audio_end` fires — so every ms here is paid on every turn. 500ms is
+  // long enough to ride over the natural mid-sentence pauses the
+  // `speechFramesToLatch` debounce doesn't already absorb, while shaving
+  // ~300ms off the old 800ms. Lower than this starts clipping speakers
+  // who pause to think.
+  silenceHoldMs: 500,
   floorRise: 0.01,
   speechFramesToLatch: 3,
 }

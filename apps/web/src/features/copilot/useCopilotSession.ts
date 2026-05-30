@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { apiClient, ApiError } from '../../api/v1/client'
+import { markCopilotLatency } from './latency-log'
 import { useMicCapture, type MicErrorKind } from './useMicCapture'
 import type {
   CreateCopilotSessionRequest,
@@ -250,6 +251,7 @@ export function useCopilotSession() {
           }))
           break
         case 'asr_final':
+          markCopilotLatency('asr_final')
           setState((s) => ({
             ...s,
             status: 'thinking',
@@ -271,6 +273,7 @@ export function useCopilotSession() {
           }))
           break
         case 'hint_done':
+          markCopilotLatency('hint_done')
           setState((s) => ({
             ...s,
             status: 'hinting',
@@ -411,6 +414,10 @@ export function useCopilotSession() {
   /** Send audio_end control frame to finalize current utterance */
   const sendAudioEnd = useCallback(() => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      // Turn boundary: the VAD just detected end-of-speech. Mark here so
+      // the latency waterfall is anchored to the same instant the backend
+      // starts its ASR-final clock.
+      markCopilotLatency('audio_end')
       wsRef.current.send(JSON.stringify({ type: 'audio_end' }))
     }
     // In mock mode, utterances auto-finalize — no-op

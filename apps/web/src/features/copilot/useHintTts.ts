@@ -24,6 +24,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { getAuthToken } from '../../api/v1/auth-token'
+import { markCopilotLatency } from './latency-log'
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/v1'
 const TTS_PATH = '/tts/synthesize'
@@ -121,6 +122,10 @@ export function useHintTts({ hintText, muted = false }: UseHintTtsOptions): Hint
 
       try {
         await audio.play()
+        // End of the latency waterfall: K is now audible. The gap from
+        // the `hint_done` mark to here is the TTS fetch + synth + decode
+        // the user waits through after the text is already on screen.
+        markCopilotLatency('hint_audible')
       } catch {
         if (cancelled) return
         // Browser blocked autoplay — the hint text is still on screen,
