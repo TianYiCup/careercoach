@@ -14,7 +14,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, renderHook, waitFor } from '@testing-library/react'
 
 import { useMicCapture } from '../useMicCapture'
-import { SILENCE_RMS_THRESHOLD, SPEECH_RMS_THRESHOLD } from '../pcm'
 
 // --- Web Audio fakes -------------------------------------------------
 
@@ -28,21 +27,34 @@ function makeStream(): MediaStream {
 const getUserMedia = vi.fn<() => Promise<MediaStream>>()
 const addModule = vi.fn<() => Promise<void>>()
 const contextClose = vi.fn<() => Promise<void>>()
+const contextResume = vi.fn<() => Promise<void>>()
 const sourceConnect = vi.fn()
 const sourceDisconnect = vi.fn()
+const nodeConnect = vi.fn()
 const nodeDisconnect = vi.fn()
+
+// Lets a test force the context to start suspended (real Bluetooth /
+// post-gesture behavior) and assert we resume it.
+let nextContextState: 'running' | 'suspended' = 'running'
 
 // Most-recently-created worklet node, so a test can drive port frames.
 let lastNode: { port: { onmessage: ((e: { data: unknown }) => void) | null } } | null = null
 
 class FakeAudioContext {
   sampleRate: number
+  state: 'running' | 'suspended'
+  destination = { id: 'destination' }
   audioWorklet = { addModule }
   constructor(opts?: { sampleRate?: number }) {
     this.sampleRate = opts?.sampleRate ?? 44100
+    this.state = nextContextState
   }
   createMediaStreamSource() {
     return { connect: sourceConnect, disconnect: sourceDisconnect }
+  }
+  resume() {
+    this.state = 'running'
+    return contextResume()
   }
   close() {
     return contextClose()
@@ -51,6 +63,7 @@ class FakeAudioContext {
 
 class FakeAudioWorkletNode {
   port = { onmessage: null as ((e: { data: unknown }) => void) | null }
+  connect = nodeConnect
   disconnect = nodeDisconnect
   constructor() {
     // eslint-disable-next-line @typescript-eslint/no-this-alias -- test double captures its own instance so a test can drive port frames
@@ -66,12 +79,15 @@ function fireFrame(pcm: ArrayBuffer, level: number) {
 
 beforeEach(() => {
   vi.useRealTimers()
+  nextContextState = 'running'
   trackStop.mockClear()
   getUserMedia.mockReset().mockResolvedValue(makeStream())
   addModule.mockReset().mockResolvedValue(undefined)
   contextClose.mockReset().mockResolvedValue(undefined)
+  contextResume.mockReset().mockResolvedValue(undefined)
   sourceConnect.mockClear()
   sourceDisconnect.mockClear()
+  nodeConnect.mockClear()
   nodeDisconnect.mockClear()
   lastNode = null
 
@@ -112,6 +128,24 @@ describe('useMicCapture', () => {
     expect((constraints.audio as MediaTrackConstraints).channelCount).toBe(1)
     expect(sourceConnect).toHaveBeenCalledTimes(1)
     expect(result.current.error).toBeNull()
+  })
+
+  it('routes the worklet to the destination so the graph schedules it', async () => {
+    // Regression: a worklet connected to nothing is never pulled by the
+    // render graph, so process() never runs and zero frames flow.
+    const { result } = renderHook(() => useMicCapture({ active: true, onFrame: noopFrame }))
+    await waitFor(() => expect(result.current.isCapturing).toBe(true))
+    expect(nodeConnect).toHaveBeenCalledTimes(1)
+    expect(nodeConnect.mock.calls[0]![0]).toMatchObject({ id: 'destination' })
+  })
+
+  it('resumes a context that starts suspended', async () => {
+    // Regression: created after `await getUserMedia`, off the gesture
+    // stack, the context can start suspended and never run the worklet.
+    nextContextState = 'suspended'
+    const { result } = renderHook(() => useMicCapture({ active: true, onFrame: noopFrame }))
+    await waitFor(() => expect(result.current.isCapturing).toBe(true))
+    expect(contextResume).toHaveBeenCalledTimes(1)
   })
 
   it('reports unsupported when mediaDevices is missing', async () => {
@@ -160,27 +194,29 @@ describe('useMicCapture', () => {
     await waitFor(() => expect(result.current.level).toBeCloseTo(0.3, 5))
   })
 
-  it('fires onUtteranceEnd after trailing silence following speech', async () => {
+  // The adaptive VAD's segmentation logic is unit-tested in vad.test.ts;
+  // here we only assert the hook wires frame levels → VAD → onUtteranceEnd.
+  it('fires onUtteranceEnd after speech then trailing silence', async () => {
     vi.useFakeTimers()
     const onUtteranceEnd = vi.fn()
     const { result } = renderHook(() =>
       useMicCapture({ active: true, onFrame: noopFrame, onUtteranceEnd }),
     )
-    // Flush the async start() under fake timers.
     await flushStart()
     expect(result.current.isCapturing).toBe(true)
 
     const buf = () => new ArrayBuffer(8)
-    const speech = SPEECH_RMS_THRESHOLD + 0.05
-    const silence = SILENCE_RMS_THRESHOLD - 0.005
-
-    // Speech, then silence frames straddling the 800ms hold window.
-    fireFrame(buf(), speech)
-    fireFrame(buf(), silence) // marks silence start
+    // Floor seeds at an AGC-pumped 0.04 — above the OLD fixed threshold.
+    fireFrame(buf(), 0.04)
+    // Sustained speech (≥ speechFramesToLatch) so the VAD latches.
+    fireFrame(buf(), 0.3)
+    fireFrame(buf(), 0.3)
+    fireFrame(buf(), 0.3)
+    fireFrame(buf(), 0.04) // silence begins
     expect(onUtteranceEnd).not.toHaveBeenCalled()
 
     vi.advanceTimersByTime(900)
-    fireFrame(buf(), silence) // now past the hold → boundary
+    fireFrame(buf(), 0.04) // past the 800ms hold → boundary
     expect(onUtteranceEnd).toHaveBeenCalledTimes(1)
   })
 
@@ -191,9 +227,9 @@ describe('useMicCapture', () => {
     await flushStart()
 
     const buf = () => new ArrayBuffer(8)
-    fireFrame(buf(), SILENCE_RMS_THRESHOLD - 0.005)
+    fireFrame(buf(), 0.04)
     vi.advanceTimersByTime(2000)
-    fireFrame(buf(), SILENCE_RMS_THRESHOLD - 0.005)
+    fireFrame(buf(), 0.04)
     expect(onUtteranceEnd).not.toHaveBeenCalled()
   })
 

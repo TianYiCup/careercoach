@@ -9,12 +9,6 @@
  * audio context.
  */
 
-/** Below this RMS a frame is treated as silence (used for VAD). */
-export const SILENCE_RMS_THRESHOLD = 0.012
-
-/** Above this RMS a frame counts as speech (hysteresis vs silence). */
-export const SPEECH_RMS_THRESHOLD = 0.02
-
 /**
  * Convert Float32 samples in [-1, 1] to signed 16-bit PCM.
  *
@@ -28,6 +22,35 @@ export function floatTo16BitPCM(input: Float32Array): Int16Array {
   for (let i = 0; i < input.length; i++) {
     const s = Math.max(-1, Math.min(1, input[i]!))
     out[i] = s < 0 ? s * 0x8000 : s * 0x7fff
+  }
+  return out
+}
+
+/**
+ * Linear-interpolation downsample from `inRate` to `outRate`.
+ *
+ * The mic graph runs at the hardware's native rate (often 48 kHz);
+ * forcing the AudioContext to 16 kHz makes Chromium's MediaStreamSource
+ * emit silence on many machines, so we capture at native rate and
+ * resample here to the 16 kHz the backend ASR wants.
+ *
+ * Each ~100 ms chunk is resampled independently (cursor starts at the
+ * first sample); the boundary discontinuity is inaudible to ASR. Equal
+ * rates short-circuit to a copy. Empty input yields an empty frame.
+ */
+export function resampleLinear(input: Float32Array, inRate: number, outRate: number): Float32Array {
+  if (input.length === 0) return new Float32Array(0)
+  if (inRate === outRate) return input.slice()
+  const step = inRate / outRate
+  const outLen = Math.floor((input.length - 1) / step) + 1
+  const out = new Float32Array(outLen)
+  for (let k = 0; k < outLen; k++) {
+    const pos = k * step
+    const idx = Math.floor(pos)
+    const frac = pos - idx
+    const s0 = input[idx]!
+    const s1 = idx + 1 < input.length ? input[idx + 1]! : s0
+    out[k] = s0 + (s1 - s0) * frac
   }
   return out
 }

@@ -7,14 +7,17 @@
  * for audio bytes since A-18; nothing ever fed it because the web app
  * had no microphone capture at all. This hook closes that gap:
  *
- *   getUserMedia → AudioContext@16kHz → AudioWorklet(pcm-encoder)
+ *   getUserMedia → AudioContext (native rate) → AudioWorklet(pcm-encoder)
  *     → per ~100 ms frame: onFrame(rawPcmBytes)  // → ws.send(...)
  *     → trailing-silence VAD: onUtteranceEnd()    // → send audio_end
  *
  * The backend ASR (`app/asr/aliyun.py`) is pinned to **16 kHz mono
- * signed-16-bit PCM**, so we force the context sample rate and let the
- * worklet emit exactly that wire format — no MediaRecorder (its
- * webm/opus container is the wrong shape for streaming ASR).
+ * signed-16-bit PCM**. We do NOT force the AudioContext to 16 kHz —
+ * that makes Chromium's MediaStreamSource emit silence on many
+ * machines — so the context runs at the hardware rate and the worklet
+ * downsamples to 16 kHz before emitting that wire format. No
+ * MediaRecorder either (its webm/opus container is wrong for streaming
+ * ASR).
  *
  * Voice-activity detection segments utterances hands-free: once a frame
  * crosses the speech threshold, a following run of sub-silence frames
@@ -28,18 +31,12 @@
 
 import { useEffect, useRef, useState } from 'react'
 
-import { SILENCE_RMS_THRESHOLD, SPEECH_RMS_THRESHOLD } from './pcm'
+import { createVad } from './vad'
 // `?worker&url` makes Vite bundle the worklet (resolving its `./pcm`
 // import) into a standalone ES module chunk and hand back its URL.
 // A bare `new URL('./pcm-worklet.ts', import.meta.url)` is NOT bundled
 // for .ts entries and 404s in a production build.
 import pcmWorkletUrl from './pcm-worklet.ts?worker&url'
-
-/** ASR-pinned capture rate — see app/asr/aliyun.py. */
-const TARGET_SAMPLE_RATE = 16000
-
-/** Trailing silence (ms) after speech that marks an utterance boundary. */
-const SILENCE_HOLD_MS = 800
 
 const WORKLET_NAME = 'pcm-encoder'
 
@@ -124,29 +121,17 @@ export function useMicCapture({
 
     let resources: CaptureResources | null = null
     let cancelled = false
-    // VAD state — closed over by the frame handler.
-    let hasSpeech = false
-    let silenceStartedAt: number | null = null
+    // Adaptive VAD — tracks the noise floor so end-of-speech is detected
+    // regardless of mic gain / AGC (a fixed threshold wedges on an
+    // AGC-pumped floor and never fires audio_end).
+    const vad = createVad()
 
     const handleFrame = ({ pcm, level }: FrameMessage) => {
       if (cancelled) return
       onFrameRef.current(pcm)
       setState((s) => (s.level === level ? s : { ...s, level }))
-
-      if (level >= SPEECH_RMS_THRESHOLD) {
-        hasSpeech = true
-        silenceStartedAt = null
-        return
-      }
-      if (hasSpeech && level < SILENCE_RMS_THRESHOLD) {
-        const now = Date.now()
-        if (silenceStartedAt === null) {
-          silenceStartedAt = now
-        } else if (now - silenceStartedAt >= SILENCE_HOLD_MS) {
-          hasSpeech = false
-          silenceStartedAt = null
-          onUtteranceEndRef.current?.()
-        }
+      if (vad.process(level, Date.now())) {
+        onUtteranceEndRef.current?.()
       }
     }
 
@@ -190,7 +175,10 @@ export function useMicCapture({
       }
 
       try {
-        const context = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE })
+        // Native rate — NOT forced to 16kHz: a forced rate makes
+        // Chromium's MediaStreamSource emit silence on many machines.
+        // The worklet downsamples to 16kHz instead.
+        const context = new AudioContext()
         await context.audioWorklet.addModule(pcmWorkletUrl)
         if (cancelled) {
           stream.getTracks().forEach((t) => t.stop())
@@ -200,10 +188,19 @@ export function useMicCapture({
         const source = context.createMediaStreamSource(stream)
         const node = new AudioWorkletNode(context, WORKLET_NAME)
         node.port.onmessage = (e: MessageEvent<FrameMessage>) => handleFrame(e.data)
-        // Connect source → worklet only. We deliberately do NOT wire the
-        // node to context.destination: routing the captured mic to the
-        // speakers would echo the opponent's voice back into the room.
         source.connect(node)
+        // The render graph only schedules nodes that reach a sink — a
+        // worklet connected to nothing never has process() called, so
+        // no frames flow. Route it to the destination to keep it pulled.
+        // This does NOT echo: process() leaves its output buffers
+        // untouched, so what reaches the speakers is pure silence.
+        node.connect(context.destination)
+        // Created after `await getUserMedia`, so we're off the user-
+        // gesture stack and the context can start suspended — resume so
+        // the render thread actually runs the worklet.
+        if (context.state === 'suspended') {
+          await context.resume()
+        }
         resources = { stream, context, source, node }
         setState({ isCapturing: true, level: 0, error: null })
       } catch {
