@@ -12,9 +12,21 @@
  *     switcher (HintCardV2) + 停止 MagneticButton magenta.
  */
 
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowLeft, BookOpen, Briefcase, Headphones, MicOff, ShieldAlert, ShoppingBag, UserX, Zap } from 'lucide-react'
+import {
+  ArrowLeft,
+  BookOpen,
+  Briefcase,
+  Headphones,
+  MicOff,
+  ShieldAlert,
+  ShoppingBag,
+  UserX,
+  Volume2,
+  VolumeX,
+  Zap,
+} from 'lucide-react'
 
 import { HintCardV2, MascotReaction } from '../../components'
 import type { ToneLevel } from '../../components'
@@ -27,6 +39,7 @@ import {
 } from '../../components/cyber'
 import type { CreateCopilotSessionRequest } from '../../api/v1/types'
 import { useCopilotSession } from './useCopilotSession'
+import { useHintTts } from './useHintTts'
 
 interface ScenarioOption {
   id: string
@@ -107,10 +120,7 @@ function StatusIndicator({ status }: { status: string }) {
         className={`inline-block h-2 w-2 rounded-full ${cfg.pulse ? 'animate-pulse' : ''}`}
         style={{ backgroundColor: cfg.color, boxShadow: `0 0 8px ${cfg.color}` }}
       />
-      <span
-        className="font-bebas text-[11px] tracking-[0.28em]"
-        style={{ color: cfg.color }}
-      >
+      <span className="font-bebas text-[11px] tracking-[0.28em]" style={{ color: cfg.color }}>
         {cfg.label}
       </span>
     </div>
@@ -157,7 +167,7 @@ function ScenarioPicker({
   const [customHint, setCustomHint] = useState('')
 
   const handleStart = () => {
-    const scenario = SCENARIOS.find(s => s.id === selected)
+    const scenario = SCENARIOS.find((s) => s.id === selected)
     if (!scenario) {
       return
     }
@@ -211,9 +221,7 @@ function ScenarioPicker({
               COPILOT
             </GlowText>
           </h1>
-          <p className="mt-3 font-display text-xl italic text-white/80">
-            关键时刻，耳机里挺你。
-          </p>
+          <p className="mt-3 font-display text-xl italic text-white/80">关键时刻，耳机里挺你。</p>
         </motion.div>
 
         <p className="mt-8 font-bebas text-[11px] tracking-[0.28em] text-white/50">
@@ -281,11 +289,11 @@ function ScenarioPicker({
           >
             <div className="space-y-3">
               <p className="font-mono text-[11px] text-white/50">
-                CURRENT · {SCENARIOS.find(s => s.id === selected)?.scenarioHint}
+                CURRENT · {SCENARIOS.find((s) => s.id === selected)?.scenarioHint}
               </p>
               <textarea
                 value={customHint}
-                onChange={e => setCustomHint(e.target.value)}
+                onChange={(e) => setCustomHint(e.target.value)}
                 placeholder="自定义场景描述（可选）…"
                 rows={2}
                 className="font-grotesk w-full resize-none rounded-2xl border border-cyber-hairline bg-cyber-deep/60 px-4 py-3 text-sm text-white placeholder:text-white/30 focus:border-cyber-magenta focus:bg-cyber-deep/80 focus:outline-none focus:ring-2 focus:ring-cyber-magenta/30"
@@ -306,9 +314,24 @@ function ScenarioPicker({
 
 /* ── CopilotHUD ───────────────────────────────────────────────────── */
 
+const TTS_MUTE_KEY = 'careercoach.copilot_tts_muted'
+
+function readMutePref(): boolean {
+  if (typeof localStorage === 'undefined') return false
+  return localStorage.getItem(TTS_MUTE_KEY) === '1'
+}
+
 function CopilotHUD({ onExit }: { onExit: () => void }) {
   const { state, endSession, setTone, dismissError } = useCopilotSession()
   const [showExitConfirm, setShowExitConfirm] = useState(false)
+  const [muted, setMuted] = useState<boolean>(readMutePref)
+
+  const ttsState = useHintTts({ hintText: state.hint?.text ?? null, muted })
+
+  useEffect(() => {
+    if (typeof localStorage === 'undefined') return
+    localStorage.setItem(TTS_MUTE_KEY, muted ? '1' : '0')
+  }, [muted])
 
   const handleExit = useCallback(() => {
     if (state.started) {
@@ -347,6 +370,20 @@ function CopilotHUD({ onExit }: { onExit: () => void }) {
           <StatusIndicator status={state.status} />
         </div>
         <div className="flex items-center gap-4">
+          <button
+            type="button"
+            onClick={() => setMuted((m) => !m)}
+            aria-label={muted ? '开启耳机提示' : '静音耳机提示'}
+            aria-pressed={muted}
+            className={`inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 font-bebas text-[10px] tracking-[0.22em] transition-colors ${
+              muted
+                ? 'border-white/20 bg-white/5 text-white/50 hover:text-white/80'
+                : 'border-cyber-cyan/40 bg-cyber-cyan/10 text-cyber-cyan hover:bg-cyber-cyan/15'
+            }`}
+          >
+            {muted ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
+            {muted ? 'MUTED' : ttsState.isSpeaking ? 'SPEAK' : 'AUDIO'}
+          </button>
           <span className="font-orbitron text-sm font-semibold text-white">
             {formatDuration(state.durationSec)}
           </span>
@@ -370,6 +407,18 @@ function CopilotHUD({ onExit }: { onExit: () => void }) {
           >
             ×
           </button>
+        </div>
+      )}
+
+      {!muted && ttsState.error === 'autoplay_blocked' && (
+        <div
+          role="status"
+          className="relative z-10 mx-auto mt-3 flex w-full max-w-3xl items-center justify-center gap-2 rounded-2xl border border-cyber-amber/40 bg-cyber-amber/10 px-4 py-2"
+        >
+          <Volume2 className="h-3.5 w-3.5 text-cyber-amber" />
+          <span className="font-mono text-[11px] text-cyber-amber">
+            浏览器拦了自动播放,点一下上方的 AUDIO 按钮再开一次
+          </span>
         </div>
       )}
 
