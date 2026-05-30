@@ -84,6 +84,7 @@ from __future__ import annotations
 import asyncio
 import json
 import secrets
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
@@ -161,6 +162,16 @@ COACH_SYSTEM_PROMPT = (
     "你是教练 K — 副驾模式。用户正在真实对话中（场景见上下文），对方刚说了一句话；"
     "请给用户一句 ≤ 40 字的下一句提示，不替用户说话，不爹味说教。"
 )
+
+# The copilot hint is a single ≤40-char line. The client waits for the
+# full `hint_done` before it starts TTS, so the whole generation sits on
+# the user-perceived latency path — a model that rambles to 100+ chars
+# directly stretches the wait. Cap the completion so the tail is bounded
+# (96 tokens ≫ 40 Han chars, enough headroom to never truncate a real
+# hint mid-sentence) and pull the temperature down so the line stays
+# direct instead of meandering.
+COACH_HINT_MAX_TOKENS = 96
+COACH_HINT_TEMPERATURE = 0.4
 
 
 @router.post(
@@ -459,12 +470,21 @@ async def _run_one_utterance(
         trace.finish(output={"final_text": "", "verdict": None})
         return _UtteranceResult(final_text="", verdict=None), trace
 
+    mod_started_at = time.perf_counter()
     decision, verdict_label = await _moderate_and_emit(
         websocket,
         moderation_service=moderation_service,
         text=final_text,
         copilot_id=copilot_id,
         user_id=user_id,
+    )
+    # P0 waterfall: input-moderation cost. Small on the local dict
+    # backend, but worth pinning so a cloud-backend swap that adds a
+    # network round-trip here shows up in the same dashboard.
+    logger.info(
+        "copilot_input_moderation_latency",
+        copilot_id=copilot_id,
+        input_moderation_ms=_ms(mod_started_at, time.perf_counter()),
     )
     if decision is not None:
         trace.record_generation(
@@ -771,10 +791,24 @@ async def _stream_coach_hint(
     ]
     parts: list[str] = []
     usage: list[TokenUsage] = []
+    # P0 latency instrumentation. `first_token_at` isolates the LLM's
+    # time-to-first-token (the dominant cost for a short hint) from the
+    # full-generation time, so the waterfall log can tell "model was slow
+    # to start" apart from "model rambled". Wall-clock via perf_counter
+    # — monotonic, immune to clock adjustments.
+    started_at = time.perf_counter()
+    first_token_at: float | None = None
     try:
-        async for chunk in llm_router.stream_chat(messages, usage_sink=usage):
+        async for chunk in llm_router.stream_chat(
+            messages,
+            usage_sink=usage,
+            temperature=COACH_HINT_TEMPERATURE,
+            max_tokens=COACH_HINT_MAX_TOKENS,
+        ):
             if not chunk:
                 continue
+            if first_token_at is None:
+                first_token_at = time.perf_counter()
             if not await _send_or_drop(
                 websocket,
                 {"type": "hint_delta", "text": chunk},
@@ -791,6 +825,7 @@ async def _stream_coach_hint(
         )
         return
 
+    llm_done_at = time.perf_counter()
     full = "".join(parts)
     if not full:
         return
@@ -805,12 +840,14 @@ async def _stream_coach_hint(
     # A-32: output-side moderation on the hint text. block/redirect
     # suppress hint_done and emit hint_error instead (same envelope
     # the LLM-error path uses, so frontend handling stays unified).
+    mod_started_at = time.perf_counter()
     output_passed, output_verdict = await _hint_output_passes_moderation(
         full,
         moderation_service=moderation_service,
         copilot_id=copilot_id,
         user_id=user_id,
     )
+    mod_done_at = time.perf_counter()
     if output_verdict is not None:
         trace.add_tags([f"verdict_output:{output_verdict}"])
     if not output_passed:
@@ -826,10 +863,56 @@ async def _stream_coach_hint(
         )
         return
 
+    # P0 waterfall: the hint half of the backend pipeline. `_ms` so the
+    # log greps cleanly into a latency dashboard without unit parsing.
+    _log_hint_latency(
+        copilot_id=copilot_id,
+        started_at=started_at,
+        first_token_at=first_token_at,
+        llm_done_at=llm_done_at,
+        mod_started_at=mod_started_at,
+        mod_done_at=mod_done_at,
+        char_count=len(full),
+    )
     await _send_or_drop(
         websocket,
         {"type": "hint_done", "text": full},
         copilot_id=copilot_id,
+    )
+
+
+def _ms(start: float, end: float) -> float:
+    """Elapsed milliseconds, rounded to one decimal — enough resolution
+    for a latency log without the float noise of full precision."""
+    return round((end - start) * 1000, 1)
+
+
+def _log_hint_latency(
+    *,
+    copilot_id: str,
+    started_at: float,
+    first_token_at: float | None,
+    llm_done_at: float,
+    mod_started_at: float,
+    mod_done_at: float,
+    char_count: int,
+) -> None:
+    """Emit the coach-hint latency breakdown as one structured log line.
+
+    Split so the call site stays readable and so the field set lives in
+    one place. `llm_first_token_ms` is None when the stream yielded no
+    text before completing — distinguishes "slow first token" from
+    "produced nothing".
+    """
+    logger.info(
+        "copilot_hint_latency",
+        copilot_id=copilot_id,
+        llm_first_token_ms=(
+            _ms(started_at, first_token_at) if first_token_at is not None else None
+        ),
+        llm_total_ms=_ms(started_at, llm_done_at),
+        output_moderation_ms=_ms(mod_started_at, mod_done_at),
+        char_count=char_count,
     )
 
 

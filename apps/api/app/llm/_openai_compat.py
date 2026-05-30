@@ -38,6 +38,7 @@ def build_chat_request_body(
     model: str,
     temperature: float,
     include_usage: bool = False,
+    max_tokens: int | None = None,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
         "model": model,
@@ -45,6 +46,13 @@ def build_chat_request_body(
         "temperature": temperature,
         "messages": [{"role": m.role.value, "content": m.content} for m in messages],
     }
+    if max_tokens is not None:
+        # Hard cap on the completion length. The copilot hint is a
+        # single ≤40-char line, so bounding output tokens keeps a
+        # rambling generation from stretching the user-perceived
+        # latency (and the TTS that follows it). Omitted entirely when
+        # None so non-latency-sensitive callers keep the vendor default.
+        body["max_tokens"] = max_tokens
     if include_usage:
         # OpenAI / DeepSeek / Qwen all honour this — the upstream
         # appends one extra SSE chunk at end-of-stream carrying the

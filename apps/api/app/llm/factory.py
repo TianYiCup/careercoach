@@ -51,8 +51,9 @@ class NoCredentialsProvider:
         temperature: float = DEFAULT_TEMPERATURE,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         usage_sink: list[TokenUsage] | None = None,
+        max_tokens: int | None = None,
     ) -> AsyncIterator[str]:
-        _ = (messages, temperature, timeout, usage_sink)
+        _ = (messages, temperature, timeout, usage_sink, max_tokens)
         raise LLMAuthError(
             "no LLM credentials configured — set DEEPSEEK_API_KEY or QWEN_API_KEY",
             provider=self.name,

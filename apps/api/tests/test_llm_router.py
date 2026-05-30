@@ -58,8 +58,9 @@ class _FakeProvider:
         temperature: float = 0.7,
         timeout: float = 8.0,
         usage_sink: list[TokenUsage] | None = None,
+        max_tokens: int | None = None,
     ) -> AsyncIterator[str]:
-        _ = usage_sink
+        _ = (usage_sink, max_tokens)
         self.invocations += 1
         if self._pre_stream_error is not None:
             raise self._pre_stream_error

@@ -70,6 +70,7 @@ class LLMRouter:
         temperature: float = DEFAULT_TEMPERATURE,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         usage_sink: list[TokenUsage] | None = None,
+        max_tokens: int | None = None,
     ) -> AsyncIterator[str]:
         last_error: LLMError | None = None
 
@@ -79,6 +80,7 @@ class LLMRouter:
                 temperature=temperature,
                 timeout=timeout,
                 usage_sink=usage_sink,
+                max_tokens=max_tokens,
             )
             try:
                 first_chunk = await self._await_first_chunk(stream, provider.name)

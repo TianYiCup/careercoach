@@ -290,6 +290,46 @@ async def test_usage_sink_none_means_include_usage_off(messages: list[Message]) 
     assert "stream_options" not in body
 
 
+async def test_max_tokens_sent_when_provided(messages: list[Message]) -> None:
+    """`max_tokens` (perf-E) must reach the upstream body so the copilot
+    hint's output is actually capped at the vendor."""
+    captured_body: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_body["body"] = json.loads(request.content)
+        return httpx.Response(200, content=_sse_body("ok"))
+
+    provider = _make_provider(handler)
+    try:
+        await _collect(provider.stream_chat(messages, max_tokens=96))
+    finally:
+        await provider.aclose()
+
+    body = captured_body["body"]
+    assert isinstance(body, dict)
+    assert body["max_tokens"] == 96
+
+
+async def test_max_tokens_omitted_when_none(messages: list[Message]) -> None:
+    """Default (None) MUST omit `max_tokens` so non-latency-sensitive
+    callers keep the vendor's default completion length."""
+    captured_body: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_body["body"] = json.loads(request.content)
+        return httpx.Response(200, content=_sse_body("ok"))
+
+    provider = _make_provider(handler)
+    try:
+        await _collect(provider.stream_chat(messages))
+    finally:
+        await provider.aclose()
+
+    body = captured_body["body"]
+    assert isinstance(body, dict)
+    assert "max_tokens" not in body
+
+
 async def test_usage_chunk_ignored_when_sink_is_none(messages: list[Message]) -> None:
     """If an upstream sends a usage chunk anyway (because some other
     flag was set, or the API changed default behaviour), the adapter

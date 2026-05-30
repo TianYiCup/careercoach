@@ -40,6 +40,7 @@ wants it, and lets non-copilot surfaces use the same endpoint.
 from __future__ import annotations
 
 import secrets
+import time
 from collections.abc import AsyncIterator
 
 import structlog
@@ -228,6 +229,14 @@ async def _safe_audio_stream(
     handle the truncated body. The trace id in `X-Trace-Id` lets ops
     correlate a truncated body with the structured log row.
     """
+    # P0 latency instrumentation: `first_chunk_ms` is the user-perceived
+    # "time until K starts talking" once the client plays the stream as
+    # it arrives; `total_ms` is the full synthesis duration. Monotonic
+    # perf_counter so a clock adjustment mid-stream can't yield a
+    # negative reading.
+    started_at = time.perf_counter()
+    first_chunk_at: float | None = None
+    byte_count = 0
     try:
         async for chunk in tts.synthesize(
             text,
@@ -235,8 +244,18 @@ async def _safe_audio_stream(
             audio_format=audio_format,
         ):
             if chunk.audio:
+                if first_chunk_at is None:
+                    first_chunk_at = time.perf_counter()
+                byte_count += len(chunk.audio)
                 yield chunk.audio
             if chunk.is_final:
+                _log_tts_latency(
+                    trace_id=trace_id,
+                    user_id=user_id,
+                    started_at=started_at,
+                    first_chunk_at=first_chunk_at,
+                    byte_count=byte_count,
+                )
                 return
     except TTSAuthError as exc:
         logger.error(
@@ -271,3 +290,30 @@ async def _safe_audio_stream(
             provider=exc.provider,
             error=str(exc),
         )
+
+
+def _log_tts_latency(
+    *,
+    trace_id: str,
+    user_id: str,
+    started_at: float,
+    first_chunk_at: float | None,
+    byte_count: int,
+) -> None:
+    """Emit the TTS synthesis latency as one structured log line.
+
+    `first_chunk_ms` is None when the stream produced no audio before
+    completing (vendor returned an empty synthesis) — keeps "slow to
+    first byte" distinct from "produced nothing". `total_ms` covers the
+    whole stream; the gap between the two is the trailing synthesis the
+    client can overlap with playback once it plays incrementally.
+    """
+    now = time.perf_counter()
+    logger.info(
+        "tts_synth_latency",
+        trace_id=trace_id,
+        user_id=user_id,
+        first_chunk_ms=(round((first_chunk_at - started_at) * 1000, 1) if first_chunk_at else None),
+        total_ms=round((now - started_at) * 1000, 1),
+        byte_count=byte_count,
+    )

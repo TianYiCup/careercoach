@@ -50,6 +50,7 @@ class LLMProvider(Protocol):
         temperature: float = DEFAULT_TEMPERATURE,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         usage_sink: list[TokenUsage] | None = None,
+        max_tokens: int | None = None,
     ) -> AsyncIterator[str]:
         """Stream response text deltas.
 
@@ -57,6 +58,12 @@ class LLMProvider(Protocol):
         `async for chunk in provider.stream_chat(...)` directly. The
         first iteration may perform the network connect; adapters
         should NOT do I/O before iteration begins.
+
+        `max_tokens` caps the completion length when set. Callers that
+        emit a short, bounded line (e.g. the copilot ≤40-char hint)
+        pass it to keep a runaway generation from inflating latency;
+        None leaves the vendor default in place. Test stubs MAY ignore
+        the kwarg.
 
         When `usage_sink` is non-None, adapters MUST request usage
         accounting from the upstream (vendors honour

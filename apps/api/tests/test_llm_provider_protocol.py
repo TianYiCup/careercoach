@@ -34,12 +34,13 @@ class _FakeProvider:
         temperature: float = 0.7,
         timeout: float = 8.0,
         usage_sink: list[TokenUsage] | None = None,
+        max_tokens: int | None = None,
     ) -> AsyncIterator[str]:
         # Echo the last user message back as two chunks so tests can
-        # assert streaming semantics. We accept `usage_sink` for
-        # protocol-compat (A-27) but don't append — the fake doesn't
-        # synthesise token counts.
-        _ = usage_sink
+        # assert streaming semantics. We accept `usage_sink` /
+        # `max_tokens` for protocol-compat (A-27 / perf-E) but ignore
+        # them — the fake doesn't synthesise token counts or truncate.
+        _ = (usage_sink, max_tokens)
         last = messages[-1].content
         yield last[: len(last) // 2]
         yield last[len(last) // 2 :]
