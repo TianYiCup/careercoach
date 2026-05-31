@@ -140,10 +140,27 @@ class ModerationService:
         background audit tasks instead of dropping them. A hard kill can
         still lose an in-flight audit row — acceptable for a downstream
         log, not for the red-line decision (which is always synchronous).
+
+        Only awaits tasks bound to the *current* running loop. This is a
+        process-wide singleton (see `get_moderation_service`'s lru_cache),
+        so under a test session it accumulates audit tasks from several
+        short-lived event loops (each `TestClient` context opens its own).
+        Passing a task from an already-closed loop to `asyncio.gather`
+        raises "got Future attached to a different loop" — so we filter to
+        our own loop and abandon the rest (they died with their loop).
+        Production has a single loop, so nothing is ever filtered out.
         """
         if not self._audit_tasks:
             return
-        await asyncio.gather(*tuple(self._audit_tasks), return_exceptions=True)
+        tasks = tuple(self._audit_tasks)
+        # Drop our references up front: even if the drain below is
+        # interrupted, a later aclose() (or the GC) must not re-await this
+        # same set and re-hit the cross-loop error.
+        self._audit_tasks.clear()
+        loop = asyncio.get_running_loop()
+        own = [t for t in tasks if not t.done() and t.get_loop() is loop]
+        if own:
+            await asyncio.gather(*own, return_exceptions=True)
 
 
 def _apply_minor_strictness(decision: Decision, *, is_minor: bool) -> Decision:
