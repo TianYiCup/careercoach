@@ -480,7 +480,7 @@ def test_hint_bounds_generation_params(client: TestClient) -> None:
     when calling the LLM (perf P0/E). Asserting on the captured kwargs
     pins the contract so a future refactor can't silently drop the cap
     and let a rambling hint inflate the wait."""
-    from app.routes.v1.copilot import COACH_HINT_MAX_TOKENS, COACH_HINT_TEMPERATURE
+    from app.routes.v1.copilot_hint import COACH_HINT_MAX_TOKENS, COACH_HINT_TEMPERATURE
 
     stub = _install_llm(chunks=("先回应", "对方观点。"))
     service, repo = _build_service()
