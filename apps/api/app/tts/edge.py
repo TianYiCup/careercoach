@@ -39,6 +39,7 @@ credentials in CI.
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
@@ -188,7 +189,19 @@ class EdgeTTSProvider:
         )
 
         try:
+            # F2-0: isolate the per-hint vendor WS handshake from the
+            # synthesis itself. The route's `tts_synth_latency.first_chunk_ms`
+            # bundles both; this `connect_ms` line lets a dashboard see what
+            # fraction is the handshake — i.e. how much a per-session
+            # connection reuse (F2) could actually save.
+            connect_started = time.perf_counter()
             async with await self._ws_factory(url) as channel:  # type: ignore[arg-type]
+                logger.info(
+                    "tts_connect_latency",
+                    provider=self.name,
+                    request_id=request_id,
+                    connect_ms=round((time.perf_counter() - connect_started) * 1000, 1),
+                )
                 await channel.send(_speech_config_frame(vendor_format))
                 await channel.send(
                     _ssml_frame(text=text, voice=vendor_voice, request_id=request_id)

@@ -27,6 +27,7 @@ for synthesis.
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, Protocol
@@ -203,7 +204,20 @@ class AliyunTTSProvider:
                 provider=self.name,
             ) from exc
 
+        # F2-0: isolate the per-hint vendor WS handshake from the synthesis
+        # itself. The route's `tts_synth_latency.first_chunk_ms` bundles
+        # both; this `connect_ms` line lets a dashboard see what fraction is
+        # the handshake — i.e. how much a per-session connection reuse (F2)
+        # could actually save. `connect_started` is set after the token
+        # fetch so the number is the WS upgrade alone, not token I/O.
+        connect_started = time.perf_counter()
         async with connection as channel:
+            logger.info(
+                "tts_connect_latency",
+                provider=self.name,
+                task_id=task_id,
+                connect_ms=round((time.perf_counter() - connect_started) * 1000, 1),
+            )
             await channel.send(
                 _start_payload(
                     task_id=task_id,

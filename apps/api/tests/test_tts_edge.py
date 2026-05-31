@@ -26,6 +26,7 @@ from collections.abc import AsyncIterator
 from typing import cast
 
 import pytest
+import structlog
 from app.tts import (
     EdgeTTSProvider,
     TTSAudioChunk,
@@ -122,6 +123,24 @@ async def test_synthesize_yields_audio_chunks_then_final() -> None:
     audio_chunks = [c for c in chunks if c.audio]
     assert [c.audio for c in audio_chunks] == [b"\x01\x02", b"\x03\x04", b"\x05"]
     assert chunks[-1].is_final is True
+
+
+async def test_synthesize_logs_connect_latency() -> None:
+    """F2-0: a `tts_connect_latency` line is emitted per synthesis so a
+    dashboard can split the vendor handshake out of the route's
+    `tts_synth_latency.first_chunk_ms` (which bundles both)."""
+    channel = _FakeWSChannel(to_send=[_binary_audio_frame(b"\x01"), _turn_end_text()])
+    provider = EdgeTTSProvider(ws_factory=_ws_factory(channel))  # type: ignore[arg-type]
+
+    with structlog.testing.capture_logs() as logs:
+        async for _ in provider.synthesize("你好", voice="k-warm", audio_format="mp3"):
+            pass
+
+    connect = [e for e in logs if e["event"] == "tts_connect_latency"]
+    assert len(connect) == 1
+    assert connect[0]["provider"] == "edge"
+    assert isinstance(connect[0]["connect_ms"], float)
+    assert "request_id" in connect[0]
 
 
 async def test_handshake_sends_speech_config_then_ssml() -> None:
