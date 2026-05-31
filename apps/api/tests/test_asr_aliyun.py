@@ -254,6 +254,35 @@ async def test_task_failed_event_raises_upstream_error() -> None:
             pass
 
 
+async def test_idle_timeout_task_failed_yields_empty_final_not_error() -> None:
+    """Aliyun reaps an idle session with a `TaskFailed` carrying an
+    IDLE_TIMEOUT marker. For the copilot's segment model that's "no
+    speech this segment", not a failure — it must surface as an empty
+    final (clean no-op turn), NOT an ASRError, or a natural conversation
+    pause shows the user "transcription unavailable"."""
+    idle = _task_failed(
+        "Gateway:IDLE_TIMEOUT:Websocket session is idle for too long time, "
+        "the last directive is 'StopTranscription'!"
+    )
+    channel = _FakeWSChannel(to_send=[_started(), _result_changed("uh"), idle])
+    provider = _make_provider(channel)
+
+    events = [e async for e in provider.transcribe_stream(_gen([]))]
+    assert events[-1].kind == "final"
+    assert events[-1].text == ""
+
+
+async def test_non_idle_task_failed_still_raises_upstream_error() -> None:
+    """Regression guard: softening IDLE_TIMEOUT must not swallow real
+    vendor failures — a non-idle TaskFailed still raises."""
+    channel = _FakeWSChannel(to_send=[_started(), _task_failed("Gateway:GRPC_ERROR:boom")])
+    provider = _make_provider(channel)
+
+    with pytest.raises(ASRUpstreamError, match="GRPC_ERROR"):
+        async for _ in provider.transcribe_stream(_gen([])):
+            pass
+
+
 async def test_unexpected_close_mid_stream_raises_upstream_error() -> None:
     """Server tore the connection down hard before SentenceEnd —
     surfaced as ASRUpstreamError so the WS bridge can react."""
