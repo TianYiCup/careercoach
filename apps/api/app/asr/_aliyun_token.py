@@ -146,8 +146,13 @@ async def fetch_access_token(
                 provider=PROVIDER_NAME,
             ) from exc
         except httpx.HTTPError as exc:
+            # `str(exc)` is empty for several transport failures
+            # (e.g. `httpx.ConnectError("")` on a refused/proxied
+            # connection), which left the log as "transport error: "
+            # with no clue what broke. Lead with the exception class so
+            # the failure mode is always identifiable.
             raise ASRUpstreamError(
-                f"aliyun ASR token transport error: {exc}",
+                f"aliyun ASR token transport error: {type(exc).__name__}: {exc}",
                 provider=PROVIDER_NAME,
             ) from exc
 
