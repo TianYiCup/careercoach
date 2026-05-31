@@ -12,6 +12,7 @@ import json
 from collections.abc import AsyncIterator
 
 import pytest
+import structlog
 from app.asr._aliyun_token import AccessToken, AliyunTokenCache
 from app.tts import AliyunTTSProvider, TTSUpstreamError
 from websockets.exceptions import ConnectionClosed
@@ -99,6 +100,23 @@ async def test_synthesize_streams_audio_then_terminal_chunk() -> None:
     assert chunks[-1].is_final is True
     # Exactly one terminal chunk.
     assert sum(1 for c in chunks if c.is_final) == 1
+
+
+async def test_synthesize_logs_connect_latency() -> None:
+    """F2-0: a `tts_connect_latency` line is emitted per synthesis so a
+    dashboard can split the vendor handshake out of the route's
+    `tts_synth_latency.first_chunk_ms` (which bundles both)."""
+    channel = _FakeWSChannel([b"\x01", _synthesis_completed()])
+    provider = _make_provider(channel)
+
+    with structlog.testing.capture_logs() as logs:
+        await _collect(provider.synthesize("你好", voice="k-warm"))
+
+    connect = [e for e in logs if e["event"] == "tts_connect_latency"]
+    assert len(connect) == 1
+    assert connect[0]["provider"] == "aliyun"
+    assert isinstance(connect[0]["connect_ms"], float)
+    assert "task_id" in connect[0]
 
 
 async def test_start_frame_carries_text_voice_and_appkey() -> None:
