@@ -20,7 +20,7 @@ from app.services.scenarios.character_vector import (
     describe_for_roleplay,
 )
 from app.services.scenarios.corpus import build_corpus_examples, retrieve
-from app.services.sessions.turn_service import _build_coach_prompt, _build_roleplay_prompt
+from app.services.sessions.turn_prompts import _build_coach_prompt, _build_roleplay_prompt
 
 
 def test_roleplay_prompt_contains_descriptor_block_for_high_intensity_persona() -> None:
