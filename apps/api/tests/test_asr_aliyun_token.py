@@ -149,6 +149,29 @@ async def test_fetch_token_raises_upstream_error_on_500() -> None:
     assert ei.value.status_code == 500
 
 
+async def test_fetch_token_transport_error_names_the_exception() -> None:
+    """A transport failure with an empty message (e.g. a refused/proxied
+    `ConnectError("")`) must still log *what* broke — the error names the
+    httpx exception class so 'transport error: ' is never blank."""
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("")  # empty message, as seen in the wild
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(ASRUpstreamError) as ei:
+            await fetch_access_token(
+                access_key_id="ak",
+                access_key_secret="secret",
+                endpoint_url="https://nls-meta.example/",
+                client=client,
+            )
+    finally:
+        await client.aclose()
+
+    assert "ConnectError" in str(ei.value)
+
+
 async def test_fetch_token_raises_timeout_on_httpx_timeout() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectTimeout("simulated")
