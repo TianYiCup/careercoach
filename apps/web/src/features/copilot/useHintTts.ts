@@ -9,8 +9,13 @@
  *   1. Watch the finalized hint (`hintText`). Streaming deltas are
  *      intentionally ignored — re-synthesising every keystroke would
  *      hammer the vendor and produce glitchy audio.
- *   2. On change, POST the text to /v1/tts/synthesize, read the audio
- *      blob, and play it through a single shared `<audio>` element.
+ *   2. On change, POST the text to /v1/tts/synthesize. The endpoint
+ *      streams mp3 frames as it synthesizes, so where the browser can
+ *      stream-decode (`canStreamMp3`) we feed the response body into a
+ *      MediaSource and start playback at the first chunk (`streamMp3-
+ *      ToAudio`) — K starts talking one synth-chunk in, not one full
+ *      clip in. Where it can't (Firefox / Safari), we fall back to the
+ *      buffered blob: read the whole body, then play.
  *   3. When the next hint arrives mid-playback, abort the in-flight
  *      fetch *and* stop the current playback so two K lines never
  *      overlap. Browser autoplay rejection is logged as a soft error
@@ -25,6 +30,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { getAuthToken } from '../../api/v1/auth-token'
 import { markCopilotLatency } from './latency-log'
+import { canStreamMp3, streamMp3ToAudio } from './streamHintAudio'
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/v1'
 const TTS_PATH = '/tts/synthesize'
@@ -59,6 +65,23 @@ function classifyHttpError(status: number): HintTtsErrorKind {
   return 'tts_unavailable'
 }
 
+function isAbortError(err: unknown): boolean {
+  return err instanceof DOMException && err.name === 'AbortError'
+}
+
+/**
+ * Map a playback-path failure to a user-facing kind. A browser autoplay
+ * block (`NotAllowedError`) is the one failure we expect and recover
+ * from — the hint text is still on screen — so it stays soft; a decode /
+ * MediaSource fault surfaces as the generic TTS failure.
+ */
+function classifyPlaybackError(err: unknown): HintTtsErrorKind {
+  if (err instanceof DOMException && err.name === 'NotAllowedError') {
+    return 'autoplay_blocked'
+  }
+  return 'tts_unavailable'
+}
+
 export function useHintTts({ hintText, muted = false }: UseHintTtsOptions): HintTtsState {
   const [asyncState, setAsyncState] = useState<HintTtsState>(INITIAL)
   const audioRef = useRef<HTMLAudioElement | null>(null)
@@ -78,6 +101,51 @@ export function useHintTts({ hintText, muted = false }: UseHintTtsOptions): Hint
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setAsyncState({ isSpeaking: true, error: null })
 
+    // End of the latency waterfall: K is now audible. The gap from the
+    // `hint_done` mark to here is what the user waits through after the
+    // text is already on screen — the streaming path shrinks it to the
+    // first synth chunk instead of the whole clip.
+    const markAudible = () => markCopilotLatency('hint_audible')
+
+    // Streaming path: feed the response body into MediaSource so K
+    // starts at the first chunk. Errors are classified soft — autoplay
+    // block / decode fault leave the hint text on screen.
+    const playStreaming = async (res: Response, audio: HTMLAudioElement): Promise<void> => {
+      try {
+        await streamMp3ToAudio(res, audio, { signal: ac.signal, onAudible: markAudible })
+      } catch (err) {
+        if (cancelled || isAbortError(err)) return
+        setAsyncState({ isSpeaking: false, error: classifyPlaybackError(err) })
+      }
+    }
+
+    // Buffered fallback (no MediaSource / unsupported codec): read the
+    // whole body, then play one shared `<audio>` element.
+    const playBuffered = async (res: Response, audio: HTMLAudioElement): Promise<void> => {
+      let blob: Blob
+      try {
+        blob = await res.blob()
+      } catch {
+        if (cancelled) return
+        setAsyncState({ isSpeaking: false, error: 'network' })
+        return
+      }
+      if (cancelled) return
+
+      objectUrl = URL.createObjectURL(blob)
+      audio.src = objectUrl
+      try {
+        await audio.play()
+        markAudible()
+      } catch {
+        if (cancelled) return
+        // Browser blocked autoplay — the hint text is still on screen,
+        // so we mark this as non-fatal and let the parent decide
+        // whether to nudge the user (e.g. show an "enable audio" tip).
+        setAsyncState({ isSpeaking: false, error: 'autoplay_blocked' })
+      }
+    }
+
     const run = async () => {
       const token = getAuthToken()
       let res: Response
@@ -92,7 +160,7 @@ export function useHintTts({ hintText, muted = false }: UseHintTtsOptions): Hint
           body: JSON.stringify({ text: hintText, audio_format: 'mp3' }),
         })
       } catch (err) {
-        if (cancelled || (err instanceof DOMException && err.name === 'AbortError')) return
+        if (cancelled || isAbortError(err)) return
         setAsyncState({ isSpeaking: false, error: 'network' })
         return
       }
@@ -103,35 +171,18 @@ export function useHintTts({ hintText, muted = false }: UseHintTtsOptions): Hint
         return
       }
 
-      let blob: Blob
-      try {
-        blob = await res.blob()
-      } catch {
-        if (cancelled) return
-        setAsyncState({ isSpeaking: false, error: 'network' })
-        return
-      }
-      if (cancelled) return
-
-      objectUrl = URL.createObjectURL(blob)
       const audio = audioRef.current ?? (audioRef.current = new Audio())
-      audio.src = objectUrl
+      // `isSpeaking` flips off when playback actually *ends*, not when
+      // the stream finishes appending — those differ in the streaming
+      // path, where bytes are all in but the clip is still playing.
       audio.onended = () => {
         if (!cancelled) setAsyncState({ isSpeaking: false, error: null })
       }
 
-      try {
-        await audio.play()
-        // End of the latency waterfall: K is now audible. The gap from
-        // the `hint_done` mark to here is the TTS fetch + synth + decode
-        // the user waits through after the text is already on screen.
-        markCopilotLatency('hint_audible')
-      } catch {
-        if (cancelled) return
-        // Browser blocked autoplay — the hint text is still on screen,
-        // so we mark this as non-fatal and let the parent decide
-        // whether to nudge the user (e.g. show an "enable audio" tip).
-        setAsyncState({ isSpeaking: false, error: 'autoplay_blocked' })
+      if (canStreamMp3() && res.body) {
+        await playStreaming(res, audio)
+      } else {
+        await playBuffered(res, audio)
       }
     }
 
@@ -144,6 +195,7 @@ export function useHintTts({ hintText, muted = false }: UseHintTtsOptions): Hint
       if (audio) {
         audio.pause()
         audio.removeAttribute('src')
+        audio.onended = null
       }
       if (objectUrl) {
         URL.revokeObjectURL(objectUrl)
