@@ -4,7 +4,10 @@ Exposes /health and the versioned /v1/* business surface.
 Sentry is initialized only when SENTRY_DSN is set so dev runs stay quiet.
 """
 
+import asyncio
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 import sentry_sdk
 import structlog
@@ -20,8 +23,42 @@ from app.middleware import RequestIdMiddleware, get_request_id
 from app.routes.health import router as health_router
 from app.routes.v1 import router as v1_router
 from app.services.auth import get_auth_service, get_email_auth_service
+from app.services.moderation import get_moderation_service
 
 logger = structlog.get_logger(__name__)
+
+
+# Upper bound on how long shutdown waits for in-flight audit writes to
+# drain. The audit row is a downstream log, not the red-line decision —
+# we give it a moment to finish but never let it stall SIGTERM.
+_AUDIT_DRAIN_TIMEOUT_S = 5.0
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """App lifespan: drain background work on shutdown.
+
+    The moderation service writes its audit rows fire-and-forget (PR #196
+    moved the per-call DB insert off the hot path). Those tasks are
+    tracked but otherwise unawaited, so a shutdown mid-flight would drop
+    the audit trail for the last few requests. `aclose()` awaits the
+    in-flight audit writes before the event loop closes.
+
+    The drain is bounded + guarded: a slow audit store must not stall
+    shutdown, and a best-effort cleanup must never turn a clean shutdown
+    (or a `TestClient` context exit, which runs this same path) into an
+    error. Both failure modes are logged, not raised.
+    """
+    yield
+    try:
+        await asyncio.wait_for(
+            get_moderation_service().aclose(),
+            timeout=_AUDIT_DRAIN_TIMEOUT_S,
+        )
+    except TimeoutError:
+        logger.warning("moderation_audit_drain_timeout", timeout_s=_AUDIT_DRAIN_TIMEOUT_S)
+    except Exception:
+        logger.warning("moderation_audit_drain_error", exc_info=True)
 
 
 def _configure_logging(level: str) -> None:
@@ -67,6 +104,7 @@ def create_app() -> FastAPI:
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
+        lifespan=_lifespan,
     )
 
     # CORS must wrap as the OUTER-most middleware so preflight (OPTIONS)

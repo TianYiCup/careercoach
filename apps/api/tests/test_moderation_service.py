@@ -244,6 +244,34 @@ async def test_check_does_not_block_on_slow_audit_sink() -> None:
     assert sink.recorded is True
 
 
+async def test_aclose_skips_audit_tasks_from_a_foreign_event_loop() -> None:
+    """Regression (PR #199): the service is a process-wide singleton, so
+    across a test session `_audit_tasks` can hold tasks created on other,
+    now-closed event loops (each `TestClient` context opens its own). The
+    shutdown lifespan calls `aclose()` on *every* such teardown — if it
+    passed a foreign-loop task to `asyncio.gather` it would raise "got
+    Future attached to a different loop", erroring every teardown and
+    hanging CI. `aclose()` must skip foreign-loop tasks and drop them."""
+    service = ModerationService(backend=NoopBackend(), event_sink=_RecordingSink())
+
+    foreign_loop = asyncio.new_event_loop()
+    # A pending Future bound to the foreign loop stands in for an in-flight
+    # audit task from another context — `aclose` only inspects `.get_loop()`
+    # and `.done()`, and a bare Future avoids a "coroutine never awaited"
+    # warning at cleanup.
+    foreign_future: asyncio.Future[None] = foreign_loop.create_future()
+    service._audit_tasks.add(foreign_future)  # type: ignore[arg-type]
+
+    try:
+        # Must not raise despite the cross-loop future...
+        await service.aclose()
+        # ...and must have dropped its reference so a later drain is cheap.
+        assert service._audit_tasks == set()
+    finally:
+        foreign_future.cancel()
+        foreign_loop.close()
+
+
 def test_decision_rejects_out_of_range_score() -> None:
     with pytest.raises(ValueError, match=r"score must be in \[0, 1\]"):
         Decision(verdict="allow", score=1.5)
