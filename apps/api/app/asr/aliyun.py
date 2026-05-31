@@ -79,6 +79,18 @@ _EVT_RESULT_CHANGED = "TranscriptionResultChanged"
 _EVT_SENTENCE_END = "SentenceEnd"
 _EVT_TASK_FAILED = "TaskFailed"
 
+# Aliyun reaps a WS session that sits idle (no audio, or the post-Stop
+# wait when a segment carried no speech) with a `TaskFailed` whose
+# `status_text` carries this marker, e.g.
+#   "Gateway:IDLE_TIMEOUT:Websocket session is idle for too long time,
+#    the last directive is 'StopTranscription'!"
+# For the copilot's segment-per-utterance model that just means "no
+# speech this segment" — equivalent to a clean close. We must NOT surface
+# it as an error: the WS bridge maps any ASRError to a user-facing
+# "transcription unavailable", so a natural conversation pause would look
+# like an outage. Treated as a benign empty final instead.
+_IDLE_TIMEOUT_MARKER = "IDLE_TIMEOUT"
+
 
 class _WSChannel(Protocol):
     """Subset of `websockets.WebSocketClientProtocol` we touch.
@@ -347,14 +359,33 @@ async def _consume_events(
             )
             return
         elif kind == _EVT_TASK_FAILED:
-            message = payload.get("header", {}).get("status_text", "task failed")
-            status_code = payload.get("header", {}).get("status")
+            header = payload.get("header", {})
+            message = header.get("status_text", "task failed")
+            status_code = header.get("status")
+            if _is_idle_timeout(message):
+                # Benign: the gateway reaped an idle session (no speech
+                # this segment). Mirror the clean-close path — emit an
+                # empty final and stop, so a natural pause is a no-op turn
+                # rather than a user-facing "transcription unavailable".
+                logger.info(
+                    "aliyun_asr_idle_timeout",
+                    task_id=task_id,
+                    status_text=message,
+                )
+                yield ASREvent(kind="final", text="")
+                return
             raise ASRUpstreamError(
                 f"aliyun ASR task failed: {message}",
                 provider=PROVIDER_NAME,
                 status_code=int(status_code) if isinstance(status_code, int) else None,
             )
         # Unknown / control event — drop.
+
+
+def _is_idle_timeout(status_text: object) -> bool:
+    """True when a `TaskFailed` status_text reports an idle-session reap
+    (e.g. `Gateway:IDLE_TIMEOUT:...`). Robust to a non-string payload."""
+    return isinstance(status_text, str) and _IDLE_TIMEOUT_MARKER in status_text
 
 
 def _parse_event(
