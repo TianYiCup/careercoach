@@ -8,6 +8,7 @@ fixture style.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 
 import pytest
@@ -119,6 +120,8 @@ async def test_service_records_audit_event_for_every_call() -> None:
         trace_id="trace_xyz",
     )
 
+    # Audit is fire-and-forget — drain the background write before asserting.
+    await service.aclose()
     assert len(sink.events) == 1
     event = sink.events[0]
     assert event["user_id"] == "u_42"
@@ -160,6 +163,7 @@ async def test_service_passes_redirect_resource_through() -> None:
     assert response.verdict == "redirect"
     assert response.categories == ["self_harm"]
     assert response.redirect_resource == resource
+    await service.aclose()
     assert sink.events[0]["verdict"] == "redirect"
     assert sink.events[0]["categories"] == ["self_harm"]
 
@@ -202,6 +206,42 @@ async def test_audit_failure_does_not_block_response() -> None:
 
     assert response.verdict == "allow"
     assert response.trace_id == "trace_db_down"
+
+
+async def test_check_does_not_block_on_slow_audit_sink() -> None:
+    """The verdict must return without waiting on the audit write — a
+    hung sink (e.g. an unreachable DB) cannot add latency to the response.
+    This is the regression guard for the hot-path audit `await`."""
+
+    @dataclass
+    class _HangingSink:
+        release: asyncio.Event
+        recorded: bool = False
+
+        async def record(self, **_: object) -> None:
+            await self.release.wait()  # not released within the assertion window
+            self.recorded = True
+
+    sink = _HangingSink(release=asyncio.Event())
+    service = ModerationService(backend=NoopBackend(), event_sink=sink)
+
+    response = await asyncio.wait_for(
+        service.check(
+            ModerationCheckRequest(content="hello", context="user_input"),
+            user_id="u_test",
+            trace_id="trace_slow_sink",
+        ),
+        timeout=1.0,
+    )
+
+    # Returned immediately; the audit is still in flight.
+    assert response.verdict == "allow"
+    assert sink.recorded is False
+
+    # Release the background write and drain it cleanly.
+    sink.release.set()
+    await service.aclose()
+    assert sink.recorded is True
 
 
 def test_decision_rejects_out_of_range_score() -> None:

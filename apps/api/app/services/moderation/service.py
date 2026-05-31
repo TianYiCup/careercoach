@@ -15,6 +15,7 @@ logic).
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 
 import structlog
@@ -36,6 +37,12 @@ class ModerationService:
     ) -> None:
         self._backend = backend
         self._event_sink = event_sink
+        # In-flight audit writes. The sink is fire-and-forget (see
+        # `check`), so we keep a strong reference to each task until it
+        # finishes — otherwise the event loop may GC a still-running task.
+        # `discard` in the done-callback keeps this bounded to whatever is
+        # currently in flight.
+        self._audit_tasks: set[asyncio.Task[None]] = set()
 
     async def check(
         self,
@@ -59,6 +66,58 @@ class ModerationService:
         decision = await self._backend.evaluate(request.content, request.context)
         decision = _apply_minor_strictness(decision, is_minor=is_minor)
 
+        # Audit is fire-and-forget: the verdict is the red-line decision
+        # the caller is blocked on, and the audit row is a downstream log.
+        # Awaiting the sink here put a DB write on the user-facing latency
+        # path — a slow or unreachable audit store added seconds per call
+        # (the copilot moderates twice per turn, so the cost doubled). The
+        # write now runs in the background; failures are logged, never
+        # surfaced.
+        self._spawn_audit(
+            request=request,
+            user_id=user_id,
+            decision=decision,
+            trace_id=trace_id,
+        )
+
+        return ModerationCheckResponse(
+            verdict=decision.verdict,
+            categories=list(decision.categories),
+            score=decision.score,
+            redirect_resource=decision.redirect_resource,
+            trace_id=trace_id,
+        )
+
+    def _spawn_audit(
+        self,
+        *,
+        request: ModerationCheckRequest,
+        user_id: str,
+        decision: Decision,
+        trace_id: str,
+    ) -> None:
+        """Schedule the audit write as a tracked background task."""
+        task = asyncio.create_task(
+            self._record_audit(
+                request=request,
+                user_id=user_id,
+                decision=decision,
+                trace_id=trace_id,
+            )
+        )
+        self._audit_tasks.add(task)
+        task.add_done_callback(self._audit_tasks.discard)
+
+    async def _record_audit(
+        self,
+        *,
+        request: ModerationCheckRequest,
+        user_id: str,
+        decision: Decision,
+        trace_id: str,
+    ) -> None:
+        """Persist one audit row. Failures are logged, never raised — the
+        caller already has its verdict and isn't waiting on this."""
         try:
             await self._event_sink.record(
                 request=request,
@@ -68,21 +127,23 @@ class ModerationService:
                 trace_id=trace_id,
             )
         except Exception:
-            # Audit failure must never block the response. The user
-            # still gets the verdict; ops sees the structured log.
             logger.exception(
                 "moderation_audit_failed",
                 trace_id=trace_id,
                 backend=self._backend.name,
             )
 
-        return ModerationCheckResponse(
-            verdict=decision.verdict,
-            categories=list(decision.categories),
-            score=decision.score,
-            redirect_resource=decision.redirect_resource,
-            trace_id=trace_id,
-        )
+    async def aclose(self) -> None:
+        """Drain in-flight audit writes.
+
+        Best-effort: lets a graceful shutdown (or a test) wait for the
+        background audit tasks instead of dropping them. A hard kill can
+        still lose an in-flight audit row — acceptable for a downstream
+        log, not for the red-line decision (which is always synchronous).
+        """
+        if not self._audit_tasks:
+            return
+        await asyncio.gather(*tuple(self._audit_tasks), return_exceptions=True)
 
 
 def _apply_minor_strictness(decision: Decision, *, is_minor: bool) -> Decision:
