@@ -5,6 +5,8 @@ Sentry is initialized only when SENTRY_DSN is set so dev runs stay quiet.
 """
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 import sentry_sdk
 import structlog
@@ -20,8 +22,23 @@ from app.middleware import RequestIdMiddleware, get_request_id
 from app.routes.health import router as health_router
 from app.routes.v1 import router as v1_router
 from app.services.auth import get_auth_service, get_email_auth_service
+from app.services.moderation import get_moderation_service
 
 logger = structlog.get_logger(__name__)
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """App lifespan: drain background work on shutdown.
+
+    The moderation service writes its audit rows fire-and-forget (PR #196
+    moved the per-call DB insert off the hot path). Those tasks are
+    tracked but otherwise unawaited, so a shutdown mid-flight would drop
+    the audit trail for the last few requests. `aclose()` awaits the
+    in-flight audit writes before the event loop closes.
+    """
+    yield
+    await get_moderation_service().aclose()
 
 
 def _configure_logging(level: str) -> None:
@@ -67,6 +84,7 @@ def create_app() -> FastAPI:
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
+        lifespan=_lifespan,
     )
 
     # CORS must wrap as the OUTER-most middleware so preflight (OPTIONS)
