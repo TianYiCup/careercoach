@@ -7,7 +7,7 @@
  * exposes only stateless visual primitives that any feature can compose.
  */
 
-export { NeuralParticles } from './NeuralParticles'
+export { NeuralParticles } from './NeuralParticlesLazy'
 export { HudFrame } from './HudFrame'
 export { GlowText } from './GlowText'
 export { TiltCard } from './TiltCard'
