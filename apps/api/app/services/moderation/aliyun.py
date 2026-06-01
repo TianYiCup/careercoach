@@ -7,28 +7,34 @@ POST https://{endpoint}/   (action = TextModeration, version = 2022-03-02)
 Body shape:
 
     {
-      "Service": "chat_detection_pro",
+      "Service": "chat_detection",
       "ServiceParameters": "{\\"content\\": \\"...\\"}"
     }
 
-Response (success):
+Response (success, Content-Moderation-2.0 / 增强版):
 
     {
       "RequestId": "...",
       "Code": 200,
       "Data": {
-        "Result": [{"Label": "abuse", "Confidence": 95.2}],
-        ...
+        "labels": "sexual_content,profanity",
+        "reason": "{\\"riskLevel\\":\\"high\\", ...}",
+        "descriptions": "..."
       }
     }
 
+`Data.labels` is a comma-separated string of label names and
+`Data.reason.riskLevel` is the single severity for the whole text —
+the legacy `Data.Result[].{Label,Confidence}` shape is gone.
+
 Label mapping
 -------------
-Aliyun returns one of ~30 labels; we collapse them into our six
-`ModerationCategory` buckets. Anything that doesn't fall into one of
-our red-line categories is silently dropped on the floor — the
-cascade still sees `verdict=allow` because no red-line category was
-attached.
+We collapse the labels into our six `ModerationCategory` buckets.
+Anything that doesn't fall into one of our red-line categories is
+silently dropped — `verdict=allow` because no red-line category was
+attached. CRITICAL: this scene does NOT label self-harm, so cloud
+`allow` is never trusted blindly — `CascadingBackend` re-checks the
+local dict (the §3.0.5 red-line floor) on every cloud allow.
 
 Signing
 -------
@@ -61,43 +67,45 @@ VERSION = "2022-03-02"
 SIG_ALGO = "ACS3-HMAC-SHA256"
 
 # Aliyun label → our ModerationCategory. Anything missing → dropped.
-# Drawn from the Green-CIP `chat_detection_pro` label sheet.
+# Labels come from the Content-Moderation-2.0 (增强版) `chat_detection`
+# `Data.labels` field — these are the NEW names (e.g. `profanity`,
+# `political_content`), distinct from the legacy green-cip label sheet.
 _LABEL_TO_CATEGORY: dict[str, ModerationCategory] = {
-    # self-harm / suicidal ideation
+    # self-harm / suicidal ideation — the 增强版 chat scene does NOT
+    # reliably emit a self-harm label; this stays mapped defensively in
+    # case the rule adds one, but the local-dict floor in CascadingBackend
+    # is what actually guarantees self-harm recall.
     "self_harm": "self_harm",
-    "self_harm_general": "self_harm",
+    "self_harm_content": "self_harm",
     # violence / abuse
+    "profanity": "violence",  # 辱骂 / 脏话 / 人身攻击
     "violence": "violence",
-    "abuse": "violence",
-    "abuse_general": "violence",
-    "abuse_political_2": "violence",
-    # loan / financial fraud
+    "violent_content": "violence",
+    # loan / contraband (drugs, gambling, illegal goods → loan bucket)
     "contraband": "loan",
-    "contraband_drug": "loan",
-    "contraband_gambling": "loan",
-    "ad": "loan",  # often promotional loan ads
+    "contraband_content": "loan",
+    "ad": "loan",  # promotional spam, often loan / gambling ads
     # sexual / harassment
+    "sexual_content": "harassment",
     "porn": "harassment",
-    "sexual": "harassment",
-    "porn_sexual_partial": "harassment",
     # political
+    "political_content": "political",
     "political": "political",
-    "political_outfit": "political",
-    "political_general": "political",
-    "political_entityS": "political",
-    # PUA / gaslighting → other
-    "pua": "other",
-    "verbal_violence": "other",
-    "negative_speech": "other",
 }
 
-# Aliyun's recommendation lives in `Result[].Suggestion` for some scenes;
-# `chat_detection_pro` returns `Label` + `Confidence`. Anything ≥ this
-# confidence becomes a hit; below this we treat it as ambiguous and let
-# the local dict have its say (cascade re-runs).
+# Legacy: the old green-cip scene scored each label with a Confidence in
+# `Result[]`. The 增强版 response has no per-label confidence (it returns
+# a single `riskLevel` instead), so this is unused by the new parser; the
+# constructor keeps it only to preserve its signature.
 _DEFAULT_HIT_CONFIDENCE = 80.0
 
+# Risk levels (`Data.reason.riskLevel`) that count as a hard hit. `low`
+# is surfaced as `warn` (soft); anything below / empty is `allow`.
+_HARD_RISK_LEVELS = frozenset({"high", "medium"})
+
 CLOUD_SCORE = 0.99
+# Soft score for `low` riskLevel hits surfaced as `warn`.
+CLOUD_WARN_SCORE = 0.6
 """Aliyun decisions get a higher score than local dict so audit logs can rank."""
 
 
@@ -187,7 +195,7 @@ class AliyunTextModerationBackend:
                 backend=self.name,
             )
 
-        return _decision_from_response(response.json(), self._hit_confidence)
+        return _decision_from_response(response.json())
 
 
 def _sign_request(
@@ -245,8 +253,20 @@ def _sign_request(
     }
 
 
-def _decision_from_response(payload: dict[str, Any], hit_confidence: float) -> Decision:
-    """Translate Aliyun's `Result[]` into one of our Decisions."""
+def _decision_from_response(payload: dict[str, Any]) -> Decision:
+    """Translate a Content-Moderation-2.0 (增强版) response into a Decision.
+
+    Response shape (success):
+
+        {"Code": 200, "Data": {
+            "labels": "sexual_content,profanity",
+            "reason": "{\\"riskLevel\\":\\"high\\", ...}",
+            "descriptions": "..."}}
+
+    `Data.labels` is a comma-separated string of the NEW label names;
+    `Data.reason.riskLevel` (a JSON string) carries the single severity
+    for the whole text — there is no per-label confidence any more.
+    """
     code = payload.get("Code")
     if code != 200:
         raise ModerationBackendError(
@@ -254,13 +274,13 @@ def _decision_from_response(payload: dict[str, Any], hit_confidence: float) -> D
             backend="aliyun",
         )
 
-    results = payload.get("Data", {}).get("Result") or []
+    data = payload.get("Data") or {}
+    risk_level = _risk_level_of(data)
     categories: set[ModerationCategory] = set()
-    for entry in results:
-        confidence = float(entry.get("Confidence", 0.0))
-        if confidence < hit_confidence:
+    for raw_label in str(data.get("labels") or "").split(","):
+        label = raw_label.strip()
+        if not label:
             continue
-        label = entry.get("Label", "")
         mapped = _LABEL_TO_CATEGORY.get(label)
         if mapped is not None:
             categories.add(mapped)
@@ -268,9 +288,9 @@ def _decision_from_response(payload: dict[str, Any], hit_confidence: float) -> D
     if not categories:
         return Decision(verdict="allow", score=0.0)
 
-    # Same priority rule as DictBackend — self_harm wins, hotline
-    # resource is the shared `SELF_HARM_RESOURCE` constant so both
-    # backends surface identical UI copy.
+    # Self_harm wins regardless of riskLevel — same priority rule as
+    # DictBackend, and the hotline resource is the shared
+    # `SELF_HARM_RESOURCE` so both backends surface identical UI copy.
     if "self_harm" in categories:
         return Decision(
             verdict="redirect",
@@ -279,8 +299,37 @@ def _decision_from_response(payload: dict[str, Any], hit_confidence: float) -> D
             redirect_resource=SELF_HARM_RESOURCE,
         )
 
+    # `low` risk → soft `warn` (e.g. a generic promo `ad`); high/medium
+    # → hard `block`. The local-dict floor in CascadingBackend still
+    # re-checks every cloud `allow`, so a missed hard red-line (notably
+    # self-harm, which this scene doesn't label) can't slip through.
+    if risk_level not in _HARD_RISK_LEVELS:
+        return Decision(
+            verdict="warn",
+            score=CLOUD_WARN_SCORE,
+            categories=tuple(sorted(categories)),
+        )
+
     return Decision(
         verdict="block",
         score=CLOUD_SCORE,
         categories=tuple(sorted(categories)),
     )
+
+
+def _risk_level_of(data: dict[str, Any]) -> str:
+    """Pull `riskLevel` out of the JSON-encoded `Data.reason` string.
+
+    Returns "" when reason is absent or unparseable — the caller then
+    treats it as a non-hard level (soft `warn` at most)."""
+    reason = data.get("reason")
+    if not isinstance(reason, str):
+        return ""
+    try:
+        parsed = json.loads(reason)
+    except (json.JSONDecodeError, ValueError):
+        return ""
+    if isinstance(parsed, dict):
+        level = parsed.get("riskLevel")
+        return level if isinstance(level, str) else ""
+    return ""
