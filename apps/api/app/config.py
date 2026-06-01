@@ -41,7 +41,13 @@ class Settings(BaseSettings):
     # forbids credentialed wildcard. Be explicit.
     cors_allowed_origins: str = Field(
         default=(
-            "http://localhost:5173,http://localhost:8000,tauri://localhost,https://tauri.localhost"
+            "http://localhost:5173,http://localhost:8000,"
+            # Tauri webview origins: macOS/Linux use `tauri://localhost`;
+            # Windows (Tauri 2, useHttpsScheme=false default) uses
+            # `http://tauri.localhost`; `https://tauri.localhost` covers
+            # useHttpsScheme=true. All three so the packaged EXE's fetches
+            # aren't CORS-blocked regardless of platform / scheme.
+            "tauri://localhost,http://tauri.localhost,https://tauri.localhost"
         ),
         description=(
             "Comma-separated list of origins permitted via CORS. "
