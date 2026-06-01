@@ -159,7 +159,11 @@ function appendChunk(
     sourceBuffer.addEventListener('error', onError, { once: true })
     signal.addEventListener('abort', onAbort, { once: true })
     try {
-      sourceBuffer.appendBuffer(chunk)
+      // MSE chunks come from a fetch ReadableStream — always ArrayBuffer-backed,
+      // never SharedArrayBuffer — so the BufferSource cast is safe. TS 5.7 made
+      // Uint8Array generic over its backing buffer (Uint8Array<ArrayBufferLike>),
+      // which no longer structurally matches appendBuffer's ArrayBuffer-only type.
+      sourceBuffer.appendBuffer(chunk as BufferSource)
     } catch (err) {
       cleanup()
       reject(err instanceof Error ? err : new Error('appendBuffer threw'))
