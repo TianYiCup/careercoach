@@ -24,7 +24,7 @@ function makeStream(): MediaStream {
   } as unknown as MediaStream
 }
 
-const getUserMedia = vi.fn<() => Promise<MediaStream>>()
+const getUserMedia = vi.fn<(constraints?: MediaStreamConstraints) => Promise<MediaStream>>()
 const addModule = vi.fn<() => Promise<void>>()
 const contextClose = vi.fn<() => Promise<void>>()
 const contextResume = vi.fn<() => Promise<void>>()
