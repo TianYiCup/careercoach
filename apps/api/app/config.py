@@ -255,8 +255,8 @@ class Settings(BaseSettings):
         description="Aliyun Green-CIP host. Region prefix follows aliyun pop names.",
     )
     aliyun_moderation_service: str = Field(
-        default="chat_detection_pro",
-        description="Aliyun service scene id — `chat_detection_pro` covers IM/UGC.",
+        default="chat_detection",
+        description="Content-Moderation-2.0 (增强版) text scene id — `chat_detection` covers IM/对话.",
     )
     aliyun_moderation_timeout_s: float = Field(
         default=0.8,
