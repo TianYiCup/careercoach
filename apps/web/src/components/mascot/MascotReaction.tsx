@@ -2,7 +2,7 @@ import { clsx } from 'clsx'
 import { motion, type Variants } from 'framer-motion'
 import { useState } from 'react'
 import {
-  EXPRESSION_EMOJI,
+  EXPRESSION_IMAGE,
   EXPRESSION_LABEL,
   type MascotExpression,
   type MascotSize,
@@ -71,7 +71,7 @@ export function MascotReaction({
         type="button"
         className={clsx(
           SIZE_MAP[size],
-          'flex items-center justify-center rounded-radius-blob',
+          'flex items-center justify-center overflow-hidden rounded-radius-blob',
           'bg-vivid-purple/20 border-2 border-vivid-purple/40',
           'select-none cursor-pointer',
         )}
@@ -79,16 +79,17 @@ export function MascotReaction({
         whileTap={{ scale: 1.1 }}
         aria-label={`教练 K 表情：${EXPRESSION_LABEL[current]}`}
       >
-        <motion.span
+        <motion.img
           key={current}
+          src={EXPRESSION_IMAGE[current]}
+          alt=""
+          aria-hidden="true"
+          draggable={false}
+          className="h-full w-full object-contain"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.2 }}
-          role="img"
-          aria-hidden="true"
-        >
-          {EXPRESSION_EMOJI[current]}
-        </motion.span>
+        />
       </motion.button>
 
       {showLabel && (
