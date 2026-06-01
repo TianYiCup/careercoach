@@ -19,6 +19,9 @@ def test_default_origins_include_dev_frontends() -> None:
     # Vite dev + Tauri + same-host all in the default.
     assert "http://localhost:5173" in origins
     assert "tauri://localhost" in origins
+    # The packaged Windows EXE's webview origin (Tauri 2, default scheme)
+    # — must stay allowed or the desktop build's fetches get CORS-blocked.
+    assert "http://tauri.localhost" in origins
 
 
 def test_custom_origins_csv_is_split() -> None:
