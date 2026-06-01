@@ -1,7 +1,8 @@
 import { getAuthToken } from './auth-token';
 import { emitAuthInvalid, emitAgeRequired } from './auth-events';
+import { resolveApiBaseUrl } from './config';
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/v1';
+const BASE_URL = resolveApiBaseUrl();
 
 class ApiClient {
   private baseUrl: string;
