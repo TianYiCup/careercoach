@@ -1,9 +1,10 @@
 import { getAuthToken } from './auth-token';
 import { ApiError } from './client';
 import { emitAuthInvalid, emitAgeRequired } from './auth-events';
+import { resolveApiBaseUrl } from './config';
 import type { SseEventFrame } from './types';
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/v1';
+const BASE_URL = resolveApiBaseUrl();
 
 /**
  * POST SSE — sends a POST request and consumes the text/event-stream response.
