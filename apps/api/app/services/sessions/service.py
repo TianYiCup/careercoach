@@ -38,6 +38,7 @@ from app.schemas.sessions import (
     CreateSessionResponse,
     EndSessionResponse,
     Score,
+    ScoreResult,
     SessionMemoryPayload,
     WeaknessUpdate,
 )
@@ -204,20 +205,35 @@ class SessionService:
         )
         return EndSessionResponse(
             score=score,
-            weakness_updates=_derive_weakness_updates(turns_count=len(turns)),
+            weakness_updates=_derive_weakness_updates(score=score, turns_count=len(turns)),
         )
 
 
-def _derive_weakness_updates(*, turns_count: int) -> list[WeaknessUpdate]:
+# Coarse, outcome-driven weakness tags for the sandbox path. A 封神 win
+# is deliberately absent — winning a round is not a weak spot, and the
+# old code's "every session adds 过早让步" made the weakness panel lie.
+# The specific, actionable weak points come from the 复盘 path (the
+# reviewer's top-failures); this is the coarse "how did the round go"
+# companion signal.
+_RESULT_WEAKNESS_TAG: dict[ScoreResult, str] = {
+    "fanche": "对抗中落于下风",
+    "guolu": "未能掌控对话节奏",
+}
+
+
+def _derive_weakness_updates(*, score: Score, turns_count: int) -> list[WeaknessUpdate]:
     """Per-tag delta list returned alongside `Score`.
 
-    The full taxonomy-driven weakness tracker is a later epic; for now
-    we just emit a single placeholder when there are turns to score, and
-    nothing for an empty session so the response isn't lying.
+    Gated on the real outcome: an empty session and a 封神 win both
+    contribute nothing (so the response doesn't invent a weakness the
+    user didn't earn); a 路过 / 翻车 folds in one coarse outcome tag.
     """
     if turns_count == 0:
         return []
-    return [WeaknessUpdate(tag="过早让步", delta=1)]
+    tag = _RESULT_WEAKNESS_TAG.get(score.result)
+    if tag is None:
+        return []
+    return [WeaknessUpdate(tag=tag, delta=1)]
 
 
 def _score_to_card_data(score: Score, *, seed: ScenarioSeed) -> SessionCardData:

@@ -67,6 +67,7 @@ from app.services.moderation.backend import ModerationBackendError
 from app.services.moderation.service import ModerationService
 from app.services.review.repository import ReviewRepository, ReviewUploadRecord
 from app.services.review.worker import ReviewWorkerQueue
+from app.services.weakness import WeaknessService
 
 if TYPE_CHECKING:
     # `app.agents.reviewer` ↔ `app.services.review` form an import cycle
@@ -135,6 +136,7 @@ class ReviewService:
         provider: LLMProvider,
         moderation: ModerationService,
         queue: ReviewWorkerQueue,
+        weakness_service: WeaknessService | None = None,
         langfuse_client: Langfuse | None = None,
         id_factory: _IdFactory | None = None,
         clock: _Clock | None = None,
@@ -143,6 +145,12 @@ class ReviewService:
         self._provider = provider
         self._moderation = moderation
         self._queue = queue
+        # Optional so existing call sites / tests that don't care about
+        # the weakness side-effect keep working. When set, a completed
+        # review folds its `summary_top_failures` into the user's
+        # weakness profile so 复盘 feeds the same panel as 沙盘 (best
+        # effort — a weakness-store hiccup never fails the analysis).
+        self._weakness = weakness_service
         # `None` is a real, supported value — when LANGFUSE_* keys
         # aren't configured `get_langfuse_client` returns None and
         # `begin_review_trace` degrades to a no-op `TurnTrace`. Dev
@@ -424,6 +432,17 @@ class ReviewService:
                 completed_at=completed_at,
             )
             final_status = "done"
+            # Feed 复盘 into the weakness profile: each top-failure point
+            # is already tag-sized (<=64 chars, <=3 items) and is exactly
+            # the user's weak spot in this conversation. `apply_safe` is
+            # best-effort (mirrors the sandbox end-of-session contract),
+            # so a weakness-store hiccup never turns a good analysis into
+            # a `failed` upload.
+            if self._weakness is not None and result.summary_top_failures:
+                await self._weakness.apply_safe(
+                    user_id=user_id,
+                    tag_deltas=dict.fromkeys(result.summary_top_failures, 1),
+                )
 
         trace.finish(
             output={

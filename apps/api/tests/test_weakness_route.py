@@ -9,6 +9,7 @@ import pytest
 from app.main import app
 from app.services.auth import mint_token
 from app.services.sessions import get_session_service, get_turn_service
+from app.services.sessions.service import _RESULT_WEAKNESS_TAG
 from app.services.weakness import (
     InMemoryWeaknessRepository,
     WeaknessService,
@@ -117,7 +118,9 @@ async def test_session_end_folds_weaknesses_into_profile(
 
         profile = await client.get("/v1/users/me/weaknesses")
         tags = [w["tag"] for w in profile.json()["weaknesses"]]
-        assert "过早让步" in tags
+        # The stubbed session ends 路过 (judge VERDICT: guolu), so the
+        # outcome-gated derivation folds in the 路过 weakness tag.
+        assert _RESULT_WEAKNESS_TAG["guolu"] in tags
     finally:
         app.dependency_overrides.pop(get_session_service, None)
         app.dependency_overrides.pop(get_turn_service, None)
