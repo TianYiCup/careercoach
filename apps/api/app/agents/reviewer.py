@@ -173,6 +173,11 @@ REVIEWER_SYSTEM_PROMPT = (
 
 
 _SUMMARY_SEPARATOR_RE = re.compile(r"^\s*-{3,}\s*$", re.MULTILINE)
+# Fallback anchor for when the model omits the `---` line and jumps
+# straight to the summary: the first line that starts with `SCORE:`.
+# `[^\S\n]*` allows leading spaces/tabs but not a newline, so `^` stays
+# pinned to a real line start under re.MULTILINE.
+_SUMMARY_ANCHOR_RE = re.compile(r"^[^\S\n]*SCORE\s*:", re.IGNORECASE | re.MULTILINE)
 _TURN_LINE_RE = re.compile(
     r"^TURN\s+(\d+)\s*\|\s*VERDICT\s*:\s*(\w+)(.*)$",
     re.IGNORECASE | re.MULTILINE,
@@ -199,24 +204,49 @@ def _split_summary_items(raw: str, *, item_max_len: int) -> tuple[str, ...]:
     return tuple(items)
 
 
+def _split_turn_and_summary(text: str) -> tuple[str, str] | None:
+    """Split the reviewer output into `(turn_block, summary_block)`.
+
+    The prompt asks for a `---` line between the per-turn marks and the
+    summary, but the model frequently omits it and goes straight to
+    `SCORE:`. Be tolerant:
+      1. prefer the explicit `---` separator when present;
+      2. otherwise anchor on the first `SCORE:`-led line — everything
+         before it is the turn block, everything from it onward is the
+         summary;
+      3. give up only when there is no anchor at all (no `---` AND no
+         `SCORE:` line), i.e. the output is genuinely unusable.
+    """
+    parts = _SUMMARY_SEPARATOR_RE.split(text, maxsplit=1)
+    if len(parts) == 2:
+        return parts[0], parts[1]
+    anchor = _SUMMARY_ANCHOR_RE.search(text)
+    if anchor is None:
+        return None
+    return text[: anchor.start()], text[anchor.start() :]
+
+
 def parse_reviewer_output(
     text: str,
     parsed_turns: tuple[ParsedTurn, ...],
 ) -> ReviewerResult | None:
     """Best-effort parse of the reviewer LLM contract.
 
-    Returns None when the SUMMARY block is missing, the SCORE field is
-    absent, the SCORE is non-numeric, or the SCORE falls outside [0, 10].
-    Per-turn lines that the LLM omitted degrade to `neutral` with no
-    reason / better — we still produce a complete record.
+    Returns None only when there is no usable SCORE: the summary anchor
+    is missing (no `---` and no `SCORE:` line), the SCORE field is
+    absent, non-numeric, or outside [0, 10]. Softer drift degrades
+    instead of failing: a missing `---` separator falls back to the
+    `SCORE:` anchor, omitted TOP_FAILURES / IMPROVEMENTS become empty
+    lists, and per-turn lines the LLM skipped degrade to `neutral` —
+    we still produce a complete record with the score + turns.
 
     Public so tests can drive parsing without spinning up an LLM.
     """
-    parts = _SUMMARY_SEPARATOR_RE.split(text, maxsplit=1)
-    if len(parts) != 2:
-        logger.warning("reviewer_missing_summary_separator", raw=text[:200])
+    split = _split_turn_and_summary(text)
+    if split is None:
+        logger.warning("reviewer_missing_summary", raw=text[:200])
         return None
-    turn_block, summary_block = parts
+    turn_block, summary_block = split
 
     score_match = _SCORE_RE.search(summary_block)
     if score_match is None:
@@ -231,14 +261,29 @@ def parse_reviewer_output(
         logger.warning("reviewer_score_out_of_range", value=score)
         return None
 
+    # TOP_FAILURES / IMPROVEMENTS are nice-to-have: if the model omits
+    # one, degrade to an empty list rather than failing the whole upload
+    # (the score + turns are the load-bearing result). The result page
+    # already hides empty summary sections.
     failures_match = _TOP_FAILURES_RE.search(summary_block)
     improvements_match = _IMPROVEMENTS_RE.search(summary_block)
     if failures_match is None or improvements_match is None:
-        logger.warning("reviewer_missing_summary_items", raw=text[:200])
-        return None
+        logger.info(
+            "reviewer_partial_summary",
+            has_failures=failures_match is not None,
+            has_improvements=improvements_match is not None,
+        )
 
-    top_failures = _split_summary_items(failures_match.group(1), item_max_len=_TOP_FAILURE_MAX)
-    improvements = _split_summary_items(improvements_match.group(1), item_max_len=_IMPROVEMENT_MAX)
+    top_failures = (
+        _split_summary_items(failures_match.group(1), item_max_len=_TOP_FAILURE_MAX)
+        if failures_match is not None
+        else ()
+    )
+    improvements = (
+        _split_summary_items(improvements_match.group(1), item_max_len=_IMPROVEMENT_MAX)
+        if improvements_match is not None
+        else ()
+    )
 
     by_idx: dict[int, tuple[str, str | None, str | None]] = {}
     for match in _TURN_LINE_RE.finditer(turn_block):
