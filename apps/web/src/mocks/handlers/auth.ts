@@ -21,6 +21,10 @@
 
 import { delay, http, HttpResponse } from 'msw';
 import type {
+  EmailSendRequest,
+  EmailSendResponse,
+  EmailVerifyRequest,
+  EmailVerifyResponse,
   SmsSendRequest,
   SmsSendResponse,
   SmsVerifyRequest,
@@ -29,10 +33,12 @@ import type {
 
 const BASE = '*/v1';
 const PHONE_PATTERN = /^1[3-9]\d{9}$/;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const CODE_PATTERN = /^\d{6}$/;
 const DEV_FALLBACK_CODE = '123456';
 
 const issuedCodes = new Map<string, string>();
+const issuedEmailCodes = new Map<string, string>();
 
 function _newCode(): string {
   return String(Math.floor(100000 + Math.random() * 900000));
@@ -99,6 +105,51 @@ export const authHandlers = [
 
     const tail = body.phone.slice(-4);
     const res: SmsVerifyResponse = {
+      token: `eyJ.dev-mock.${tail}.${Date.now().toString(36)}`,
+      user: {
+        id: `u_dev_${tail}`,
+        nickname: `K 学员 ${tail}`,
+        persona_type: 'in_school',
+        is_minor: false,
+      },
+    };
+    return HttpResponse.json(res);
+  }),
+
+  http.post(`${BASE}/auth/email/send`, async ({ request }) => {
+    await delay(200);
+    const body = (await request.json()) as EmailSendRequest;
+    if (!EMAIL_PATTERN.test(body.email)) {
+      return _errorEnvelope(400, 'BAD_REQUEST', 'email is malformed');
+    }
+    const code = _newCode();
+    issuedEmailCodes.set(body.email, code);
+    // eslint-disable-next-line no-console
+    console.info(
+      `%c[MSW] /auth/email/send  email=${body.email}  code=${code}  (or use ${DEV_FALLBACK_CODE})`,
+      'color: #a855f7; font-weight: bold',
+    );
+    const res: EmailSendResponse = { ttl: 60 };
+    return HttpResponse.json(res);
+  }),
+
+  http.post(`${BASE}/auth/email/verify`, async ({ request }) => {
+    await delay(300);
+    const body = (await request.json()) as EmailVerifyRequest;
+    if (!EMAIL_PATTERN.test(body.email) || !CODE_PATTERN.test(body.code)) {
+      return _errorEnvelope(400, 'INVALID_CODE', 'email or code format invalid');
+    }
+    const expected = issuedEmailCodes.get(body.email);
+    const matches = expected !== undefined && expected === body.code;
+    const usingFallback = expected === undefined && body.code === DEV_FALLBACK_CODE;
+    if (!matches && !usingFallback) {
+      return _errorEnvelope(400, 'INVALID_CODE', 'code does not match');
+    }
+    issuedEmailCodes.delete(body.email);
+
+    // Stable per-email suffix so the mock user id is deterministic.
+    const tail = body.email.slice(0, body.email.indexOf('@')).slice(-4) || 'user';
+    const res: EmailVerifyResponse = {
       token: `eyJ.dev-mock.${tail}.${Date.now().toString(36)}`,
       user: {
         id: `u_dev_${tail}`,
