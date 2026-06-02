@@ -52,6 +52,7 @@ from app.services.review import (
     get_review_service,
     get_review_worker_queue,
 )
+from app.services.weakness import InMemoryWeaknessRepository, WeaknessService
 from httpx import ASGITransport, AsyncClient
 
 _SAMPLE_TEXT = "opponent: free this weekend?\nme: busy."
@@ -246,6 +247,7 @@ def _deterministic_service(
     moderation: ModerationService | None = None,
     queue: ReviewWorkerQueue | None = None,
     langfuse_client: object | None = None,
+    weakness_service: WeaknessService | None = None,
 ) -> tuple[ReviewService, InMemoryReviewRepository]:
     """Build a service with deterministic id factory + clock so tests
     can assert on stable values without monkeypatching.
@@ -267,6 +269,7 @@ def _deterministic_service(
         provider=provider,  # type: ignore[arg-type]  # _FakeProvider satisfies LLMProvider structurally
         moderation=moderation or _moderation(),
         queue=queue or _SyncWorkerQueue(),
+        weakness_service=weakness_service,
         langfuse_client=langfuse_client,
         id_factory=lambda: f"up_test{next(counter):010d}",
         clock=lambda: datetime(2026, 5, 16, 10, next(clock_counter), tzinfo=UTC),
@@ -1195,6 +1198,59 @@ async def test_review_marks_failed_after_exhausting_retries(
     )
     assert post_resp.json()["status"] == "failed"
     assert provider.call_count == review_service._LLM_RETRY_ATTEMPTS
+
+
+# --------------------------------------------------------------------- #
+# 复盘 → 弱点画像 contribution                                            #
+#                                                                        #
+# A completed review folds its top-failure points into the weakness     #
+# profile, so 复盘 feeds the same panel 沙盘 writes to (best-effort).    #
+# --------------------------------------------------------------------- #
+
+
+async def test_review_done_folds_top_failures_into_weakness(client: AsyncClient) -> None:
+    weakness = WeaknessService(repo=InMemoryWeaknessRepository())
+    # _REVIEWER_OUTPUT carries `TOP_FAILURES: too curt; no warmth`.
+    provider = _FakeProvider(_REVIEWER_OUTPUT)
+    service, _ = _deterministic_service(provider, weakness_service=weakness)
+    app.dependency_overrides[get_review_service] = lambda: service
+    token = mint_token(
+        user_id="u_wk",
+        persona_type="intern",
+        is_minor=False,
+        age_set=True,
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    post_resp = await client.post(
+        "/v1/review/uploads", headers=headers, json={"text": _SAMPLE_TEXT}
+    )
+    assert post_resp.json()["status"] == "done"
+
+    records = await weakness.get_weaknesses(user_id="u_wk")
+    tags = {r.tag for r in records}
+    assert "too curt" in tags
+    assert "no warmth" in tags
+
+
+async def test_review_weakness_contribution_is_optional(client: AsyncClient) -> None:
+    """No weakness service wired → analysis still completes `done`
+    (the side-effect is best-effort, never load-bearing)."""
+    provider = _FakeProvider(_REVIEWER_OUTPUT)
+    service, _ = _deterministic_service(provider)  # weakness_service=None
+    app.dependency_overrides[get_review_service] = lambda: service
+    token = mint_token(
+        user_id="u_no_wk",
+        persona_type="intern",
+        is_minor=False,
+        age_set=True,
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    post_resp = await client.post(
+        "/v1/review/uploads", headers=headers, json={"text": _SAMPLE_TEXT}
+    )
+    assert post_resp.json()["status"] == "done"
 
 
 # --------------------------------------------------------------------- #

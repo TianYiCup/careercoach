@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 import pytest
 from app.agents.state import TurnScore, Verdict
 from app.llm import LLMAuthError, Message, TokenUsage
-from app.schemas.sessions import CreateSessionRequest
+from app.schemas.sessions import CreateSessionRequest, Score
 from app.services.memory import InMemoryEpisodeRepository, MemoryService
 from app.services.profile import InMemoryProfileRepository, ProfileService
 from app.services.sessions import (
@@ -25,6 +25,7 @@ from app.services.sessions import (
     SessionNotFoundError,
     SessionService,
 )
+from app.services.sessions.service import _derive_weakness_updates
 from app.services.sessions.turn_repository import CoachHintTrio, TurnRecord
 from app.services.sharecards.session_score import InMemorySessionScoreRepository
 
@@ -222,7 +223,9 @@ async def test_end_session_with_turns_uses_llm_summary() -> None:
     assert s.result == "shenfeng"
     assert "节奏" in s.highlights
     assert "急躁" in s.failures
-    assert end_response.weakness_updates  # non-empty when turns exist
+    # A 封神 win contributes no weakness — winning a round isn't a weak
+    # spot. The non-win + 复盘 paths are what populate the panel.
+    assert end_response.weakness_updates == []
 
 
 async def test_end_session_empty_session_returns_zeroes_and_no_weakness_updates() -> None:
@@ -317,3 +320,40 @@ async def test_end_session_twice_raises_already_ended() -> None:
 
     with pytest.raises(SessionAlreadyEndedError):
         await svc.end_session(created.session_id, user_id="u_test")
+
+
+# --------------------------------------------------------------------- #
+# _derive_weakness_updates — outcome-gated weakness signal              #
+# --------------------------------------------------------------------- #
+
+
+def _score(result: str) -> Score:
+    return Score(
+        aura=5,
+        logic=5,
+        emotion=5,
+        professionalism=5,
+        goal_achieve=5,
+        highlights="h",
+        failures="f",
+        result=result,  # type: ignore[arg-type]
+    )
+
+
+def test_derive_weakness_empty_session_is_empty() -> None:
+    # No turns → nothing, even if the result band is a loss.
+    assert _derive_weakness_updates(score=_score("fanche"), turns_count=0) == []
+
+
+def test_derive_weakness_win_contributes_nothing() -> None:
+    # The old bug: every session (wins included) added a weakness.
+    assert _derive_weakness_updates(score=_score("shenfeng"), turns_count=3) == []
+
+
+def test_derive_weakness_loss_folds_outcome_tag() -> None:
+    fanche = _derive_weakness_updates(score=_score("fanche"), turns_count=3)
+    guolu = _derive_weakness_updates(score=_score("guolu"), turns_count=3)
+    assert len(fanche) == 1 and fanche[0].delta == 1
+    assert len(guolu) == 1 and guolu[0].delta == 1
+    # Distinct tags per outcome band so the panel can tell them apart.
+    assert fanche[0].tag != guolu[0].tag

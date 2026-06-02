@@ -35,6 +35,7 @@ from app.services.review.worker import (
     ReviewWorkerQueue,
     SyncWorkerQueue,
 )
+from app.services.weakness import get_weakness_service
 
 logger = structlog.get_logger(__name__)
 
@@ -91,6 +92,9 @@ def get_review_service() -> ReviewService:
     provider = get_llm_router()
     moderation = get_moderation_service()
     queue = get_review_worker_queue()
+    # Shared weakness service so a completed 复盘 folds its top-failure
+    # points into the same weakness profile 沙盘 writes to.
+    weakness = get_weakness_service()
     # `None` when LANGFUSE_* keys are unset — `begin_review_trace`
     # short-circuits to a no-op `TurnTrace`. Dev without a local
     # Langfuse instance works unchanged.
@@ -108,6 +112,7 @@ def get_review_service() -> ReviewService:
         provider=provider,
         moderation=moderation,
         queue=queue,
+        weakness_service=weakness,
         langfuse_client=langfuse_client,
     )
 
