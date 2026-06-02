@@ -48,7 +48,9 @@ from app.services.review import (
     InProcessWorkerQueue,
     ReviewService,
     ReviewWorkerQueue,
+    SyncWorkerQueue,
     get_review_service,
+    get_review_worker_queue,
 )
 from httpx import ASGITransport, AsyncClient
 
@@ -1000,6 +1002,100 @@ async def test_in_process_queue_swallows_unexpected_worker_exception(client: Asy
     get_resp = await client.get(f"/v1/review/uploads/{upload_id}", headers=headers)
     assert get_resp.status_code == 200
     assert get_resp.json()["status"] == "processing"
+
+
+# --------------------------------------------------------------------- #
+# Synchronous production default (复盘 demo-readiness fix)                #
+#                                                                        #
+# The shipped result page fetches the upload ONCE and never polls, so   #
+# an async `processing` POST stranded it on an empty screen. The v0     #
+# default is now `SyncWorkerQueue` — POST runs the analysis inline and  #
+# returns a terminal record, so the single GET sees `done`.             #
+# --------------------------------------------------------------------- #
+
+
+def test_production_default_queue_is_synchronous() -> None:
+    """Pin the v0 wiring decision: the default queue runs inline so the
+    POST returns `done`/`failed`, not `processing`. If someone swaps it
+    back to the async `InProcessWorkerQueue` they must also teach the
+    web/EXE result page to poll — this test is the tripwire."""
+    get_review_worker_queue.cache_clear()
+    try:
+        queue = get_review_worker_queue()
+        assert isinstance(queue, SyncWorkerQueue)
+        assert queue.name == "sync_inline"
+    finally:
+        get_review_worker_queue.cache_clear()
+
+
+async def test_sync_queue_post_returns_done_without_polling(client: AsyncClient) -> None:
+    """The regression that broke 复盘: with the synchronous queue the
+    POST itself returns `done`, and a single GET (no polling loop) sees
+    the folded turns + summary — matching what `ReviewResultPage` does."""
+    provider = _FakeProvider(_REVIEWER_OUTPUT)
+    service, _ = _deterministic_service(provider, queue=SyncWorkerQueue())
+    app.dependency_overrides[get_review_service] = lambda: service
+    token = mint_token(
+        user_id="u_adult",
+        persona_type="intern",
+        is_minor=False,
+        age_set=True,
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    post_resp = await client.post(
+        "/v1/review/uploads", headers=headers, json={"text": _SAMPLE_TEXT}
+    )
+    assert post_resp.status_code == 200
+    # Terminal on the POST itself — no `processing` intermediate.
+    assert post_resp.json()["status"] == "done"
+    upload_id = post_resp.json()["upload_id"]
+
+    # Single GET, no polling — exactly the result page's behavior.
+    get_resp = await client.get(f"/v1/review/uploads/{upload_id}", headers=headers)
+    assert get_resp.status_code == 200
+    body = get_resp.json()
+    assert body["status"] == "done"
+    assert body["summary"]["score"] == 6.4
+    assert len(body["turns"]) == 2
+
+
+async def test_sync_queue_enqueue_never_raises_on_worker_bug(client: AsyncClient) -> None:
+    """A bug in the worker body (here: a moderation backend raising a
+    non-`ModerationBackendError`) must NOT bubble out of the inline
+    `enqueue` and 5xx the POST — the `processing` row is already
+    persisted. `_run_with_logging` swallows it; POST returns 200 with
+    the row still `processing` (worst case, same as the async queue)."""
+
+    class _UnexpectedlyExplodingBackend:
+        name = "exploding_output"
+
+        async def evaluate(self, content: str, context: ModerationContext) -> Decision:
+            if context == "user_input":
+                return _ALLOW_DECISION
+            raise RuntimeError("unexpected output-mod crash")
+
+    provider = _FakeProvider(_REVIEWER_OUTPUT)
+    service, _ = _deterministic_service(
+        provider,
+        queue=SyncWorkerQueue(),
+        moderation=_moderation(_UnexpectedlyExplodingBackend()),
+    )
+    app.dependency_overrides[get_review_service] = lambda: service
+    token = mint_token(
+        user_id="u_adult",
+        persona_type="intern",
+        is_minor=False,
+        age_set=True,
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    post_resp = await client.post(
+        "/v1/review/uploads", headers=headers, json={"text": _SAMPLE_TEXT}
+    )
+    # No 5xx: enqueue swallowed the worker crash.
+    assert post_resp.status_code == 200
+    assert post_resp.json()["status"] == "processing"
 
 
 # --------------------------------------------------------------------- #
