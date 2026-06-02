@@ -117,6 +117,50 @@ class InProcessWorkerQueue:
         await asyncio.gather(*pending, return_exceptions=True)
 
 
+class SyncWorkerQueue:
+    """Inline queue — runs the review analysis *synchronously* inside the
+    request so `POST /v1/review/uploads` returns a terminal record
+    (`done` / `failed`) rather than `processing`.
+
+    Why this is the v0 default (not `InProcessWorkerQueue`)
+    ------------------------------------------------------
+    The async queue returns `processing` and relies on the client
+    polling `GET /uploads/{id}` until the worker flips the row. The
+    shipped web/EXE result page (`ReviewResultPage`) fetches **once**
+    and never polls — so an async POST strands it on an empty
+    "0 turns / NO RESULT" screen even though the analysis succeeds a
+    second later. That was the reported "复盘功能异常".
+
+    Running inline keeps the analysis within the request: the upload
+    page already shows a "分析中…" pending spinner during POST, and the
+    result page's single GET then sees the folded record. The LLM
+    round-trip is ~1-2s (DeepSeek primary, bounded + Qwen fallback),
+    well inside the request budget for v0's single-uvicorn deploy
+    (foundation §3.1).
+
+    `InProcessWorkerQueue` stays available for when the client grows a
+    polling loop (and the A-14 Redis migration) — the Protocol is
+    unchanged, so re-enabling async is a one-line swap in
+    `get_review_worker_queue`.
+    """
+
+    name = "sync_inline"
+
+    async def enqueue(self, work: WorkFactory) -> None:
+        # Run inline, but through the same guard as the async queue so a
+        # bug in the worker body NEVER raises out of `enqueue`: the
+        # Protocol forbids it (the `processing` row is already persisted,
+        # so a raise here would 5xx a POST and leak that row). Routine
+        # failures (LLMError, output ModerationBackendError) are already
+        # folded to `failed` inside `_process_upload`; only true bugs
+        # reach `_run_with_logging`, which logs and swallows.
+        await _run_with_logging(work)
+
+    async def wait_idle(self) -> None:
+        # Work already ran inline during `enqueue`; nothing is in flight.
+        return None
+
+
 async def _run_with_logging(work: WorkFactory) -> None:
     """Top-level wrapper so an uncaught exception in a background
     task is observable (asyncio prints a "Task exception was never

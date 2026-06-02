@@ -30,7 +30,11 @@ from app.services.review.repository import (
     Speaker,
 )
 from app.services.review.service import ReviewInputBlockedError, ReviewService
-from app.services.review.worker import InProcessWorkerQueue, ReviewWorkerQueue
+from app.services.review.worker import (
+    InProcessWorkerQueue,
+    ReviewWorkerQueue,
+    SyncWorkerQueue,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -53,14 +57,22 @@ def get_review_repository() -> ReviewRepository:
 def get_review_worker_queue() -> ReviewWorkerQueue:
     """Process-wide background queue singleton for review analysis.
 
-    v0 ships `InProcessWorkerQueue` (asyncio.create_task) — that
-    matches the single-uvicorn-worker deployment shape (foundation
-    §3.1) and gives us a clean migration point for Redis / Celery /
-    Cloud-Tasks in A-14+. Tests override with `SyncWorkerQueue` or
-    `DeferredQueue` (in `tests/test_review_route.py`) for deterministic
-    assertions; production never hits those impls.
+    v0 ships `SyncWorkerQueue` — it runs the analysis inline so the
+    POST returns a terminal (`done` / `failed`) record. The shipped
+    web/EXE result page fetches the upload once and does NOT poll, so an
+    async `processing` response would strand it on an empty screen (the
+    reported "复盘功能异常"). Inline analysis fits v0's single-uvicorn
+    deploy (foundation §3.1); the ~1-2s LLM round-trip sits behind the
+    upload page's existing "分析中…" spinner.
+
+    `InProcessWorkerQueue` (asyncio.create_task) is the async
+    alternative for when the client grows a polling loop + the A-14
+    Redis / Celery / Cloud-Tasks migration; it's a one-line swap here
+    since the Protocol is shared. Tests still override with their own
+    `_SyncWorkerQueue` / `_DeferredQueue` / `InProcessWorkerQueue` for
+    deterministic assertions.
     """
-    queue = InProcessWorkerQueue()
+    queue: ReviewWorkerQueue = SyncWorkerQueue()
     logger.info("review_worker_queue_wired", backend=queue.name)
     return queue
 
@@ -113,6 +125,7 @@ __all__ = [
     "ReviewVerdict",
     "ReviewWorkerQueue",
     "Speaker",
+    "SyncWorkerQueue",
     "get_review_repository",
     "get_review_service",
     "get_review_worker_queue",
