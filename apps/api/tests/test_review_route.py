@@ -114,6 +114,40 @@ class _RaisingProvider:
         yield ""  # pragma: no cover — keeps function an async generator
 
 
+class _FlakyProvider:
+    """Raises `LLMUpstreamError` for the first `fail_times` calls, then
+    streams `output`. Pins the review LLM retry path: a transient blip
+    should be retried, a genuine outage should settle into `failed`."""
+
+    name = "flaky"
+
+    def __init__(self, output: str, *, fail_times: int) -> None:
+        self._output = output
+        self._fail_times = fail_times
+        self.call_count = 0
+
+    def stream_chat(
+        self,
+        messages: list[Message],
+        *,
+        temperature: float = 0.7,
+        timeout: float = 8.0,
+        usage_sink: list[TokenUsage] | None = None,
+    ) -> AsyncIterator[str]:
+        _ = usage_sink
+        self.call_count += 1
+        if self.call_count <= self._fail_times:
+            return self._raise()
+        return self._chunks()
+
+    async def _raise(self) -> AsyncIterator[str]:
+        raise LLMUpstreamError("transient blip", provider=self.name)
+        yield ""  # pragma: no cover — keeps function an async generator
+
+    async def _chunks(self) -> AsyncIterator[str]:
+        yield self._output
+
+
 _ALLOW_DECISION = Decision(verdict="allow", score=0.05)
 
 
@@ -1096,6 +1130,71 @@ async def test_sync_queue_enqueue_never_raises_on_worker_bug(client: AsyncClient
     # No 5xx: enqueue swallowed the worker crash.
     assert post_resp.status_code == 200
     assert post_resp.json()["status"] == "processing"
+
+
+# --------------------------------------------------------------------- #
+# Transient LLM retry (复盘 偶发 failed 修复)                             #
+#                                                                        #
+# A flaky / recovering network can make both router providers miss the   #
+# first-byte budget once, raising LLMError. Review is background work,    #
+# so it retries the analysis (bounded + backoff) instead of failing the  #
+# whole upload on a single blip.                                         #
+# --------------------------------------------------------------------- #
+
+
+async def test_review_retries_transient_llm_failure_then_succeeds(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One transient LLM failure must NOT fail the upload — the review
+    path retries and the analysis completes `done`."""
+    import app.services.review.service as review_service
+
+    monkeypatch.setattr(review_service, "_LLM_RETRY_BACKOFF_S", 0.0)
+    provider = _FlakyProvider(_REVIEWER_OUTPUT, fail_times=1)
+    service, _ = _deterministic_service(provider)
+    app.dependency_overrides[get_review_service] = lambda: service
+    token = mint_token(
+        user_id="u_adult",
+        persona_type="intern",
+        is_minor=False,
+        age_set=True,
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    post_resp = await client.post(
+        "/v1/review/uploads", headers=headers, json={"text": _SAMPLE_TEXT}
+    )
+    assert post_resp.json()["status"] == "done"
+    # 1 failed attempt + 1 successful retry.
+    assert provider.call_count == 2
+
+
+async def test_review_marks_failed_after_exhausting_retries(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A genuine outage (every attempt raises) settles into `failed`
+    after exactly `_LLM_RETRY_ATTEMPTS` attempts — bounded, no hang."""
+    import app.services.review.service as review_service
+
+    monkeypatch.setattr(review_service, "_LLM_RETRY_BACKOFF_S", 0.0)
+    provider = _FlakyProvider(_REVIEWER_OUTPUT, fail_times=99)
+    service, _ = _deterministic_service(provider)
+    app.dependency_overrides[get_review_service] = lambda: service
+    token = mint_token(
+        user_id="u_adult",
+        persona_type="intern",
+        is_minor=False,
+        age_set=True,
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    post_resp = await client.post(
+        "/v1/review/uploads", headers=headers, json={"text": _SAMPLE_TEXT}
+    )
+    assert post_resp.json()["status"] == "failed"
+    assert provider.call_count == review_service._LLM_RETRY_ATTEMPTS
 
 
 # --------------------------------------------------------------------- #

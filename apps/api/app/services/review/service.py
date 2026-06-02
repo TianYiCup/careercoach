@@ -52,6 +52,7 @@ client can't enumerate upload_ids by status code.
 
 from __future__ import annotations
 
+import asyncio
 import secrets
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol
@@ -82,6 +83,17 @@ logger = structlog.get_logger(__name__)
 # in trace logs and ad-hoc DB queries.
 _UPLOAD_ID_PREFIX = "up_"
 _UPLOAD_ID_HEX_LEN = 16
+
+# Review is a background, single-shot analysis behind the upload spinner
+# — not latency-critical — so a transient LLM transport blip (both router
+# providers missing the first-byte budget once on a flaky / recovering
+# network) should be retried rather than failing the whole upload. Bounded
+# so a genuine outage still settles into `failed` in a few seconds. Linear
+# backoff gives the network a moment between attempts.
+#
+# Module-level so tests can monkeypatch the backoff to 0 and run fast.
+_LLM_RETRY_ATTEMPTS = 3
+_LLM_RETRY_BACKOFF_S = 0.6
 
 
 class _IdFactory(Protocol):
@@ -353,26 +365,13 @@ class ReviewService:
         trace_id: str,
         trace: TurnTrace,
     ) -> None:
-        # Imported here, not at module scope, to break the
-        # `reviewer` ↔ `review.service` import cycle (see TYPE_CHECKING
-        # block above). By call time `app.agents.reviewer` is fully
-        # loaded.
-        from app.agents.reviewer import analyze_review
-
         usage: list[TokenUsage] = []
-        try:
-            result: ReviewerResult | None = await analyze_review(
-                self._provider, text=text, usage_sink=usage
-            )
-        except LLMError as exc:
-            logger.warning(
-                "review_llm_failed",
-                upload_id=upload_id,
-                trace_id=trace_id,
-                provider=getattr(self._provider, "name", "unknown"),
-                error=str(exc),
-            )
-            result = None
+        result: ReviewerResult | None = await self._analyze_with_retry(
+            text=text,
+            usage=usage,
+            upload_id=upload_id,
+            trace_id=trace_id,
+        )
 
         # Record the analyze_review LLM call as one generation under
         # this trace. We record even on `None` so failed analyses show
@@ -434,6 +433,58 @@ class ReviewService:
                 "turn_count": len(result.turns) if result is not None else 0,
             }
         )
+
+    async def _analyze_with_retry(
+        self,
+        *,
+        text: str,
+        usage: list[TokenUsage],
+        upload_id: str,
+        trace_id: str,
+    ) -> ReviewerResult | None:
+        """Run `analyze_review`, retrying on transient LLM transport
+        failures (`LLMError`) with linear backoff.
+
+        Returns the parsed result, or None when:
+          * every attempt raised `LLMError` — a genuine outage (both
+            router providers unreachable). The caller marks the upload
+            `failed`.
+          * the LLM responded but the input/output was unparseable
+            (`analyze_review`'s own None). That is NOT retried — a
+            re-sample rarely fixes a structural parse miss and we don't
+            want to triple the token cost on every malformed reply.
+
+        `usage` is cleared before each attempt and ends populated from
+        the attempt that reached the provider, so the trace still records
+        token counts on the call that actually produced output.
+        """
+        # Imported here, not at module scope, to break the
+        # `reviewer` ↔ `review.service` import cycle (see TYPE_CHECKING
+        # block above). By call time `app.agents.reviewer` is fully loaded.
+        from app.agents.reviewer import analyze_review
+
+        for attempt in range(1, _LLM_RETRY_ATTEMPTS + 1):
+            usage.clear()
+            try:
+                return await analyze_review(self._provider, text=text, usage_sink=usage)
+            except LLMError as exc:
+                is_last = attempt == _LLM_RETRY_ATTEMPTS
+                logger.warning(
+                    "review_llm_attempt_failed",
+                    upload_id=upload_id,
+                    trace_id=trace_id,
+                    provider=getattr(self._provider, "name", "unknown"),
+                    attempt=attempt,
+                    max_attempts=_LLM_RETRY_ATTEMPTS,
+                    will_retry=not is_last,
+                    error=str(exc),
+                )
+                if is_last:
+                    return None
+                # Linear backoff (0.6s, 1.2s, …) — a brief pause lets a
+                # flaky / recovering network reconnect before the next try.
+                await asyncio.sleep(_LLM_RETRY_BACKOFF_S * attempt)
+        return None  # unreachable: the loop always returns on its last attempt
 
     async def _output_passes_moderation(
         self,
