@@ -1,20 +1,21 @@
 /**
  * LoginPage — cyberpunk redesign (PRD §F1 / §7.2).
  *
- * Same two-step SMS flow + data layer as before:
- *   step 1 (phone): 11-digit input → POST /v1/auth/sms/send
- *   step 2 (code):  6-digit input  → POST /v1/auth/sms/verify → useAuth.login
+ * Two-step verification-code flow. Email is the primary method; a toggle
+ * drops to the legacy phone (SMS) path. Both share the same step-2 code
+ * UI and the same `useAuth.login` handoff:
+ *   step 1 (identify): email / 11-digit phone → POST /v1/auth/{email,sms}/send
+ *   step 2 (code):     6-digit input          → POST /v1/auth/{email,sms}/verify
  *
- * Visual chrome only — error messages, regexes, 60s cooldown,
- * Retry-After handling, and the inline error humanizers are preserved
- * verbatim from the original. The page now matches the HomePage AI-OS
- * shell: NeuralParticles background, HUD frame around the form card,
- * MagneticButton primary, Orbitron massive eyebrow, K Mascot in a corner.
+ * 60s cooldown, Retry-After handling, and the inline error humanizers are
+ * preserved and generalized to cover both the EMAIL_* and SMS_* code
+ * families. Visual chrome (NeuralParticles, HUD frame, MagneticButton,
+ * Orbitron eyebrow, K Mascot) is unchanged.
  */
 
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { ChevronLeft, Send, Smartphone, Sparkles } from 'lucide-react'
+import { ChevronLeft, Mail, Send, Smartphone, Sparkles } from 'lucide-react'
 
 import { MascotReaction } from '../../components'
 import {
@@ -24,17 +25,28 @@ import {
   NeuralParticles,
 } from '../../components/cyber'
 import { apiClient, ApiError } from '../../api/v1'
-import type { SmsSendResponse, SmsVerifyResponse } from '../../api/v1'
+import type {
+  EmailSendResponse,
+  EmailVerifyResponse,
+  SmsSendResponse,
+  SmsVerifyResponse,
+} from '../../api/v1'
 import { useAuth } from './useAuth'
 
 const PHONE_PATTERN = /^1[3-9]\d{9}$/
+// Pragmatic email shape — the backend is the real validator; this just
+// stops an obviously-malformed address from spending a request.
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const CODE_PATTERN = /^\d{6}$/
 
-type Step = 'phone' | 'code'
+type Method = 'email' | 'phone'
+type Step = 'identify' | 'code'
 
 export function LoginPage() {
   const { login } = useAuth()
-  const [step, setStep] = useState<Step>('phone')
+  const [method, setMethod] = useState<Method>('email')
+  const [step, setStep] = useState<Step>('identify')
+  const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('')
   const [code, setCode] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -49,20 +61,32 @@ export function LoginPage() {
     return () => clearInterval(t)
   }, [cooldown])
 
+  const identifierValid =
+    method === 'email' ? EMAIL_PATTERN.test(email) : PHONE_PATTERN.test(phone)
+
+  const switchMethod = (next: Method) => {
+    setMethod(next)
+    setStep('identify')
+    setCode('')
+    setError(null)
+  }
+
   const handleSend = async () => {
-    if (!PHONE_PATTERN.test(phone)) {
-      setError('请输入正确的手机号')
+    if (!identifierValid) {
+      setError(method === 'email' ? '请输入正确的邮箱' : '请输入正确的手机号')
       return
     }
     setError(null)
     setPending(true)
     try {
-      const res = await apiClient.post<SmsSendResponse>('/auth/sms/send', { phone })
+      const path = method === 'email' ? '/auth/email/send' : '/auth/sms/send'
+      const body = method === 'email' ? { email } : { phone }
+      const res = await apiClient.post<SmsSendResponse | EmailSendResponse>(path, body)
       setStep('code')
       setCode('')
       setCooldown(res.ttl)
     } catch (e) {
-      setError(_humanizeSendError(e))
+      setError(_humanizeSendError(e, method))
       if (e instanceof ApiError && e.status === 429) {
         const retryAfter = e.headers.get('Retry-After')
         if (retryAfter) {
@@ -85,10 +109,9 @@ export function LoginPage() {
     setError(null)
     setPending(true)
     try {
-      const res = await apiClient.post<SmsVerifyResponse>('/auth/sms/verify', {
-        phone,
-        code,
-      })
+      const path = method === 'email' ? '/auth/email/verify' : '/auth/sms/verify'
+      const body = method === 'email' ? { email, code } : { phone, code }
+      const res = await apiClient.post<SmsVerifyResponse | EmailVerifyResponse>(path, body)
       login(res.token, res.user)
     } catch (e) {
       setError(_humanizeVerifyError(e))
@@ -129,7 +152,11 @@ export function LoginPage() {
             <GlowText variant="gradient">ENTER</GlowText>
           </h1>
           <p className="mt-3 font-display text-xl italic text-white/80">
-            {step === 'phone' ? '把手机号丢进来' : '验证码已发出'}
+            {step === 'identify'
+              ? method === 'email'
+                ? '把邮箱丢进来'
+                : '把手机号丢进来'
+              : '验证码已发出'}
           </p>
         </div>
 
@@ -146,20 +173,26 @@ export function LoginPage() {
         </div>
 
         <HudFrame
-          label={step === 'phone' ? 'AUTH · STEP 01' : 'AUTH · STEP 02'}
-          tag={step === 'phone' ? 'PHONE' : 'OTP-6'}
+          label={step === 'identify' ? 'AUTH · STEP 01' : 'AUTH · STEP 02'}
+          tag={step === 'identify' ? (method === 'email' ? 'EMAIL' : 'PHONE') : 'OTP-6'}
           className="cyber-glass-edge rounded-3xl px-6 pt-16 pb-6"
         >
-          {step === 'phone' ? (
-            <PhoneStep
+          {step === 'identify' ? (
+            <IdentifyStep
+              method={method}
+              email={email}
               phone={phone}
               pending={pending}
-              onChange={setPhone}
+              valid={identifierValid}
+              onEmailChange={setEmail}
+              onPhoneChange={setPhone}
               onSubmit={handleSend}
+              onSwitchMethod={switchMethod}
             />
           ) : (
             <CodeStep
-              phone={phone}
+              method={method}
+              identifier={method === 'email' ? email : phone}
               code={code}
               pending={pending}
               cooldown={cooldown}
@@ -167,7 +200,7 @@ export function LoginPage() {
               onSubmit={handleVerify}
               onResend={handleSend}
               onBack={() => {
-                setStep('phone')
+                setStep('identify')
                 setCode('')
                 setError(null)
               }}
@@ -190,7 +223,9 @@ export function LoginPage() {
         {import.meta.env.VITE_DEMO_MODE === 'true' && (
           <div className="mt-3 rounded-lg border border-cyber-cyan/20 bg-cyber-cyan/5 px-4 py-2 text-center font-mono text-[10px] text-cyber-cyan/70">
             <span className="text-cyber-cyan">DEMO · </span>
-            手机号填自己的（不会真发短信），验证码任意 6 位即可（如 000000）
+            {method === 'email'
+              ? '邮箱填自己的（不会真发邮件），验证码任意 6 位即可（如 000000）'
+              : '手机号填自己的（不会真发短信），验证码任意 6 位即可（如 000000）'}
           </div>
         )}
       </motion.div>
@@ -198,33 +233,67 @@ export function LoginPage() {
   )
 }
 
-interface PhoneStepProps {
+interface IdentifyStepProps {
+  method: Method
+  email: string
   phone: string
   pending: boolean
-  onChange: (v: string) => void
+  valid: boolean
+  onEmailChange: (v: string) => void
+  onPhoneChange: (v: string) => void
   onSubmit: () => void
+  onSwitchMethod: (m: Method) => void
 }
 
-function PhoneStep({ phone, pending, onChange, onSubmit }: PhoneStepProps) {
-  const disabled = pending || !PHONE_PATTERN.test(phone)
+function IdentifyStep({
+  method,
+  email,
+  phone,
+  pending,
+  valid,
+  onEmailChange,
+  onPhoneChange,
+  onSubmit,
+  onSwitchMethod,
+}: IdentifyStepProps) {
+  const disabled = pending || !valid
   return (
     <div className="space-y-4">
-      <CyberInput
-        type="tel"
-        inputMode="numeric"
-        autoComplete="tel"
-        maxLength={11}
-        value={phone}
-        onChange={e => onChange(e.target.value.replace(/\D/g, ''))}
-        onKeyDown={e => {
-          if (e.key === 'Enter' && !disabled) {
-            onSubmit()
-          }
-        }}
-        placeholder="11 位手机号"
-        ariaLabel="手机号"
-        icon={<Smartphone className="h-4 w-4" />}
-      />
+      {method === 'email' ? (
+        <CyberInput
+          type="email"
+          inputMode="email"
+          autoComplete="email"
+          maxLength={254}
+          value={email}
+          onChange={e => onEmailChange(e.target.value.trim())}
+          onKeyDown={e => {
+            if (e.key === 'Enter' && !disabled) {
+              onSubmit()
+            }
+          }}
+          placeholder="你的邮箱"
+          ariaLabel="邮箱"
+          icon={<Mail className="h-4 w-4" />}
+        />
+      ) : (
+        <CyberInput
+          type="tel"
+          inputMode="numeric"
+          autoComplete="tel"
+          maxLength={11}
+          value={phone}
+          onChange={e => onPhoneChange(e.target.value.replace(/\D/g, ''))}
+          onKeyDown={e => {
+            if (e.key === 'Enter' && !disabled) {
+              onSubmit()
+            }
+          }}
+          placeholder="11 位手机号"
+          ariaLabel="手机号"
+          icon={<Smartphone className="h-4 w-4" />}
+        />
+      )}
       <div className="flex justify-center pt-1">
         <MagneticButton type="button" onClick={onSubmit} disabled={disabled}>
           {pending ? (
@@ -240,12 +309,22 @@ function PhoneStep({ phone, pending, onChange, onSubmit }: PhoneStepProps) {
           )}
         </MagneticButton>
       </div>
+      <div className="pt-1 text-center">
+        <button
+          type="button"
+          onClick={() => onSwitchMethod(method === 'email' ? 'phone' : 'email')}
+          className="font-mono text-[11px] text-white/45 transition-colors hover:text-cyber-cyan"
+        >
+          {method === 'email' ? '用手机号登录' : '用邮箱登录'}
+        </button>
+      </div>
     </div>
   )
 }
 
 interface CodeStepProps {
-  phone: string
+  method: Method
+  identifier: string
   code: string
   pending: boolean
   cooldown: number
@@ -256,7 +335,8 @@ interface CodeStepProps {
 }
 
 function CodeStep({
-  phone,
+  method,
+  identifier,
   code,
   pending,
   cooldown,
@@ -266,10 +346,12 @@ function CodeStep({
   onBack,
 }: CodeStepProps) {
   const disabled = pending || !CODE_PATTERN.test(code)
+  const channel = method === 'email' ? 'EMAIL' : 'SMS'
+  const shown = method === 'email' ? _maskEmail(identifier) : _maskPhone(identifier)
   return (
     <div className="space-y-4">
       <p className="text-center font-mono text-[11px] text-white/50">
-        SMS → <span className="text-cyber-cyan">{_maskPhone(phone)}</span>
+        {channel} → <span className="text-cyber-cyan">{shown}</span>
       </p>
       <CyberInput
         type="text"
@@ -305,7 +387,7 @@ function CodeStep({
           className="inline-flex items-center gap-1 text-white/50 transition-colors hover:text-white/80"
         >
           <ChevronLeft className="h-3 w-3" />
-          换手机号
+          {method === 'email' ? '换邮箱' : '换手机号'}
         </button>
         <button
           type="button"
@@ -329,7 +411,7 @@ function CodeStep({
  * ─────────────────────────────────────────────────────────────── */
 interface CyberInputProps {
   type?: string
-  inputMode?: 'numeric' | 'text' | 'tel'
+  inputMode?: 'numeric' | 'text' | 'tel' | 'email'
   autoComplete?: string
   maxLength?: number
   value: string
@@ -390,14 +472,28 @@ function _maskPhone(phone: string): string {
   return `${phone.slice(0, 3)}****${phone.slice(-4)}`
 }
 
-function _humanizeSendError(e: unknown): string {
+function _maskEmail(email: string): string {
+  const at = email.indexOf('@')
+  if (at <= 1) {
+    return email
+  }
+  const name = email.slice(0, at)
+  const domain = email.slice(at)
+  const head = name.slice(0, Math.min(2, name.length))
+  return `${head}***${domain}`
+}
+
+function _humanizeSendError(e: unknown, method: Method): string {
   if (e instanceof ApiError) {
     if (e.status === 400) {
-      return '手机号格式不对'
+      return method === 'email' ? '邮箱格式不对' : '手机号格式不对'
+    }
+    if (e.status === 502) {
+      return '验证码发送服务暂时不可用，请稍后再试'
     }
     if (e.status === 429) {
       const code = (e.body as { code?: string })?.code
-      if (code === 'SMS_SEND_COOLDOWN') {
+      if (code === 'SMS_SEND_COOLDOWN' || code === 'EMAIL_SEND_COOLDOWN') {
         const retryAfter = e.headers.get('Retry-After')
         const secs = retryAfter ? Number(retryAfter) : 0
         if (secs > 0) {
@@ -418,7 +514,7 @@ function _humanizeVerifyError(e: unknown): string {
     }
     if (e.status === 429) {
       const code = (e.body as { code?: string })?.code
-      if (code === 'SMS_VERIFY_LOCKED') {
+      if (code === 'SMS_VERIFY_LOCKED' || code === 'EMAIL_VERIFY_LOCKED') {
         return '验证次数过多，请稍后再试'
       }
       return '请求太频繁，稍后再试'
