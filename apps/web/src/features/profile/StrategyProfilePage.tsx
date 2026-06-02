@@ -17,6 +17,7 @@ import { ArrowLeft, Crosshair, Swords } from 'lucide-react'
 import { MascotReaction, StickerBadge } from '../../components'
 import { GlowText, HudFrame, MagneticButton, NeuralParticles } from '../../components/cyber'
 import type { CoachStrategyKey, StrategyStatItem } from '../../api/v1/types'
+import { StrategyRadar, type RadarDatum } from './StrategyRadar'
 import { useStrategyProfile } from './useStrategyProfile'
 
 const STRATEGY_GLOSS: Record<CoachStrategyKey, string> = {
@@ -27,17 +28,6 @@ const STRATEGY_GLOSS: Record<CoachStrategyKey, string> = {
   counter: '反问',
   reason: '讲道理',
   direct: '直球',
-}
-
-/** Win-rate → bar colour: low = magenta (failing crutch), high = lime. */
-function winColor(rate: number): string {
-  if (rate < 0.34) {
-    return '#FF2DAA'
-  }
-  if (rate < 0.67) {
-    return '#FBBF24'
-  }
-  return '#B7FF00'
 }
 
 function pct(rate: number): number {
@@ -131,6 +121,18 @@ function ProfileContent({ stats, totalObservations, overrelied }: ContentProps) 
   const crutch = overrelied ? stats.find((s) => s.strategy === overrelied) : null
   const mascotExpression = overrelied ? 'caring' : 'confident'
 
+  // Radar over ALL seven strategies (zero-filled for unused ones) so the
+  // shape reads as the user's playstyle: a spike = a crutch, a round blob
+  // = a balanced player. The over-relied strategy is dotted in magenta.
+  const byStrategy = new Map(stats.map((s) => [s.strategy, s]))
+  const radarData: RadarDatum[] = (Object.keys(STRATEGY_GLOSS) as CoachStrategyKey[]).map(
+    (key) => ({
+      label: STRATEGY_GLOSS[key],
+      value: byStrategy.get(key)?.count ?? 0,
+      highlight: key === overrelied,
+    }),
+  )
+
   return (
     <>
       <motion.div
@@ -186,11 +188,26 @@ function ProfileContent({ stats, totalObservations, overrelied }: ContentProps) 
         </HudFrame>
       )}
 
-      {/* Per-strategy win-rate bars */}
+      {/* Playstyle shape — usage radar over all seven strategies. */}
+      <HudFrame
+        label="PLAYSTYLE · SHAPE"
+        tag={`${radarData.filter((d) => d.value > 0).length}/7`}
+        className="cyber-glass-edge mt-8 rounded-3xl p-6"
+      >
+        <div className="flex flex-col items-center">
+          <StrategyRadar data={radarData} size={260} />
+          <p className="mt-2 text-center font-mono text-[11px] text-white/45">
+            {overrelied
+              ? '尖刺越突出 = 越依赖这一手'
+              : '形状越圆 = 打法越均衡'}
+          </p>
+        </div>
+      </HudFrame>
+
+      {/* Per-strategy quality bars (good / mixed / poor) */}
       <div className="mt-8 space-y-3">
         <p className="font-bebas text-[11px] tracking-[0.28em] text-white/50">ALL · STRATEGIES</p>
         {stats.map((s) => {
-          const accent = winColor(s.win_rate)
           const isCrutch = s.strategy === overrelied
           return (
             <div
@@ -208,20 +225,41 @@ function ProfileContent({ stats, totalObservations, overrelied }: ContentProps) 
                     {pct(s.win_rate)}% · ×{s.count}
                   </span>
                 </div>
-                <div className="h-1.5 overflow-hidden rounded-full bg-cyber-hairline">
-                  <div
-                    className="h-full rounded-full transition-all duration-500"
-                    style={{
-                      width: `${Math.max(pct(s.win_rate), 4)}%`,
-                      background: accent,
-                      boxShadow: `0 0 8px ${accent}88`,
-                    }}
-                  />
+                {/* Quality breakdown: 封神(good) / 路过(mixed) / 翻车(poor).
+                 * Shows the full distribution, not just the win rate. */}
+                <div className="flex h-2 overflow-hidden rounded-full bg-cyber-hairline">
+                  {s.good > 0 && (
+                    <div
+                      className="h-full"
+                      style={{ width: `${(s.good / s.count) * 100}%`, background: '#B7FF00' }}
+                      title={`封神 ×${s.good}`}
+                    />
+                  )}
+                  {s.mixed > 0 && (
+                    <div
+                      className="h-full"
+                      style={{ width: `${(s.mixed / s.count) * 100}%`, background: '#FBBF24' }}
+                      title={`路过 ×${s.mixed}`}
+                    />
+                  )}
+                  {s.poor > 0 && (
+                    <div
+                      className="h-full"
+                      style={{ width: `${(s.poor / s.count) * 100}%`, background: '#FF2DAA' }}
+                      title={`翻车 ×${s.poor}`}
+                    />
+                  )}
                 </div>
               </div>
             </div>
           )
         })}
+        {/* Legend for the quality segments. */}
+        <div className="flex justify-center gap-4 pt-1 font-mono text-[10px] text-white/40">
+          <span><span className="text-cyber-lime">■</span> 封神</span>
+          <span><span className="text-cyber-amber">■</span> 路过</span>
+          <span><span className="text-cyber-magenta">■</span> 翻车</span>
+        </div>
       </div>
 
       <div className="mt-8 flex justify-center gap-3">
