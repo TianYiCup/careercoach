@@ -12,7 +12,7 @@
  *     + improvements + Training plan CTA.
  */
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { ArrowLeft, Sparkles } from 'lucide-react'
 
@@ -23,8 +23,8 @@ import {
   MagneticButton,
   NeuralParticles,
 } from '../../components/cyber'
-import { apiClient, ApiError } from '../../api/v1'
 import type { ReviewTurn, ReviewUploadResponse } from '../../api/v1'
+import { useReviewUpload } from './useReviewUpload'
 
 interface ReviewResultPageProps {
   uploadId: string
@@ -38,25 +38,15 @@ export function ReviewResultPage({
   onBack,
   onTrain,
 }: ReviewResultPageProps) {
-  const [data, setData] = useState<ReviewUploadResponse | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const { data, error } = useReviewUpload(uploadId)
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null)
 
-  useEffect(() => {
-    const fetchResult = async () => {
-      try {
-        const res = await apiClient.get<ReviewUploadResponse>(`/review/uploads/${uploadId}`)
-        setData(res)
-      } catch (e) {
-        if (e instanceof ApiError) {
-          setError('加载失败，请稍后重试')
-        } else {
-          setError('网络异常')
-        }
-      }
-    }
-    void fetchResult()
-  }, [uploadId])
+  // Narrowed handle so the render branches can read `.turns` / `.summary`
+  // without a non-null assertion — a `processing` / `failed` record has
+  // empty turns and a null summary, which we must NOT render as a result.
+  const readyData = data && data.status === 'done' ? data : null
+  const isFailed = data?.status === 'failed'
+  const isAnalyzing = !error && readyData === null && !isFailed
 
   return (
     <div className="relative flex min-h-screen flex-col overflow-hidden bg-cyber-void text-white">
@@ -84,14 +74,18 @@ export function ReviewResultPage({
         <div className="flex items-center gap-3">
           <MascotReaction
             expression={
-              data
-                ? data.turns.filter(t => t.verdict === 'lose').length / Math.max(1, data.turns.length) > 0.4
+              readyData
+                ? readyData.turns.filter(t => t.verdict === 'lose').length /
+                      Math.max(1, readyData.turns.length) >
+                    0.4
                   ? 'caring'
-                  : data.turns.length > 0 &&
-                      data.turns.filter(t => t.verdict === 'lose').length === 0
+                  : readyData.turns.length > 0 &&
+                      readyData.turns.filter(t => t.verdict === 'lose').length === 0
                     ? 'godlike'
                     : 'confident'
-                : 'thinking'
+                : isFailed
+                  ? 'crashed'
+                  : 'thinking'
             }
             size="sm"
           />
@@ -100,7 +94,7 @@ export function ReviewResultPage({
               REVIEW · DISSECTION
             </p>
             <p className="font-orbitron text-sm font-semibold text-white">
-              {data ? `${data.turns.length} TURNS` : 'LOADING…'}
+              {readyData ? `${readyData.turns.length} TURNS` : 'LOADING…'}
             </p>
           </div>
         </div>
@@ -117,7 +111,7 @@ export function ReviewResultPage({
           </div>
         )}
 
-        {!error && !data && (
+        {isAnalyzing && (
           <div className="mt-20 flex flex-col items-center gap-4">
             <MascotReaction expression="thinking" size="md" />
             <p className="font-mono text-sm text-white/60 animate-pulse">
@@ -126,7 +120,19 @@ export function ReviewResultPage({
           </div>
         )}
 
-        {data && (
+        {!error && isFailed && (
+          <div className="mt-20 flex flex-col items-center gap-4">
+            <MascotReaction expression="crashed" size="md" />
+            <p className="font-mono text-sm text-cyber-magenta">
+              ⚠ 复盘失败了，K 没整明白这段对话，换一段再试试？
+            </p>
+            <MagneticButton type="button" variant="magenta" onClick={onBack}>
+              重新上传
+            </MagneticButton>
+          </div>
+        )}
+
+        {readyData && (
           <motion.div
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
@@ -135,21 +141,21 @@ export function ReviewResultPage({
           >
             <div className="md:col-span-3">
               <LeftPanel
-                totalTurns={data.turns.length}
-                userCount={data.turns.filter(t => t.speaker === 'user').length}
-                opponentCount={data.turns.filter(t => t.speaker === 'opponent').length}
-                loseCount={data.turns.filter(t => t.verdict === 'lose').length}
+                totalTurns={readyData.turns.length}
+                userCount={readyData.turns.filter(t => t.speaker === 'user').length}
+                opponentCount={readyData.turns.filter(t => t.speaker === 'opponent').length}
+                loseCount={readyData.turns.filter(t => t.verdict === 'lose').length}
               />
             </div>
             <div className="md:col-span-6">
               <CenterPanel
-                turns={data.turns}
+                turns={readyData.turns}
                 expandedIdx={expandedIdx}
                 onToggle={setExpandedIdx}
               />
             </div>
             <div className="md:col-span-3">
-              <RightPanel summary={data.summary} onTrain={onTrain} />
+              <RightPanel summary={readyData.summary} onTrain={onTrain} />
             </div>
           </motion.div>
         )}
