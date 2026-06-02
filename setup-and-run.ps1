@@ -1,7 +1,8 @@
-﻿param([switch]$Web)
+﻿param([switch]$Web, [switch]$Persist)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 $mode = if ($Web) { '网页版' } else { '桌面版' }
+if ($Persist) { $mode = "$mode + 持久化" }
 Write-Host "================================================="
 Write-Host " CareerCoach AI - 一键配置 + 启动 ($mode)"
 Write-Host "================================================="
@@ -25,9 +26,37 @@ if (-not (Test-Path "$root\apps\api\.env")) {
   Write-Warning "未找到 apps\api\.env —— 请先复制 apps\api\.env.example 为 .env 并填入密钥，否则沙盘/副驾无法正常工作。"
 }
 
+$persistPrefix = ''
+if ($Persist) {
+  Write-Host ""
+  Write-Host "[2.5] 启用数据持久化 (Postgres)..."
+  if (-not (Have 'docker')) {
+    throw "需要 Docker 才能用 -Persist 持久化。请装 Docker Desktop 后重试，或去掉 -Persist 用内存模式。"
+  }
+  Push-Location $root
+  try {
+    docker compose up -d postgres
+    Write-Host "    等待 Postgres 就绪..."
+    $dbok = $false
+    for ($i = 0; $i -lt 30; $i++) {
+      Start-Sleep -Seconds 2
+      docker exec careercoach-postgres pg_isready -U postgres *> $null
+      if ($LASTEXITCODE -eq 0) { $dbok = $true; break }
+    }
+    if (-not $dbok) { throw "Postgres 30 秒内未就绪，请检查 Docker Desktop 是否已启动" }
+  } finally { Pop-Location }
+  Write-Host "    运行数据库迁移 (alembic upgrade head)..."
+  Push-Location "$root\apps\api"
+  try { uv run alembic upgrade head } finally { Pop-Location }
+  # The backend window must inherit PERSIST_BACKEND so every repo wires
+  # to Postgres; injected into that window's command below.
+  $persistPrefix = "`$env:PERSIST_BACKEND='postgres'; "
+  Write-Host "    持久化已启用：用户 / 弱点 / 策略数据将落库，重启不丢。"
+}
+
 Write-Host ""
 Write-Host "[3] 启动后端 (新窗口, http://127.0.0.1:8000)..."
-Start-Process powershell -ArgumentList @('-NoExit','-Command',"Set-Location '$root\apps\api'; Write-Host '后端运行中 —— 关闭此窗口即停止后端'; uv run uvicorn app.main:app --host 127.0.0.1 --port 8000")
+Start-Process powershell -ArgumentList @('-NoExit','-Command',"Set-Location '$root\apps\api'; ${persistPrefix}Write-Host '后端运行中 —— 关闭此窗口即停止后端'; uv run uvicorn app.main:app --host 127.0.0.1 --port 8000")
 Write-Host "等待后端就绪..."
 $ok = $false
 for ($i = 0; $i -lt 30; $i++) {
