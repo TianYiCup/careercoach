@@ -12,8 +12,13 @@
                        cd apps\web && pnpm tauri build，或直接用网页版。
    ● 启动网页版.bat   网页版：起后端 → pnpm dev → http://localhost:5173
                        额外需 Node.js + pnpm（脚本尝试自动装，较重）。
+   ● 启动演示-持久化.bat  桌面版 + 数据持久化：额外起 Postgres、跑迁移，
+                       用户/弱点/策略数据重启后不丢。需先装好 Docker
+                       Desktop 并启动。不想装 Docker 就用上面两个（内存
+                       模式，重启清空，纯试玩够用）。
 
 必须联网（后端连 DeepSeek / 阿里云）；副驾还需麦克风权限。
+持久化为可选：默认内存模式零依赖；要重启不丢数据再用持久化版（需 Docker）。
 
 脚本做了什么：装 uv → uv sync 装后端依赖 → 起 uvicorn(127.0.0.1:8000)
 → 桌面版打开 app.exe / 网页版 pnpm dev。

@@ -75,6 +75,17 @@ class Settings(BaseSettings):
     # or production.
     jwt_secret: SecretStr = Field(default=SecretStr(DEV_JWT_SECRET))
 
+    # Master persistence switch. `memory` (default) keeps every repo
+    # dict-backed so dev / CI / a no-Docker demo run without Postgres.
+    # `postgres` flips ALL the per-feature `*_repo_backend` fields below
+    # to `postgres` in one move (see `_apply_persist_backend`) — set
+    # `PERSIST_BACKEND=postgres` on a machine that has the DB up +
+    # `alembic upgrade head` run, and user / weakness / strategy data
+    # then survives a restart. An individual `*_REPO_BACKEND` env var
+    # still wins over this master switch, so a single feature can be
+    # pinned to memory even in postgres mode (e.g. for debugging).
+    persist_backend: Literal["memory", "postgres"] = Field(default="memory")
+
     # Sessions + turns persistence backend.
     # `memory` (default) keeps everything dict-backed inside the worker
     # so dev runs without docker still work. `postgres` switches to the
@@ -427,6 +438,29 @@ class Settings(BaseSettings):
                 "demo_mode_enabled",
                 msg="DEMO_MODE on; /auth/*/verify accepts any 6-digit code",
             )
+        return self
+
+    @model_validator(mode="after")
+    def _apply_persist_backend(self) -> Self:
+        """Fan the master `persist_backend` switch out to every
+        `*_repo_backend` field that wasn't set individually.
+
+        `model_fields_set` holds the names that came from the env / kwargs
+        (not defaults), so an explicit `SESSIONS_REPO_BACKEND=memory`
+        still wins even when `PERSIST_BACKEND=postgres` — the master
+        switch only fills the ones the operator left alone. Deriving the
+        target fields from the `_repo_backend` suffix means a new feature
+        repo picks this up automatically.
+        """
+        if self.persist_backend != "postgres":
+            return self
+        flipped: list[str] = []
+        for name in type(self).model_fields:
+            if name.endswith("_repo_backend") and name not in self.model_fields_set:
+                setattr(self, name, "postgres")
+                flipped.append(name)
+        if flipped:
+            logger.info("persist_backend_applied", backend="postgres", fields=flipped)
         return self
 
 
