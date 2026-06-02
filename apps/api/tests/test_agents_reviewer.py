@@ -239,13 +239,64 @@ def test_parse_reviewer_output_score_out_of_range_returns_none() -> None:
     assert parse_reviewer_output(raw, _two_turns()) is None
 
 
-def test_parse_reviewer_output_missing_summary_separator_returns_none() -> None:
+def test_parse_reviewer_output_no_summary_anchor_returns_none() -> None:
+    # No `---` AND no `SCORE:` line — there is no summary at all, so
+    # there is nothing to show the user.
     raw = (
         "TURN 0 | VERDICT: win\nTURN 1 | VERDICT: win\n"
-        # no `---`, no summary block
+        # no `---`, no SCORE
     )
 
     assert parse_reviewer_output(raw, _two_turns()) is None
+
+
+def test_parse_reviewer_output_tolerates_missing_separator_when_score_present() -> None:
+    """Real-world drift (the failure from the demo): the model skips the
+    `---` line and goes straight to SCORE. We anchor on the SCORE line
+    instead of failing the whole upload."""
+    raw = (
+        "TURN 0 | VERDICT: neutral\n"
+        "TURN 1 | VERDICT: lose | REASON: too cold | BETTER: try warmer\n"
+        "\n"
+        "SCORE: 4.0\n"
+        "TOP_FAILURES: too curt\n"
+        "IMPROVEMENTS: offer an alternative"
+    )
+
+    result = parse_reviewer_output(raw, _two_turns())
+
+    assert result is not None
+    assert result.summary_score == 4.0
+    assert result.turns[1].verdict == "lose"
+    assert result.summary_top_failures == ("too curt",)
+    assert result.summary_improvements == ("offer an alternative",)
+
+
+def test_parse_reviewer_output_missing_top_failures_degrades_to_empty() -> None:
+    raw = "TURN 0 | VERDICT: win\nTURN 1 | VERDICT: win\n---\nSCORE: 8.0\nIMPROVEMENTS: keep it up"
+
+    result = parse_reviewer_output(raw, _two_turns())
+
+    assert result is not None
+    assert result.summary_score == 8.0
+    assert result.summary_top_failures == ()
+    assert result.summary_improvements == ("keep it up",)
+
+
+def test_parse_reviewer_output_missing_improvements_degrades_to_empty() -> None:
+    raw = (
+        "TURN 0 | VERDICT: neutral\n"
+        "TURN 1 | VERDICT: lose | REASON: harsh | BETTER: soften\n"
+        "---\n"
+        "SCORE: 2.0\n"
+        "TOP_FAILURES: harsh tone"
+    )
+
+    result = parse_reviewer_output(raw, _two_turns())
+
+    assert result is not None
+    assert result.summary_top_failures == ("harsh tone",)
+    assert result.summary_improvements == ()
 
 
 def test_parse_reviewer_output_missing_score_returns_none() -> None:
