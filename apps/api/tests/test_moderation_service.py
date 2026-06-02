@@ -285,3 +285,50 @@ def test_decision_redirect_requires_resource() -> None:
 def test_decision_allow_must_not_carry_categories() -> None:
     with pytest.raises(ValueError, match="must not list categories"):
         Decision(verdict="allow", score=0.0, categories=("self_harm",))
+
+
+# --------------------------------------------------------------------- #
+# Factory audit-sink wiring (moderation_audit_failed fix)               #
+#                                                                        #
+# Dev/demo has no Postgres (every repo is `memory`), so the audit sink  #
+# must NOT be `DbEventSink` there — otherwise every check spawns an     #
+# audit write that fails with ConnectionRefused (moderation_audit_      #
+# failed). The sink follows `moderation_events_repo_backend`.           #
+# --------------------------------------------------------------------- #
+
+
+def _settings_with_events_backend(backend: str) -> object:
+    """Build a hermetic Settings (no `.env`) with the events backend set."""
+    from app.config import Settings
+
+    return Settings(_env_file=None, moderation_events_repo_backend=backend)
+
+
+def test_factory_uses_log_sink_when_events_backend_memory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.services.moderation as mod
+    from app.services.moderation import LogOnlyEventSink
+
+    monkeypatch.setattr(mod, "get_settings", lambda: _settings_with_events_backend("memory"))
+    mod.get_moderation_service.cache_clear()
+    try:
+        service = mod.get_moderation_service()
+        assert isinstance(service._event_sink, LogOnlyEventSink)
+    finally:
+        mod.get_moderation_service.cache_clear()
+
+
+def test_factory_uses_db_sink_when_events_backend_postgres(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.services.moderation as mod
+    from app.services.moderation import DbEventSink
+
+    monkeypatch.setattr(mod, "get_settings", lambda: _settings_with_events_backend("postgres"))
+    mod.get_moderation_service.cache_clear()
+    try:
+        service = mod.get_moderation_service()
+        assert isinstance(service._event_sink, DbEventSink)
+    finally:
+        mod.get_moderation_service.cache_clear()

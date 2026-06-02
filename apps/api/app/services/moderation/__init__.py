@@ -44,6 +44,17 @@ def get_moderation_service() -> ModerationService:
       * either empty → `DictBackend` alone. This keeps dev / CI / tests
         running without Aliyun credentials and degrades gracefully in
         air-gapped deploys.
+
+    Audit sink:
+      * `moderation_events_repo_backend=postgres` → `DbEventSink` (one
+        row per decision in `moderation_events`).
+      * `memory` (default) → `LogOnlyEventSink`. Dev / demo runs have no
+        Postgres (every other repo is `memory` too), so a `DbEventSink`
+        there spawns an audit write that fails with `ConnectionRefused`
+        on every check — logged as `moderation_audit_failed`. The
+        decision itself is synchronous and unaffected; only the audit
+        TRAIL moves to a structured log line instead of a table. This
+        mirrors the read-side wiring so both halves key off one flag.
     """
     settings = get_settings()
     local: ModerationBackend = DictBackend.from_file()
@@ -64,7 +75,13 @@ def get_moderation_service() -> ModerationService:
         backend = local
         logger.info("moderation_backend_wired", mode="local_only", reason="aliyun_keys_empty")
 
-    sink: ModerationEventSink = DbEventSink(async_session_factory)
+    sink: ModerationEventSink
+    if settings.moderation_events_repo_backend == "postgres":
+        sink = DbEventSink(async_session_factory)
+        logger.info("moderation_audit_sink_wired", sink="db")
+    else:
+        sink = LogOnlyEventSink()
+        logger.info("moderation_audit_sink_wired", sink="log")
     return ModerationService(backend=backend, event_sink=sink)
 
 

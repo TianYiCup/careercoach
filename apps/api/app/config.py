@@ -117,11 +117,16 @@ class Settings(BaseSettings):
     # when the backend has no history.
     llm_calls_repo_backend: Literal["memory", "postgres"] = Field(default="memory")
 
-    # Moderation-event read-side repo (A-43). The write path is
-    # `DbEventSink` which is unconditional Postgres in prod; this
-    # flag only switches the *read* impl used by the ops tail
-    # endpoint. Memory backend is for dev/tests where the ops
-    # surface is exercised against in-memory seed data.
+    # Moderation-event persistence (A-43). Governs BOTH halves:
+    #   * read  — the ops tail endpoint's repo impl;
+    #   * write — the audit sink. `postgres` → `DbEventSink` (one row per
+    #     decision); `memory` (default) → `LogOnlyEventSink`.
+    # `memory` is the dev/demo default because there's no Postgres there
+    # (every repo is `memory`), and a `DbEventSink` would fail every
+    # audit write with `ConnectionRefused` (`moderation_audit_failed`).
+    # Prod sets this to `postgres` alongside the other *_repo_backend
+    # flags. The moderation DECISION is synchronous and never depends on
+    # this — only where the audit trail lands.
     moderation_events_repo_backend: Literal["memory", "postgres"] = Field(default="memory")
 
     # Static bearer-style token the `/v1/ops/*` endpoints check via
